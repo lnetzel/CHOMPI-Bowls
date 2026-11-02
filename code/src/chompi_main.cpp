@@ -24,9 +24,10 @@
 //                         excitation of the held / most-recent voice
 //                         (slow = soft, fast = loud; centered white bar;
 //                         the wheel LEDs follow the rub level)
-//   Volume encoder      : master volume (green->amber->red bar, LED10
-//                         follows the gradient; the bar shows briefly at
-//                         boot)
+//   Volume encoder      : press cycles page 1 master volume (green->
+//                         amber->red bar, LED10 follows the gradient;
+//                         the bar shows briefly at boot) / page 2 temple-
+//                         room reverb dry/wet mix (pale ice bar + LED)
 //   SHIFT (KEY_26)      : modifier only; PLAY (KEY_27), LOOP (KEY_28) and
 //                         the mode toggle (SW_TOG) are reserved in v1
 //
@@ -46,6 +47,7 @@
 #include "PresetStorage.h"
 
 #include "Utility/dsp.h"
+#include "Effects/reverbsc.h"
 
 #include <atomic>
 #include <cmath>
@@ -68,6 +70,13 @@ chompi::PresetStorage  preset_storage;
 constexpr int  kVoiceCount = 4;
 bowls::BowlVoice voices[kVoiceCount];
 
+// Stereo temple-room reverb (DaisySP Freeverb derivative) on the bowl
+// bus: a small wooden room - short tail, highs damped (wood absorbs
+// them). Character is fixed; only the dry/wet mix is on the panel.
+// The delay buffers (~387 KB) live in SDRAM - SRAM is for state that
+// must be fast, not for bulk audio memory.
+daisysp::ReverbSc DSY_SDRAM_BSS reverb;
+
 // ---------------------------------------------------------------------------
 // Parameter state
 // ---------------------------------------------------------------------------
@@ -86,6 +95,7 @@ enum class Overlay : int
     Character,
     Rub,
     Pan,
+    ReverbMix,
 };
 
 // White-key bars are temporary: refreshed while turning, gone 500 ms
@@ -113,12 +123,21 @@ struct Params
     // (16 = centre). SHIFT+encoder 1 pans the selected bowl.
     std::atomic<int>      pan_ticks[kWhiteKeys];
 
+    // Volume knob page 2: temple-room reverb dry/wet mix.
+    std::atomic<int>      reverb_mix_ticks{
+        chompi::BowlsPreset::kDefaultReverbMix};
+
     // UI overlay: which parameter bar is shown on the white keys.
     std::atomic<int>      overlay{static_cast<int>(Overlay::Volume)};
     std::atomic<uint32_t> overlay_until{0};
 };
 
 Params params;
+
+// Volume-knob pages (press cycles): master volume -> reverb mix.
+constexpr int kVolPageVolume = 0;
+constexpr int kVolPageReverb = 1;
+volatile int  vol_page_      = kVolPageVolume;
 
 // Autosave: a parameter change re-arms a 1 s debounce; the main loop
 // writes BOWLS/state.json once the panel has been quiet for 1 s.
@@ -327,6 +346,16 @@ void ApplyControls()
     const uint32_t now   = System::GetNow();
     const bool     shift = hw.ShiftHeld();
 
+    // Volume knob press: page 1 = master volume, page 2 = reverb mix.
+    // The newly active page's bar shows as confirmation.
+    if(hw.VolumeClicked())
+    {
+        vol_page_ = (vol_page_ + 1) % 2;
+        ShowOverlay(vol_page_ == kVolPageVolume ? Overlay::Volume
+                                                : Overlay::ReverbMix,
+                    now);
+    }
+
     // Physical encoder 1: bowl character (profile 1-5); SHIFT+turn pans
     // the selected bowl (the last struck white key).
     const int char_inc = hw.EncoderIncrement(0);
@@ -404,8 +433,12 @@ void ApplyControls()
         ApplyDecayShimmerToVoices();
     }
 
-    // Volume encoder: master volume.
-    BumpTicks(params.volume_ticks, hw.EncoderIncrement(5), Overlay::Volume, now);
+    // Volume encoder: page 1 = master volume, page 2 = reverb dry/wet.
+    const int volume_inc = hw.EncoderIncrement(5);
+    if(vol_page_ == kVolPageReverb)
+        BumpTicks(params.reverb_mix_ticks, volume_inc, Overlay::ReverbMix, now);
+    else
+        BumpTicks(params.volume_ticks, volume_inc, Overlay::Volume, now);
 
     // Transport wheel: rim rubbing. Detents pump the rub TARGET (the
     // turn rate sets the level); the applied level swells toward it over
@@ -469,14 +502,25 @@ void AudioCallback(AudioHandle::InputBuffer  in,
         voices[v].ProcessBlock(mix_l, mix_r, size);
 
     static float volume_smooth = 0.0f;
+    static float mix_smooth    = 0.0f;
     const float  volume_target
         = TicksToNorm(params.volume_ticks.load(std::memory_order_relaxed));
+    const float mix_target
+        = TicksToNorm(params.reverb_mix_ticks.load(std::memory_order_relaxed));
     for(size_t i = 0; i < size; ++i)
     {
         daisysp::fonepole(volume_smooth, volume_target, 0.001f);
+        daisysp::fonepole(mix_smooth, mix_target, 0.001f);
+        // Temple-room reverb on the stereo bowl bus, before the master
+        // gain so the volume knob also controls the tail.
+        float wet_l, wet_r;
+        reverb.Process(mix_l[i], mix_r[i], &wet_l, &wet_r);
+        const float dry   = 1.0f - mix_smooth;
         const float gain  = volume_smooth * volume_smooth;
-        const float left  = daisysp::SoftClip(mix_l[i] * gain);
-        const float right = daisysp::SoftClip(mix_r[i] * gain);
+        const float left  = daisysp::SoftClip(
+            (mix_l[i] * dry + wet_l * mix_smooth) * gain);
+        const float right = daisysp::SoftClip(
+            (mix_r[i] * dry + wet_r * mix_smooth) * gain);
         out[0][i] = left;  // headphone L
         out[1][i] = right; // headphone R
         out[2][i] = left;  // master L
@@ -595,6 +639,11 @@ void DrawOverlayBar(uint32_t now)
                 DrawPanBar(params.pan_ticks[last_white_key_].load(
                     std::memory_order_relaxed));
                 break;
+            case Overlay::ReverbMix:
+                // Pale ice bar for the temple-room reverb mix.
+                DrawBar(params.reverb_mix_ticks.load(std::memory_order_relaxed),
+                        24, 32, 48);
+                break;
             default: break;
         }
     }
@@ -638,17 +687,29 @@ void RenderLeds()
     const uint8_t rub = static_cast<uint8_t>(rub_level * 40.0f);
     chompi_leds::SetPthLed(chompi_leds::kPthWheelLeft, rub, rub, rub);
     chompi_leds::SetPthLed(chompi_leds::kPthWheelRight, rub, rub, rub);
-    // The volume knob LED follows the bar's green->amber->red gradient.
-    const int   vt     = params.volume_ticks.load(std::memory_order_relaxed);
-    const float vnorm  = TicksToNorm(vt);
-    const auto  level  = static_cast<uint8_t>(8 + vnorm * 40.0f);
-    if(vt >= 23)
-        chompi_leds::SetPthLed(chompi_leds::kPthVolume, level, 0, 0); // red
-    else if(vt >= 14)
+    // The volume knob LED follows the page: master volume uses the
+    // bar's green->amber->red gradient; the reverb page is pale ice.
+    if(vol_page_ == kVolPageReverb)
+    {
+        const float mnorm = TicksToNorm(
+            params.reverb_mix_ticks.load(std::memory_order_relaxed));
+        const auto mlevel = static_cast<uint8_t>(8 + mnorm * 40.0f);
         chompi_leds::SetPthLed(chompi_leds::kPthVolume,
-                               level, level * 5 / 6, 0); // amber
+                               mlevel * 2 / 3, mlevel * 4 / 5, mlevel);
+    }
     else
-        chompi_leds::SetPthLed(chompi_leds::kPthVolume, 0, level, 0); // green
+    {
+        const int   vt     = params.volume_ticks.load(std::memory_order_relaxed);
+        const float vnorm  = TicksToNorm(vt);
+        const auto  level  = static_cast<uint8_t>(8 + vnorm * 40.0f);
+        if(vt >= 23)
+            chompi_leds::SetPthLed(chompi_leds::kPthVolume, level, 0, 0); // red
+        else if(vt >= 14)
+            chompi_leds::SetPthLed(chompi_leds::kPthVolume,
+                                   level, level * 5 / 6, 0); // amber
+        else
+            chompi_leds::SetPthLed(chompi_leds::kPthVolume, 0, level, 0); // green
+    }
 
     chompi_leds::Flush();
 }
@@ -675,6 +736,8 @@ chompi::BowlsPreset SnapshotParams()
     for(int w = 0; w < kWhiteKeys; ++w)
         p.pan[w] = static_cast<uint8_t>(
             params.pan_ticks[w].load(std::memory_order_relaxed));
+    p.reverb_mix = static_cast<uint8_t>(
+        params.reverb_mix_ticks.load(std::memory_order_relaxed));
     return p;
 }
 
@@ -688,6 +751,7 @@ void ApplyPreset(const chompi::BowlsPreset& p)
     params.profile_index.store(p.profile, std::memory_order_relaxed);
     for(int w = 0; w < kWhiteKeys; ++w)
         params.pan_ticks[w].store(p.pan[w], std::memory_order_relaxed);
+    params.reverb_mix_ticks.store(p.reverb_mix, std::memory_order_relaxed);
     ApplyDecayShimmerToVoices();
 }
 
@@ -702,6 +766,11 @@ int main()
     for(int v = 0; v < kVoiceCount; ++v)
         voices[v].Init(kSampleRate);
     ApplyDecayShimmerToVoices();
+
+    // Temple-room reverb: a small wooden room, not a cathedral.
+    reverb.Init(kSampleRate);
+    reverb.SetFeedback(0.82f);   // short-to-medium tail
+    reverb.SetLpFreq(4500.0f);   // wood damps the highs
 
     // SD card: mount, BOWLS/ folder, boot-load the saved state
     // (no card / no file: factory defaults, saves become inert).

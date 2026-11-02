@@ -22,7 +22,7 @@ namespace chompi
 
 struct BowlsPreset
 {
-    static constexpr int kVersion = 2; /* v2 adds the per-bowl pan array */
+    static constexpr int kVersion = 3; /* v2: pan array; v3: reverb mix */
 
     /* field ranges (mirror the tick counts in chompi_main.cpp) */
     static constexpr int kMaxTicks   = 32; /* 0..32 tick parameters */
@@ -37,6 +37,7 @@ struct BowlsPreset
     static constexpr int kDefaultShimmer    = 8;
     static constexpr int kDefaultProfile    = 0;
     static constexpr int kDefaultPan        = 16; /* centre */
+    static constexpr int kDefaultReverbMix  = 8;  /* subtle temple room */
 
     uint8_t volume;     /**< 0..32 master volume ticks */
     uint8_t strike;     /**< 0..32 strike hardness ticks */
@@ -45,6 +46,7 @@ struct BowlsPreset
     uint8_t shimmer;    /**< 0..32 paired-mode detune ticks */
     uint8_t profile;    /**< 0..4 selected bowl profile */
     uint8_t pan[kWhiteKeys]; /**< per-bowl pan 0..32 (16 = centre) */
+    uint8_t reverb_mix; /**< 0..32 reverb dry/wet mix ticks */
 
     void SetDefaults()
     {
@@ -54,6 +56,7 @@ struct BowlsPreset
         decay      = kDefaultDecay;
         shimmer    = kDefaultShimmer;
         profile    = kDefaultProfile;
+        reverb_mix = kDefaultReverbMix;
         for(int w = 0; w < kWhiteKeys; ++w)
             pan[w] = kDefaultPan;
     }
@@ -68,14 +71,16 @@ inline size_t Serialize(const BowlsPreset &p, char *buf, size_t size)
                      size,
                      "{\"version\":%d,"
                      "\"volume\":%u,\"strike\":%u,\"brightness\":%u,"
-                     "\"decay\":%u,\"shimmer\":%u,\"profile\":%u,\"pan\":[",
+                     "\"decay\":%u,\"shimmer\":%u,\"profile\":%u,"
+                     "\"reverb_mix\":%u,\"pan\":[",
                      BowlsPreset::kVersion,
                      (unsigned)p.volume,
                      (unsigned)p.strike,
                      (unsigned)p.brightness,
                      (unsigned)p.decay,
                      (unsigned)p.shimmer,
-                     (unsigned)p.profile);
+                     (unsigned)p.profile,
+                     (unsigned)p.reverb_mix);
     if(n < 0 || static_cast<size_t>(n) >= size)
         return 0;
     size_t off = static_cast<size_t>(n);
@@ -123,16 +128,15 @@ inline int QueryInt(char *      buf,
     return static_cast<int>(v);
 }
 
-/** Parse a state document. Returns false for invalid JSON or an
- *  unsupported schema version (caller keeps its defaults). */
+/** Parse a state document. Returns false for invalid JSON or a NEWER
+ *  schema version; older files load with defaults for missing keys. */
 inline bool Parse(char *buf, size_t len, BowlsPreset &p)
 {
     if(JSON_Validate(buf, len) != JSONSuccess)
         return false;
-    const int version
-        = QueryInt(buf, len, "version", 0, 0, BowlsPreset::kVersion);
-    if(version != BowlsPreset::kVersion)
-        return false; /* unknown schema: do not misread it */
+    const int version = QueryInt(buf, len, "version", 0, 0, 100);
+    if(version < 1 || version > BowlsPreset::kVersion)
+        return false; /* from a newer firmware: do not misread it */
     p.SetDefaults();
     p.volume = QueryInt(buf, len, "volume", BowlsPreset::kDefaultVolume,
                         0, BowlsPreset::kMaxTicks);
@@ -147,6 +151,9 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
                          0, BowlsPreset::kMaxTicks);
     p.profile = QueryInt(buf, len, "profile", BowlsPreset::kDefaultProfile,
                          0, BowlsPreset::kMaxProfile);
+    p.reverb_mix = QueryInt(buf, len, "reverb_mix",
+                            BowlsPreset::kDefaultReverbMix, 0,
+                            BowlsPreset::kMaxTicks);
 
     /* pan array: "[v0,..,v14]" - walk the numbers with strtol; a missing
      * or short array keeps the defaults for the remaining keys */
