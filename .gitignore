@@ -2,3 +2,6 @@ code/src/build/
 *.bin
 *.elf
 *.map
+
+# Vendored libraries (libDaisy, DaisySP, coreJSON)
+code/libs/
