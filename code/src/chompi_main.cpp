@@ -9,12 +9,19 @@
 // v1. All parameters autosave to BOWLS/state.json on the SD card and are
 // restored at boot.
 //
-//   Physical encoder 1 (SW4/ENC_4): bowl character - profile select 1-5
-//                         (LED2 orange; five 3-key orange sections on the
-//                         white keys; two detent ticks per step);
-//                         SHIFT+turn = pan the selected bowl (the last
-//                         struck white key) left/right - a cyan bar from
-//                         white key 8 toward the panned side
+//   Physical encoder 1 (SW4/ENC_4): per-bowl editor for the selected
+//                         bowl (the last struck white key); press
+//                         cycles three pages. Page 1: bowl volume
+//                         (LED2 green, green bar; 16 = unity, 32 =
+//                         +6 dB; rides ringing voices live);
+//                         SHIFT+turn = pan the bowl left/right (cyan
+//                         bar from white key 8 toward the panned
+//                         side). Page 2: resonance character -
+//                         profile select 1-5 (LED2 orange; five 3-key
+//                         orange sections; two detent ticks per
+//                         step). Page 3: tuning (LED2 violet, violet
+//                         bar from white key 8; 16 = unison, 0 =
+//                         half, 32 = double; next strike)
 //   Physical encoder 2 (SW1/ENC_1): strike hardness (LED3 amber, amber
 //                         bar); SHIFT+turn = brightness (yellow-white bar)
 //   Physical encoder 3 (SW2/ENC_2): decay (LED4 blue, blue bar)
@@ -96,6 +103,8 @@ enum class Overlay : int
     Rub,
     Pan,
     ReverbMix,
+    BowlVolume,
+    Tune,
 };
 
 // White-key bars are temporary: refreshed while turning, gone 500 ms
@@ -107,8 +116,14 @@ struct Params
     Params()
     {
         for(int w = 0; w < kWhiteKeys; ++w)
+        {
             pan_ticks[w].store(chompi::BowlsPreset::kDefaultPan,
                                std::memory_order_relaxed);
+            bowl_vol_ticks[w].store(chompi::BowlsPreset::kDefaultBowlVol,
+                                    std::memory_order_relaxed);
+            tune_ticks[w].store(chompi::BowlsPreset::kDefaultTune,
+                                std::memory_order_relaxed);
+        }
     }
 
     std::atomic<int>      volume_ticks{chompi::BowlsPreset::kDefaultVolume};
@@ -120,8 +135,17 @@ struct Params
     std::atomic<int>      profile_index{chompi::BowlsPreset::kDefaultProfile};
 
     // Per-bowl pan positions: one 0..32 tick value per white key
-    // (16 = centre). SHIFT+encoder 1 pans the selected bowl.
+    // (16 = centre). Encoder 1 page 1, SHIFT+turn pans the selected
+    // bowl.
     std::atomic<int>      pan_ticks[kWhiteKeys];
+
+    // Per-bowl volume trims: 0..32 ticks per white key (16 = unity).
+    // Encoder 1 page 1 turn; rides ringing voices live.
+    std::atomic<int>      bowl_vol_ticks[kWhiteKeys];
+
+    // Per-bowl tuning: 0..32 ticks per white key (16 = unison, ratio
+    // 1/2x..2x; applied at the next strike). Encoder 1 page 3 turn.
+    std::atomic<int>      tune_ticks[kWhiteKeys];
 
     // Volume knob page 2: temple-room reverb dry/wet mix.
     std::atomic<int>      reverb_mix_ticks{
@@ -138,6 +162,12 @@ Params params;
 constexpr int kVolPageVolume = 0;
 constexpr int kVolPageReverb = 1;
 volatile int  vol_page_      = kVolPageVolume;
+
+// Encoder-1 pages (press cycles): bowl volume -> character -> tuning.
+constexpr int kEnc1PageVolume    = 0;
+constexpr int kEnc1PageCharacter = 1;
+constexpr int kEnc1PageTune      = 2;
+volatile int  enc1_page_         = kEnc1PageVolume;
 
 // Autosave: a parameter change re-arms a 1 s debounce; the main loop
 // writes BOWLS/state.json once the panel has been quiet for 1 s.
@@ -192,6 +222,24 @@ float DecayMultTicks(int ticks)
 float ShimmerMultTicks(int ticks)
 {
     return 2.0f * TicksToNorm(ticks); // 0..2x the profile detune
+}
+
+// Per-bowl volume: 0..16 -> squared 0..1 (16 = unity, 0 = silence),
+// 16..32 -> linear 1..2x (+6 dB at 32).
+float BowlGainTicks(int ticks)
+{
+    if(ticks <= 16)
+    {
+        const float n = static_cast<float>(ticks) * (1.0f / 16.0f);
+        return n * n;
+    }
+    return 1.0f + static_cast<float>(ticks - 16) * (1.0f / 16.0f);
+}
+
+// Per-bowl tuning ratio: 2^((t-16)/16) - 16 = unison, 0 = 1/2x, 32 = 2x.
+float TuneRatioTicks(int ticks)
+{
+    return powf(2.0f, static_cast<float>(ticks - 16) * (1.0f / 16.0f));
 }
 
 // xorshift32 for the per-strike humanization jitter
@@ -299,8 +347,12 @@ void StrikeKey(int white_ordinal)
         TicksToNorm(params.brightness_ticks.load(std::memory_order_relaxed)));
     voices[v].SetPan(PanNormTicks(
         params.pan_ticks[white_ordinal].load(std::memory_order_relaxed)));
+    voices[v].SetBowlGain(BowlGainTicks(
+        params.bowl_vol_ticks[white_ordinal].load(std::memory_order_relaxed)));
     voices[v].SetKey(white_ordinal);
-    voices[v].Strike(bowls::kBowlScaleHz[white_ordinal],
+    voices[v].Strike(bowls::kBowlScaleHz[white_ordinal]
+                         * TuneRatioTicks(params.tune_ticks[white_ordinal].load(
+                             std::memory_order_relaxed)),
                      snorm,
                      amp_jitter,
                      det_jitter);
@@ -356,19 +408,36 @@ void ApplyControls()
                     now);
     }
 
-    // Physical encoder 1: bowl character (profile 1-5); SHIFT+turn pans
-    // the selected bowl (the last struck white key).
-    const int char_inc = hw.EncoderIncrement(0);
-    if(char_inc != 0)
+    // Physical encoder 1 press: cycle page 1 bowl volume -> page 2
+    // resonance character -> page 3 tuning. The newly active page's bar
+    // shows as confirmation.
+    if(hw.EncoderClicked(0))
     {
-        if(shift)
+        enc1_page_ = (enc1_page_ + 1) % 3;
+        ShowOverlay(enc1_page_ == kEnc1PageVolume
+                        ? Overlay::BowlVolume
+                        : (enc1_page_ == kEnc1PageCharacter
+                               ? Overlay::Character
+                               : Overlay::Tune),
+                    now);
+    }
+
+    // Physical encoder 1: three pages editing the selected bowl (the
+    // last struck white key). Page 1: turn = per-bowl volume (rides
+    // ringing voices live), SHIFT+turn = pan. Page 2: resonance
+    // character (profile 1-5). Page 3: per-bowl tuning (next strike).
+    // SHIFT+turn on pages 2/3 is reserved.
+    const int enc1_inc = hw.EncoderIncrement(0);
+    if(enc1_inc != 0)
+    {
+        const int key = last_white_key_;
+        if(enc1_page_ == kEnc1PageVolume && shift)
         {
             // Pan the selected bowl one tick per detent; a voice holding
             // that key is re-panned live (smoothed inside the voice).
-            const int key = last_white_key_;
-            int       pan
+            int pan
                 = params.pan_ticks[key].load(std::memory_order_relaxed)
-                  + char_inc;
+                  + enc1_inc;
             pan = pan < 0 ? 0 : (pan > kTickCount ? kTickCount : pan);
             if(pan != params.pan_ticks[key].load(std::memory_order_relaxed))
             {
@@ -381,11 +450,32 @@ void ApplyControls()
             }
             ShowOverlay(Overlay::Pan, now); // also shows at the end stops
         }
-        else
+        else if(enc1_page_ == kEnc1PageVolume)
+        {
+            // Per-bowl volume: rides the ringing voice live (smoothed
+            // inside the voice, like the pan gains).
+            int vol
+                = params.bowl_vol_ticks[key].load(std::memory_order_relaxed)
+                  + enc1_inc;
+            vol = vol < 0 ? 0 : (vol > kTickCount ? kTickCount : vol);
+            if(vol
+               != params.bowl_vol_ticks[key].load(std::memory_order_relaxed))
+            {
+                params.bowl_vol_ticks[key].store(vol,
+                                                 std::memory_order_relaxed);
+                const float gain = BowlGainTicks(vol);
+                for(int v = 0; v < kVoiceCount; ++v)
+                    if(voices[v].Key() == key)
+                        voices[v].SetBowlGain(gain);
+                MarkDirty(now);
+            }
+            ShowOverlay(Overlay::BowlVolume, now); // also at the end stops
+        }
+        else if(enc1_page_ == kEnc1PageCharacter && !shift)
         {
             // Profile select: two detent ticks per step; the bar shows
             // on any turn so the section is visible while arming.
-            const int step = SectionStep(profile_sel_acc, char_inc);
+            const int step = SectionStep(profile_sel_acc, enc1_inc);
             int       profile
                 = params.profile_index.load(std::memory_order_relaxed) + step;
             profile = profile < 0 ? 0
@@ -400,6 +490,23 @@ void ApplyControls()
                 MarkDirty(now);
             }
             ShowOverlay(Overlay::Character, now);
+        }
+        else if(enc1_page_ == kEnc1PageTune && !shift)
+        {
+            // Per-bowl tuning: applied at the next strike (physical
+            // character); only the bar shows while a bowl rings.
+            int tune
+                = params.tune_ticks[key].load(std::memory_order_relaxed)
+                  + enc1_inc;
+            tune = tune < 0 ? 0 : (tune > kTickCount ? kTickCount : tune);
+            if(tune
+               != params.tune_ticks[key].load(std::memory_order_relaxed))
+            {
+                params.tune_ticks[key].store(tune,
+                                             std::memory_order_relaxed);
+                MarkDirty(now);
+            }
+            ShowOverlay(Overlay::Tune, now); // also at the end stops
         }
     }
 
@@ -574,17 +681,21 @@ void DrawCenterBar(int ticks, uint8_t red, uint8_t green, uint8_t blue)
                                    blue);
 }
 
-/** Directional pan bar, centered on white key 8 (index 7): panning
- *  left fills the bar toward key 1, panning right toward key 15; dead
- *  centre lights key 8 alone. */
-void DrawPanBar(int ticks)
+/** Directional centre-detent bar, centered on white key 8 (index 7):
+ *  values left of centre fill the bar toward key 1, right of centre
+ *  toward key 15; dead centre lights key 8 alone. Used for pan (cyan)
+ *  and tuning (violet). */
+void DrawPanBar(int ticks, uint8_t red, uint8_t green, uint8_t blue)
 {
     const int offset = ticks - 16; // -16 .. +16
     const int span   = ((offset < 0 ? -offset : offset) * 7 + 8) / 16; // 0..7
     const int lo     = offset < 0 ? 7 - span : 7;
     const int hi     = offset < 0 ? 7 : 7 + span;
     for(int white = lo; white <= hi; ++white)
-        chompi_leds::SetSmtLed(chompi_leds::kWhiteKeyLeds[white], 0, 40, 40);
+        chompi_leds::SetSmtLed(chompi_leds::kWhiteKeyLeds[white],
+                               red,
+                               green,
+                               blue);
 }
 
 /** The five bowl profiles as five 3-key sections; the active one lights. */
@@ -637,12 +748,26 @@ void DrawOverlayBar(uint32_t now)
                 break;
             case Overlay::Pan:
                 DrawPanBar(params.pan_ticks[last_white_key_].load(
-                    std::memory_order_relaxed));
+                               std::memory_order_relaxed),
+                           0, 40, 40); // cyan
                 break;
             case Overlay::ReverbMix:
                 // Pale ice bar for the temple-room reverb mix.
                 DrawBar(params.reverb_mix_ticks.load(std::memory_order_relaxed),
                         24, 32, 48);
+                break;
+            case Overlay::BowlVolume:
+                // Green bar: per-bowl volume of the selected bowl.
+                DrawBar(params.bowl_vol_ticks[last_white_key_].load(
+                            std::memory_order_relaxed),
+                        0, 48, 0);
+                break;
+            case Overlay::Tune:
+                // Violet centre-detent bar: flat to the left, sharp to
+                // the right, dead centre = unison.
+                DrawPanBar(params.tune_ticks[last_white_key_].load(
+                               std::memory_order_relaxed),
+                           30, 0, 48);
                 break;
             default: break;
         }
@@ -680,7 +805,14 @@ void RenderLeds()
     const bool shift = hw.ShiftHeld();
     chompi_leds::SetPthLed(chompi_leds::kPthShift,
                            shift ? 40 : 0, shift ? 40 : 0, shift ? 40 : 0);
-    chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 20, 9, 0);  // character
+    // The encoder-1 LED follows the page: green = bowl volume,
+    // orange = resonance character, violet = tuning.
+    if(enc1_page_ == kEnc1PageCharacter)
+        chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 20, 9, 0);
+    else if(enc1_page_ == kEnc1PageTune)
+        chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 14, 0, 20);
+    else
+        chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 0, 20, 0);
     chompi_leds::SetPthLed(chompi_leds::kPthEncoder2, 20, 11, 0); // strike
     chompi_leds::SetPthLed(chompi_leds::kPthEncoder3, 0, 8, 20);  // decay
     chompi_leds::SetPthLed(chompi_leds::kPthEncoder4, 14, 0, 20); // shimmer
@@ -734,8 +866,14 @@ chompi::BowlsPreset SnapshotParams()
     p.profile = static_cast<uint8_t>(
         params.profile_index.load(std::memory_order_relaxed));
     for(int w = 0; w < kWhiteKeys; ++w)
+    {
         p.pan[w] = static_cast<uint8_t>(
             params.pan_ticks[w].load(std::memory_order_relaxed));
+        p.bvol[w] = static_cast<uint8_t>(
+            params.bowl_vol_ticks[w].load(std::memory_order_relaxed));
+        p.tune[w] = static_cast<uint8_t>(
+            params.tune_ticks[w].load(std::memory_order_relaxed));
+    }
     p.reverb_mix = static_cast<uint8_t>(
         params.reverb_mix_ticks.load(std::memory_order_relaxed));
     return p;
@@ -750,7 +888,12 @@ void ApplyPreset(const chompi::BowlsPreset& p)
     params.shimmer_ticks.store(p.shimmer, std::memory_order_relaxed);
     params.profile_index.store(p.profile, std::memory_order_relaxed);
     for(int w = 0; w < kWhiteKeys; ++w)
+    {
         params.pan_ticks[w].store(p.pan[w], std::memory_order_relaxed);
+        params.bowl_vol_ticks[w].store(p.bvol[w],
+                                       std::memory_order_relaxed);
+        params.tune_ticks[w].store(p.tune[w], std::memory_order_relaxed);
+    }
     params.reverb_mix_ticks.store(p.reverb_mix, std::memory_order_relaxed);
     ApplyDecayShimmerToVoices();
 }

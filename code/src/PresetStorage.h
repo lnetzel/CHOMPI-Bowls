@@ -25,7 +25,7 @@ namespace chompi
 class PresetStorage
 {
   public:
-    static constexpr size_t   kJsonSize    = 384; /* serialized ~230 B */
+    static constexpr size_t   kJsonSize    = 512; /* serialized ~340 B */
     static constexpr int      kMaxRetries  = 3;
     static constexpr uint32_t kBackoffMs   = 250;
 

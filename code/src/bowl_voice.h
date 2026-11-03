@@ -34,8 +34,10 @@
 //
 // Stereo: pair member A sits slightly left, member B slightly right, the
 // spread widening for higher modes; the fundamental stays ~centred. A
-// per-bowl pan (-1..+1, SHIFT+encoder 1) tilts the whole voice; the pan
-// gains are smoothed per sample, so live panning never zipper-noises.
+// per-bowl pan (-1..+1, encoder 1 page 1 SHIFT+turn) tilts the whole
+// voice, and a per-bowl volume trim (0..2, encoder 1 page 1 turn) scales
+// its output; pan and gain are smoothed per sample, so live edits never
+// zipper-noise.
 
 #include "bowl_profile.h"
 
@@ -72,6 +74,8 @@ class BowlVoice
         pan_r_         = 1.0f;
         pan_l_target_  = 1.0f;
         pan_r_target_  = 1.0f;
+        gain_          = 1.0f;
+        gain_target_   = 1.0f;
         key_           = -1;
         rng_           = 0x12345678u;
         for(int k = 0; k < kResonators; ++k)
@@ -136,6 +140,17 @@ class BowlVoice
             pan = 1.0f;
         pan_l_target_ = pan < 0.0f ? 1.0f : 1.0f - pan;
         pan_r_target_ = pan > 0.0f ? 1.0f : 1.0f + pan;
+    }
+
+    /** Per-bowl volume trim 0..2 (1 = unity); smoothed per sample, so
+     *  live volume edits on a ringing bowl are click-free. */
+    void SetBowlGain(float gain)
+    {
+        if(gain < 0.0f)
+            gain = 0.0f;
+        if(gain > 2.0f)
+            gain = 2.0f;
+        gain_target_ = gain;
     }
 
     /** Strike the bowl. strike_norm 0..1 = soft..hard; the jitters are
@@ -237,11 +252,13 @@ class BowlVoice
                 sum_l += ya * ga_l_[m] + yb * gb_l_[m];
                 sum_r += ya * ga_r_[m] + yb * gb_r_[m];
             }
-            // Voice pan (~10 ms slew: live panning is click-free).
+            // Voice pan + per-bowl volume (~10 ms slews: live edits are
+            // click-free).
             pan_l_ += 0.002f * (pan_l_target_ - pan_l_);
             pan_r_ += 0.002f * (pan_r_target_ - pan_r_);
-            out_l[i] += sum_l * pan_l_;
-            out_r[i] += sum_r * pan_r_;
+            gain_ += 0.002f * (gain_target_ - gain_);
+            out_l[i] += sum_l * pan_l_ * gain_;
+            out_r[i] += sum_r * pan_r_ * gain_;
 
             // Leaky peak-ish envelope for voice stealing / idle detection.
             const float mag = sum_l >= 0.0f ? sum_l : -sum_l;
@@ -366,6 +383,8 @@ class BowlVoice
     float     pan_r_         = 1.0f;
     float     pan_l_target_  = 1.0f;
     float     pan_r_target_  = 1.0f;
+    float     gain_          = 1.0f;  // smoothed per-bowl volume trim
+    float     gain_target_   = 1.0f;
     int       key_           = -1;
     uint32_t  rng_           = 0x12345678u;
 

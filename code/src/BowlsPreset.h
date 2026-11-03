@@ -22,12 +22,13 @@ namespace chompi
 
 struct BowlsPreset
 {
-    static constexpr int kVersion = 3; /* v2: pan array; v3: reverb mix */
+    /* v2: pan array; v3: reverb mix; v4: per-bowl volume + tuning */
+    static constexpr int kVersion = 4;
 
     /* field ranges (mirror the tick counts in chompi_main.cpp) */
     static constexpr int kMaxTicks   = 32; /* 0..32 tick parameters */
     static constexpr int kMaxProfile = 4;  /* bowl profiles 0..4 */
-    static constexpr int kWhiteKeys  = 15; /* one pan value per bowl key */
+    static constexpr int kWhiteKeys  = 15; /* one value per bowl key */
 
     /* boot defaults (mirror Params in chompi_main.cpp) */
     static constexpr int kDefaultVolume     = 16;
@@ -38,6 +39,8 @@ struct BowlsPreset
     static constexpr int kDefaultProfile    = 0;
     static constexpr int kDefaultPan        = 16; /* centre */
     static constexpr int kDefaultReverbMix  = 8;  /* subtle temple room */
+    static constexpr int kDefaultBowlVol    = 16; /* unity gain (0 dB) */
+    static constexpr int kDefaultTune       = 16; /* unison (ratio 1) */
 
     uint8_t volume;     /**< 0..32 master volume ticks */
     uint8_t strike;     /**< 0..32 strike hardness ticks */
@@ -45,8 +48,10 @@ struct BowlsPreset
     uint8_t decay;      /**< 0..32 decay multiplier ticks */
     uint8_t shimmer;    /**< 0..32 paired-mode detune ticks */
     uint8_t profile;    /**< 0..4 selected bowl profile */
-    uint8_t pan[kWhiteKeys]; /**< per-bowl pan 0..32 (16 = centre) */
+    uint8_t pan[kWhiteKeys];  /**< per-bowl pan 0..32 (16 = centre) */
     uint8_t reverb_mix; /**< 0..32 reverb dry/wet mix ticks */
+    uint8_t bvol[kWhiteKeys]; /**< per-bowl volume 0..32 (16 = unity) */
+    uint8_t tune[kWhiteKeys]; /**< per-bowl tuning 0..32 (16 = unison) */
 
     void SetDefaults()
     {
@@ -58,9 +63,40 @@ struct BowlsPreset
         profile    = kDefaultProfile;
         reverb_mix = kDefaultReverbMix;
         for(int w = 0; w < kWhiteKeys; ++w)
-            pan[w] = kDefaultPan;
+        {
+            pan[w]  = kDefaultPan;
+            bvol[w] = kDefaultBowlVol;
+            tune[w] = kDefaultTune;
+        }
     }
 };
+
+/** Append one `,"name":[v0,..,v14]` array at `off` (a scalar field
+ *  always precedes the arrays, hence the leading comma). Returns the
+ *  new offset, or 0 when the buffer is too small. */
+inline size_t AppendArray(char *         buf,
+                          size_t         size,
+                          size_t         off,
+                          const char *   name,
+                          const uint8_t *values)
+{
+    int n = snprintf(buf + off, size - off, ",\"%s\":[", name);
+    if(n < 0 || static_cast<size_t>(n) >= size - off)
+        return 0;
+    off += static_cast<size_t>(n);
+    for(int w = 0; w < BowlsPreset::kWhiteKeys; ++w)
+    {
+        n = snprintf(buf + off, size - off, "%s%u", w == 0 ? "" : ",",
+                     (unsigned)values[w]);
+        if(n < 0 || static_cast<size_t>(n) >= size - off)
+            return 0;
+        off += static_cast<size_t>(n);
+    }
+    n = snprintf(buf + off, size - off, "]");
+    if(n < 0 || static_cast<size_t>(n) >= size - off)
+        return 0;
+    return off + static_cast<size_t>(n);
+}
 
 /** Serialize as compact versioned JSON. Returns the number of bytes
  *  written (excluding the terminator), or 0 when the buffer is too
@@ -72,7 +108,7 @@ inline size_t Serialize(const BowlsPreset &p, char *buf, size_t size)
                      "{\"version\":%d,"
                      "\"volume\":%u,\"strike\":%u,\"brightness\":%u,"
                      "\"decay\":%u,\"shimmer\":%u,\"profile\":%u,"
-                     "\"reverb_mix\":%u,\"pan\":[",
+                     "\"reverb_mix\":%u",
                      BowlsPreset::kVersion,
                      (unsigned)p.volume,
                      (unsigned)p.strike,
@@ -84,19 +120,17 @@ inline size_t Serialize(const BowlsPreset &p, char *buf, size_t size)
     if(n < 0 || static_cast<size_t>(n) >= size)
         return 0;
     size_t off = static_cast<size_t>(n);
-    for(int w = 0; w < BowlsPreset::kWhiteKeys; ++w)
-    {
-        n = snprintf(buf + off, size - off, "%s%u", w == 0 ? "" : ",",
-                     (unsigned)p.pan[w]);
-        if(n < 0 || static_cast<size_t>(n) >= size - off)
-            return 0;
-        off += static_cast<size_t>(n);
-    }
-    n = snprintf(buf + off, size - off, "]}");
+    off        = AppendArray(buf, size, off, "pan", p.pan);
+    if(off != 0)
+        off = AppendArray(buf, size, off, "bvol", p.bvol);
+    if(off != 0)
+        off = AppendArray(buf, size, off, "tune", p.tune);
+    if(off == 0)
+        return 0;
+    n = snprintf(buf + off, size - off, "}");
     if(n < 0 || static_cast<size_t>(n) >= size - off)
         return 0;
-    off += static_cast<size_t>(n);
-    return off;
+    return off + static_cast<size_t>(n);
 }
 
 /** Read one integer value for `query`, clamped to [lo, hi]. Missing
@@ -128,6 +162,39 @@ inline int QueryInt(char *      buf,
     return static_cast<int>(v);
 }
 
+/** Read one `"name":[v0,..]` array into dest, each value clamped to
+ *  0..kMaxTicks. A missing or short array keeps the existing (default)
+ *  values for the remaining keys. The buffer is non-const because
+ *  coreJSON's JSON_Search takes a char* (it never writes). */
+inline void QueryArray(char *     buf,
+                       size_t     len,
+                       const char *name,
+                       uint8_t *  dest,
+                       int        count)
+{
+    char * value     = nullptr;
+    size_t value_len = 0;
+    if(JSON_Search(buf, len, name, strlen(name), &value, &value_len)
+           != JSONSuccess
+       || value_len < 2 || value[0] != '[')
+        return;
+    size_t i = 1;
+    for(int w = 0; w < count && i < value_len; ++w)
+    {
+        char *     end = nullptr;
+        const long v   = strtol(value + i, &end, 10);
+        if(end == value + i)
+            break; /* no number here: keep the remaining defaults */
+        dest[w] = static_cast<uint8_t>(
+            v < 0 ? 0
+                  : (v > BowlsPreset::kMaxTicks ? BowlsPreset::kMaxTicks
+                                                : v));
+        i = static_cast<size_t>(end - value);
+        while(i < value_len && (value[i] == ',' || value[i] == ' '))
+            ++i;
+    }
+}
+
 /** Parse a state document. Returns false for invalid JSON or a NEWER
  *  schema version; older files load with defaults for missing keys. */
 inline bool Parse(char *buf, size_t len, BowlsPreset &p)
@@ -155,29 +222,11 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
                             BowlsPreset::kDefaultReverbMix, 0,
                             BowlsPreset::kMaxTicks);
 
-    /* pan array: "[v0,..,v14]" - walk the numbers with strtol; a missing
-     * or short array keeps the defaults for the remaining keys */
-    char * pan_value = nullptr;
-    size_t pan_len   = 0;
-    if(JSON_Search(buf, len, "pan", 3, &pan_value, &pan_len) == JSONSuccess
-       && pan_len >= 2 && pan_value[0] == '[')
-    {
-        size_t i = 1;
-        for(int w = 0; w < BowlsPreset::kWhiteKeys && i < pan_len; ++w)
-        {
-            char *     end = nullptr;
-            const long v   = strtol(pan_value + i, &end, 10);
-            if(end == pan_value + i)
-                break; /* no number here: keep the remaining defaults */
-            p.pan[w] = static_cast<uint8_t>(
-                v < 0 ? 0
-                      : (v > BowlsPreset::kMaxTicks ? BowlsPreset::kMaxTicks
-                                                    : v));
-            i = static_cast<size_t>(end - pan_value);
-            while(i < pan_len && (pan_value[i] == ',' || pan_value[i] == ' '))
-                ++i;
-        }
-    }
+    /* per-bowl arrays: "[v0,..,v14]" - a missing or short array keeps
+     * the defaults for the remaining keys */
+    QueryArray(buf, len, "pan", p.pan, BowlsPreset::kWhiteKeys);
+    QueryArray(buf, len, "bvol", p.bvol, BowlsPreset::kWhiteKeys);
+    QueryArray(buf, len, "tune", p.tune, BowlsPreset::kWhiteKeys);
     return true;
 }
 

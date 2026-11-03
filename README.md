@@ -1,4 +1,4 @@
-# CHOMPI Firmware Starter
+# CHOMPI Bowls - Physical Modelling of Tibetan Singing Bowls
 
 A small starting point for a new CHOMPI firmware. This is not a copy of TAPE: it contains only the BOOT_SRAM build setup, the STM32H750 memory layout, and a four-channel audio pass-through smoke test.
 
