@@ -221,6 +221,18 @@ class BowlVoice
         exc_lp1_ = exc_lp2_ = 0.0f;
     }
 
+    /** Select the bowl for RIMMING without striking it: sets the
+     *  fundamental and recomputes the resonator coefficients (which
+     *  also retunes the register-relative rub lowpass) but starts no
+     *  contact burst. A still-ringing voice keeps its energy and just
+     *  adopts the new tuning. */
+    void SelectForRub(float fundamental_hz, float detune_jitter)
+    {
+        fundamental_   = fundamental_hz;
+        detune_jitter_ = detune_jitter;
+        UpdateCoeffs();
+    }
+
     /** Accumulate the voice into the stereo block. */
     void ProcessBlock(float* out_l, float* out_r, size_t n)
     {

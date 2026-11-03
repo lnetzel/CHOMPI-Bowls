@@ -22,13 +22,14 @@ namespace chompi
 
 struct BowlsPreset
 {
-    /* v2: pan array; v3: reverb mix; v4: per-bowl volume + tuning */
-    static constexpr int kVersion = 4;
+    /* v2: pan array; v3: reverb mix; v4: per-bowl volume + tuning;
+     * v5: split keybed - per-KEY slots 15 -> 24 (rim 0-11, strike 12-23) */
+    static constexpr int kVersion = 5;
 
     /* field ranges (mirror the tick counts in chompi_main.cpp) */
     static constexpr int kMaxTicks   = 32; /* 0..32 tick parameters */
     static constexpr int kMaxProfile = 4;  /* bowl profiles 0..4 */
-    static constexpr int kWhiteKeys  = 15; /* one value per bowl key */
+    static constexpr int kKeySlots   = 24; /* rim keys 0-11 + strike 12-23 */
 
     /* boot defaults (mirror Params in chompi_main.cpp) */
     static constexpr int kDefaultVolume     = 16;
@@ -48,10 +49,10 @@ struct BowlsPreset
     uint8_t decay;      /**< 0..32 decay multiplier ticks */
     uint8_t shimmer;    /**< 0..32 paired-mode detune ticks */
     uint8_t profile;    /**< 0..4 selected bowl profile */
-    uint8_t pan[kWhiteKeys];  /**< per-bowl pan 0..32 (16 = centre) */
+    uint8_t pan[kKeySlots];  /**< per-key pan 0..32 (16 = centre) */
     uint8_t reverb_mix; /**< 0..32 reverb dry/wet mix ticks */
-    uint8_t bvol[kWhiteKeys]; /**< per-bowl volume 0..32 (16 = unity) */
-    uint8_t tune[kWhiteKeys]; /**< per-bowl tuning 0..32 (16 = unison) */
+    uint8_t bvol[kKeySlots]; /**< per-key volume 0..32 (16 = unity) */
+    uint8_t tune[kKeySlots]; /**< per-key tuning 0..32 (16 = unison) */
 
     void SetDefaults()
     {
@@ -62,7 +63,7 @@ struct BowlsPreset
         shimmer    = kDefaultShimmer;
         profile    = kDefaultProfile;
         reverb_mix = kDefaultReverbMix;
-        for(int w = 0; w < kWhiteKeys; ++w)
+        for(int w = 0; w < kKeySlots; ++w)
         {
             pan[w]  = kDefaultPan;
             bvol[w] = kDefaultBowlVol;
@@ -71,7 +72,7 @@ struct BowlsPreset
     }
 };
 
-/** Append one `,"name":[v0,..,v14]` array at `off` (a scalar field
+/** Append one `,"name":[v0,..,v23]` array at `off` (a scalar field
  *  always precedes the arrays, hence the leading comma). Returns the
  *  new offset, or 0 when the buffer is too small. */
 inline size_t AppendArray(char *         buf,
@@ -84,7 +85,7 @@ inline size_t AppendArray(char *         buf,
     if(n < 0 || static_cast<size_t>(n) >= size - off)
         return 0;
     off += static_cast<size_t>(n);
-    for(int w = 0; w < BowlsPreset::kWhiteKeys; ++w)
+    for(int w = 0; w < BowlsPreset::kKeySlots; ++w)
     {
         n = snprintf(buf + off, size - off, "%s%u", w == 0 ? "" : ",",
                      (unsigned)values[w]);
@@ -222,11 +223,23 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
                             BowlsPreset::kDefaultReverbMix, 0,
                             BowlsPreset::kMaxTicks);
 
-    /* per-bowl arrays: "[v0,..,v14]" - a missing or short array keeps
-     * the defaults for the remaining keys */
-    QueryArray(buf, len, "pan", p.pan, BowlsPreset::kWhiteKeys);
-    QueryArray(buf, len, "bvol", p.bvol, BowlsPreset::kWhiteKeys);
-    QueryArray(buf, len, "tune", p.tune, BowlsPreset::kWhiteKeys);
+    /* per-key arrays: "[v0,..,v23]" - a missing or short array keeps
+     * the defaults for the remaining keys. v4-and-older files hold 15
+     * white-key entries (one bowl per white key): load those into the
+     * rim keys, then copy bowls 0-11 onto the strike keys (12-23) so
+     * both halves inherit the bowl's old settings; the three dropped
+     * high bowls (old entries 12-14) are discarded. */
+    const int slots = version >= 5 ? BowlsPreset::kKeySlots : 15;
+    QueryArray(buf, len, "pan", p.pan, slots);
+    QueryArray(buf, len, "bvol", p.bvol, slots);
+    QueryArray(buf, len, "tune", p.tune, slots);
+    if(version < 5)
+        for(int k = 0; k < 12; ++k)
+        {
+            p.pan[12 + k]  = p.pan[k];
+            p.bvol[12 + k] = p.bvol[k];
+            p.tune[12 + k] = p.tune[k];
+        }
     return true;
 }
 
