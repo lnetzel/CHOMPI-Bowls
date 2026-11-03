@@ -84,6 +84,22 @@ bowls::BowlVoice voices[kVoiceCount];
 // must be fast, not for bulk audio memory.
 daisysp::ReverbSc DSY_SDRAM_BSS reverb;
 
+// Strike-transient darkening of the reverb SEND: a real mallet thud
+// barely excites a room - the room blooms on the sustained ring. So at
+// the moment of a strike the send's two-pole lowpass closes to a dark
+// ~1.2 kHz and re-opens toward ~9 kHz over ~180 ms; the dry path is
+// untouched, so the strike stays present while the room's answer to
+// the contact burst stays soft. (The send is filtered, not the voice:
+// the bowl itself keeps its full spectrum.)
+float       send_dark_       = 0.0f; // 1 at the strike instant, -> 0
+float       send_lp_l_       = 0.0f; // send-filter states (2-pole)
+float       send_lp_r_       = 0.0f;
+float       send_lp2_l_      = 0.0f;
+float       send_lp2_r_      = 0.0f;
+constexpr float kSendDarkRelease = 0.00011574f; // ~180 ms at 48 kHz
+constexpr float kSendLpDark      = 0.1454f;     // ~1.2 kHz one-pole
+constexpr float kSendLpOpen      = 0.6922f;     // ~9 kHz (~open)
+
 // ---------------------------------------------------------------------------
 // Parameter state
 // ---------------------------------------------------------------------------
@@ -356,6 +372,9 @@ void StrikeKey(int white_ordinal)
                      snorm,
                      amp_jitter,
                      det_jitter);
+    // The mallet contact burst barely excites a real room: darken the
+    // reverb send (it re-opens into the pure ring over ~180 ms).
+    send_dark_      = 1.0f;
     last_voice      = v;
     last_white_key_ = white_ordinal;
 }
@@ -619,9 +638,19 @@ void AudioCallback(AudioHandle::InputBuffer  in,
         daisysp::fonepole(volume_smooth, volume_target, 0.001f);
         daisysp::fonepole(mix_smooth, mix_target, 0.001f);
         // Temple-room reverb on the stereo bowl bus, before the master
-        // gain so the volume knob also controls the tail.
+        // gain so the volume knob also controls the tail. The send is
+        // lowpassed dark right after a strike (the mallet contact burst
+        // barely excites a real room) and re-opens into the pure ring;
+        // the dry path keeps the full spectrum.
+        send_dark_ -= kSendDarkRelease * send_dark_;
+        const float send_coef
+            = kSendLpOpen + (kSendLpDark - kSendLpOpen) * send_dark_;
+        daisysp::fonepole(send_lp_l_, mix_l[i], send_coef);
+        daisysp::fonepole(send_lp_r_, mix_r[i], send_coef);
+        daisysp::fonepole(send_lp2_l_, send_lp_l_, send_coef);
+        daisysp::fonepole(send_lp2_r_, send_lp_r_, send_coef);
         float wet_l, wet_r;
-        reverb.Process(mix_l[i], mix_r[i], &wet_l, &wet_r);
+        reverb.Process(send_lp2_l_, send_lp2_r_, &wet_l, &wet_r);
         const float dry   = 1.0f - mix_smooth;
         const float gain  = volume_smooth * volume_smooth;
         const float left  = daisysp::SoftClip(

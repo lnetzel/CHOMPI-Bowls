@@ -22,11 +22,18 @@
 // path. A re-strike adds energy on top of the still-ringing state; the
 // resonator state is never reset.
 //
-// Excitation = impulse + a ~2 ms noise burst, distributed across the
-// modes with per-mode weights. The Strike parameter tilts the burst
-// spectrum (soft = low modes; the hardest contact is capped at a
-// medium-bright mallet). Brightness adds a strong high-mode shelf
-// (applied at the next strike) and also opens up the rubbed modes live.
+// Excitation = a finite-contact mallet model, not a raw impulse. A
+// single-sample impulse is flat to Nyquist - a digital click that the
+// resonators pass straight through during the burst (ya = x + ...), so
+// both the dry strike and the reverb send splatter. Instead: a smooth
+// contact-force bump (zero value AND zero slope at both ends) plus a
+// short contact-noise burst, lowpassed to the mallet's brightness with
+// a fast attack ramp. Both live only for the contact time (~2 ms soft
+// felt, ~1.3 ms hardest) and are distributed across the modes with
+// per-mode weights. The Strike parameter tilts the burst spectrum
+// (soft = low modes; the hardest contact is capped at a medium-bright
+// mallet). Brightness adds a strong high-mode shelf (applied at the
+// next strike) and also opens up the rubbed modes live.
 // Rim rubbing feeds a low-level continuous noise into
 // the voice for as long as the wheel is turned: lowpassed (~2.5 kHz)
 // friction noise driving mainly the lowest modes - a real rubbed rim
@@ -66,6 +73,10 @@ class BowlVoice
         envelope_      = 0.0f;
         burst_pos_     = 0;
         burst_len_     = 1;
+        pulse_gain_    = 0.0f;
+        exc_lp_coef_   = 0.2f;
+        exc_lp1_       = 0.0f;
+        exc_lp2_       = 0.0f;
         rub_level_     = 0.0f;
         rub_smooth_    = 0.0f;
         rub_lp_        = 0.0f;
@@ -188,10 +199,26 @@ class BowlVoice
 
         UpdateCoeffs();
 
-        burst_len_ = static_cast<int>(fs_ * 0.002f); // ~2 ms noise burst
+        // Contact time scales with mallet hardness (soft felt ~2 ms,
+        // the hardest mallet ~1.3 ms); the force bump and the contact
+        // noise both live only for the contact time.
+        burst_len_ = static_cast<int>(fs_ * (0.0006f + 0.0014f * softness));
         if(burst_len_ < 1)
             burst_len_ = 1;
         burst_pos_ = burst_len_;
+
+        // Bump gain: the bump's low-frequency mode energy matches the
+        // old 0.6 single-sample impulse (the bump shape sums to
+        // ~0.53 x its length), so the ring's body stays as loud.
+        pulse_gain_ = 0.6f * 1.9f / static_cast<float>(burst_len_);
+
+        // Contact-noise lowpass (two one-poles = 12 dB/oct): 1.2 kHz
+        // for soft felt, 4 kHz at the hardest. The contact never
+        // carries Nyquist-flat energy, so neither the dry strike nor
+        // the reverb can splatter.
+        const float exc_cut = 1200.0f + 5600.0f * (1.0f - softness);
+        exc_lp_coef_ = 1.0f - expf(-2.0f * kPi * exc_cut / fs_);
+        exc_lp1_ = exc_lp2_ = 0.0f;
     }
 
     /** Accumulate the voice into the stereo block. */
@@ -214,9 +241,22 @@ class BowlVoice
                 const float t
                     = static_cast<float>(burst_pos_)
                       / static_cast<float>(burst_len_);
-                exc = intensity_ * 0.9f * t * t * Noise();
-                if(burst_pos_ == burst_len_)
-                    exc += intensity_ * 0.6f; // impulse at the moment of impact
+                const float p = 1.0f - t; // contact phase 0 -> 1
+                // Finite-contact force bump (replaces the old
+                // single-sample impulse): (4p(1-p))^2 is zero with
+                // zero slope at both ends, so there is no click and
+                // no trig in the audio path.
+                const float u = 4.0f * p * (1.0f - p);
+                exc = intensity_ * pulse_gain_ * u * u;
+                // Contact noise: two-pole lowpassed to the mallet's
+                // brightness, ~0.25 ms attack ramp (no step onset),
+                // t^2 release.
+                const int   n = burst_len_ - burst_pos_;
+                const float attack
+                    = n >= 12 ? 1.0f : static_cast<float>(n) / 12.0f;
+                exc_lp1_ += exc_lp_coef_ * (Noise() - exc_lp1_);
+                exc_lp2_ += exc_lp_coef_ * (exc_lp1_ - exc_lp2_);
+                exc += intensity_ * 1.2f * t * t * attack * exc_lp2_;
                 --burst_pos_;
             }
             float rub_exc = 0.0f;
@@ -374,7 +414,11 @@ class BowlVoice
     float     detune_jitter_ = 1.0f;
     float     envelope_      = 0.0f;
     int       burst_pos_     = 0;
-    int       burst_len_     = 1;
+    int       burst_len_     = 1;   // contact time in samples
+    float     pulse_gain_    = 0.0f; // contact-bump gain (per strike)
+    float     exc_lp_coef_   = 0.2f; // contact-noise lowpass (per strike)
+    float     exc_lp1_       = 0.0f; // contact-noise filter states
+    float     exc_lp2_       = 0.0f;
     float     rub_level_     = 0.0f;
     float     rub_smooth_    = 0.0f;
     float     rub_lp_        = 0.0f;  // lowpassed rub-noise state
