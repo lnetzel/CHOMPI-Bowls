@@ -30,11 +30,13 @@
 //   Physical encoder 3 (SW2/ENC_2): decay (LED4 blue, blue bar)
 //   Physical encoder 4 (SW3/ENC_3): shimmer - paired-mode detune (LED5
 //                         purple, centered purple bar)
-//   Transport wheel     : rim rubbing - the turn rate drives a sustained
-//                         excitation of the held rim-zone keys (max two)
-//                         or the last-pressed rim key (slow = soft,
-//                         fast = loud; centered white bar; the wheel
-//                         LEDs follow the rub level)
+//   Transport wheel     : rim rubbing - detents pump the PER-BOWL rub
+//                         level of the held rim-zone keys (max two) or
+//                         the last-pressed rim key: a bowl stays SILENT
+//                         until the wheel turns while it is selected
+//                         (slow = soft, fast = loud; only the two wheel
+//                         LEDs follow the level - no keyboard bar, so
+//                         held keys stay visible while rimming)
 //   Volume encoder      : press cycles page 1 master volume (green->
 //                         amber->red bar, LED10 follows the gradient;
 //                         the bar shows briefly at boot) / page 2 temple-
@@ -120,7 +122,6 @@ enum class Overlay : int
     Decay,
     Shimmer,
     Character,
-    Rub,
     Pan,
     ReverbMix,
     BowlVolume,
@@ -411,12 +412,16 @@ void EnsureRimVoice(int key)
     SelectRimKey(key, false);
 }
 
-// Rim rubbing: wheel detents pump rub_target up (fast turns = louder);
-// rub_level swells toward it over ~250 ms so the attack blooms naturally
-// and individual detent steps are never audible; the target decays back
-// to silence over ~0.35 s of no turning.
-float rub_target = 0.0f;
-float rub_level  = 0.0f;
+// Rim rubbing: wheel detents pump the PER-BOWL rub level of the active
+// set (fast turns = louder). A bowl that has not been rimmed while
+// selected stays silent - even while other bowls' levels are still
+// decaying. Every level decays back to silence over ~0.35 s of no
+// turning; the ~200 ms voice-side slew blooms each bowl from its own
+// silence.
+float rim_level_[bowls::kBowlCount] = {};
+
+// What the wheel LEDs show (set in ApplyControls, read in RenderLeds).
+volatile float rub_display_ = 0.0f;
 
 // Rim selection (rim zone = keys 0-11): rim_held_ is the press-ordered
 // set of currently held rim keys (max 2 - two-bowl rimming); rim_latch_
@@ -439,8 +444,10 @@ void ApplyRub()
 {
     for(int i = 0; i < kVoiceCount; ++i)
     {
-        const int key = voices[i].Key();
-        voices[i].SetRub(key >= 0 && InRubSet(key) ? rub_level : 0.0f);
+        const int   key    = voices[i].Key();
+        const float target
+            = key >= 0 && InRubSet(key) ? rim_level_[key] : 0.0f;
+        voices[i].SetRub(target);
     }
 }
 
@@ -604,30 +611,55 @@ void ApplyControls()
     else
         BumpTicks(params.volume_ticks, volume_inc, Overlay::Volume, now);
 
-    // Transport wheel: rim rubbing. Detents pump the rub TARGET (the
-    // turn rate sets the level); the applied level swells toward it over
-    // ~250 ms, so the attack blooms naturally instead of snapping on at
-    // the first tick.
+    // Transport wheel: rim rubbing. Detents pump the PER-BOWL rub
+    // levels of the active set only (the turn rate sets the level), so
+    // a bowl that has not been rimmed stays silent even while other
+    // bowls' levels are still decaying.
     const int wheel_inc = hw.EncoderIncrement(4);
     if(wheel_inc != 0)
     {
-        rub_target += 0.06f * static_cast<float>(wheel_inc < 0 ? -wheel_inc
-                                                               : wheel_inc);
-        if(rub_target > 1.0f)
-            rub_target = 1.0f;
-        // Make sure the active rub set actually HAS voices: a strike
-        // chord may have stolen them since the last turn.
+        const float pump = 0.06f * static_cast<float>(wheel_inc < 0
+                                                          ? -wheel_inc
+                                                          : wheel_inc);
         if(rim_held_n_ > 0)
         {
             for(int k = 0; k < rim_held_n_; ++k)
+            {
+                rim_level_[rim_held_[k]] += pump;
+                if(rim_level_[rim_held_[k]] > 1.0f)
+                    rim_level_[rim_held_[k]] = 1.0f;
+                // Make sure the active rub set actually HAS voices: a
+                // strike chord may have stolen them since the last turn.
                 EnsureRimVoice(rim_held_[k]);
+            }
         }
         else if(rim_latch_ >= 0)
+        {
+            rim_level_[rim_latch_] += pump;
+            if(rim_level_[rim_latch_] > 1.0f)
+                rim_level_[rim_latch_] = 1.0f;
             EnsureRimVoice(rim_latch_);
-        ShowOverlay(Overlay::Rub, now);
+        }
+        // No keyboard overlay here: the two wheel LEDs follow the rub
+        // level, and the keys keep showing held keys + ringing glow.
     }
-    rub_target *= 0.9990f; // ~0.35 s half-life once the wheel stops
-    rub_level += 0.002f * (rub_target - rub_level); // ~250 ms swell
+    // All rub levels decay back to silence over ~0.35 s of no turning.
+    for(int k = 0; k < bowls::kBowlCount; ++k)
+        rim_level_[k] *= 0.9990f;
+    // The wheel LEDs follow the active set's loudest bowl: a freshly
+    // selected, never-rimmed bowl reads dark until the wheel turns.
+    if(rim_held_n_ > 0)
+    {
+        float d = 0.0f;
+        for(int k = 0; k < rim_held_n_; ++k)
+            if(rim_level_[rim_held_[k]] > d)
+                d = rim_level_[rim_held_[k]];
+        rub_display_ = d;
+    }
+    else if(rim_latch_ >= 0)
+        rub_display_ = rim_level_[rim_latch_];
+    else
+        rub_display_ = 0.0f;
     ApplyRub();
 
     // Keys 0-11 (rim zone) SELECT bowls for wheel rimming - pressing
@@ -846,10 +878,6 @@ void DrawOverlayBar(uint32_t now)
                 DrawCharacterSections(
                     params.profile_index.load(std::memory_order_relaxed));
                 break;
-            case Overlay::Rub:
-                DrawCenterBar(static_cast<int>(rub_level * kTickCount),
-                              40, 40, 40);
-                break;
             case Overlay::Pan:
                 DrawPanBar(params.pan_ticks[last_key_].load(
                                std::memory_order_relaxed),
@@ -919,7 +947,7 @@ void RenderLeds()
     chompi_leds::SetPthLed(chompi_leds::kPthEncoder2, 20, 11, 0); // strike
     chompi_leds::SetPthLed(chompi_leds::kPthEncoder3, 0, 8, 20);  // decay
     chompi_leds::SetPthLed(chompi_leds::kPthEncoder4, 14, 0, 20); // shimmer
-    const uint8_t rub = static_cast<uint8_t>(rub_level * 40.0f);
+    const uint8_t rub = static_cast<uint8_t>(rub_display_ * 40.0f);
     chompi_leds::SetPthLed(chompi_leds::kPthWheelLeft, rub, rub, rub);
     chompi_leds::SetPthLed(chompi_leds::kPthWheelRight, rub, rub, rub);
     // The volume knob LED follows the page: master volume uses the

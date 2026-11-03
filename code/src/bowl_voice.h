@@ -243,9 +243,11 @@ class BowlVoice
         float rub = rub_smooth_;
         for(size_t i = 0; i < n; ++i)
         {
-            // Per-sample rub slew (~10 ms): wheel-detent steps and
-            // rub-target voice switches are inaudible.
-            rub += 0.002f * (rub_level_ - rub);
+            // Per-sample rub slew (~200 ms): a bowl entering the rub
+            // set blooms from ITS OWN silence instead of jumping in at
+            // the shared level, and a bowl leaving the set fades out
+            // gently. Detent steps stay inaudible.
+            rub += 0.0001f * (rub_level_ - rub);
 
             float exc = 0.0f;
             if(burst_pos_ > 0)
