@@ -80,7 +80,7 @@ constexpr int   kBlockSize  = 24;
 chompi::ChompiHardware hw;
 chompi::PresetStorage  preset_storage;
 
-constexpr int  kVoiceCount = 4;
+constexpr int  kVoiceCount = 5; // shared pool, quietest-voice steal
 bowls::BowlVoice voices[kVoiceCount];
 
 // Stereo temple-room reverb (DaisySP Freeverb derivative) on the bowl
@@ -89,6 +89,15 @@ bowls::BowlVoice voices[kVoiceCount];
 // The delay buffers (~387 KB) live in SDRAM - SRAM is for state that
 // must be fast, not for bulk audio memory.
 daisysp::ReverbSc DSY_SDRAM_BSS reverb;
+
+#ifdef CPU_METER
+// CPU meter with a ~5 s peak-hold: dropouts come from the WORST block,
+// not the average, so the peak is what matters. The Shift LED shows it
+// (green -> red) and it is printed over USB serial when logging is on.
+CpuLoadMeter g_cpu_meter;
+float        g_cpu_peak          = 0.0f;
+uint32_t     g_steal_flash_until = 0; // encoder-4 LED steal witness
+#endif
 
 // Strike-transient darkening of the reverb SEND: a real mallet thud
 // barely excites a room - the room blooms on the sustained ring. So at
@@ -263,17 +272,6 @@ float TuneRatioTicks(int ticks)
     return powf(2.0f, static_cast<float>(ticks - 16) * (1.0f / 16.0f));
 }
 
-// xorshift32 for the per-strike humanization jitter
-uint32_t rng_state = 0x9E3779B9u;
-
-float RandFloat() // 0..1
-{
-    rng_state ^= rng_state << 13;
-    rng_state ^= rng_state >> 17;
-    rng_state ^= rng_state << 5;
-    return static_cast<float>(rng_state >> 8) * (1.0f / 16777216.0f);
-}
-
 // The profile select needs TWO detent ticks per step: a single tick only
 // arms the accumulator, so a stray detent or an accidental brush can't
 // hop the sections (PhaseOff SectionStep pattern).
@@ -374,12 +372,21 @@ void StrikeKey(int key)
     const int   v      = AllocVoice(key);
     const float snorm
         = TicksToNorm(params.strike_ticks.load(std::memory_order_relaxed));
-    // Humanization: small natural variation between hits.
-    const float amp_jitter = 0.90f + 0.20f * RandFloat();
-    const float det_jitter = 0.90f + 0.20f * RandFloat();
+    // No per-strike randomization: a well-played bowl is consistent.
+    // Hit-to-hit variation still comes for free from the still-ringing
+    // state each new strike lands on (and the slow detune wander).
     ApplyVoiceSettings(v, key);
+    // A STOLEN voice still rings another bowl: damp its ghost deep
+    // (-34 dB) so it can never interfere with the new strike; a
+    // same-bowl re-hit keeps the gentler -12 dB continuity.
+    const bool stolen = voices[v].Key() != key && voices[v].IsActive();
     voices[v].SetKey(key);
-    voices[v].Strike(KeyFundamental(key), snorm, amp_jitter, det_jitter);
+    voices[v].Strike(KeyFundamental(key), snorm, 1.0f, 1.0f,
+                     stolen ? 0.02f : 0.25f);
+#ifdef CPU_METER
+    if(stolen)
+        g_steal_flash_until = System::GetNow() + 300;
+#endif
     // The mallet contact burst barely excites a real room: darken the
     // reverb send (it re-opens into the pure ring over ~180 ms).
     send_dark_ = 1.0f;
@@ -394,9 +401,9 @@ void SelectRimKey(int key, bool make_edit_target)
     const int v = AllocVoice(key);
     ApplyVoiceSettings(v, key);
     voices[v].SetKey(key);
-    // Humanized detune, like a strike, so two rimmed bowls beat
-    // slightly differently.
-    voices[v].SelectForRub(KeyFundamental(key), 0.90f + 0.20f * RandFloat());
+    // Deterministic detune, like strikes: the same bowl always sings
+    // with the same voice when selected.
+    voices[v].SelectForRub(KeyFundamental(key), 1.0f);
     if(make_edit_target)
         last_key_ = key;
 }
@@ -709,14 +716,13 @@ void AudioCallback(AudioHandle::InputBuffer  in,
                    size_t                    size)
 {
 #ifdef CPU_METER
-    static CpuLoadMeter meter;
-    static bool         meter_init = false;
+    static bool meter_init = false;
     if(!meter_init)
     {
-        meter.Init(kSampleRate, size);
+        g_cpu_meter.Init(kSampleRate, size);
         meter_init = true;
     }
-    meter.OnBlockStart();
+    g_cpu_meter.OnBlockStart();
 #endif
 
     (void)in; // no input monitoring in v1
@@ -771,10 +777,17 @@ void AudioCallback(AudioHandle::InputBuffer  in,
     }
 
 #ifdef CPU_METER
-    meter.OnBlockEnd();
+    g_cpu_meter.OnBlockEnd();
+    // Per-block load (GetMaxCpuLoad resets each call), peak-held so a
+    // brief overload stays visible on the LED / in the log.
+    const float load = g_cpu_meter.GetMaxCpuLoad();
+    if(load > g_cpu_peak)
+        g_cpu_peak = load;
+    else
+        g_cpu_peak *= 0.9995f; // ~5 s fall
     if(System::GetNow() % 500 < 1)
-        hw.seed.PrintLine("CPU load: %d%%",
-                          static_cast<int>(meter.GetAvgCpuLoad() * 100.0f));
+        hw.seed.PrintLine("CPU peak: %d%%",
+                          static_cast<int>(g_cpu_peak * 100.0f));
 #endif
 }
 
@@ -936,6 +949,14 @@ void RenderLeds()
     const bool shift = hw.ShiftHeld();
     chompi_leds::SetPthLed(chompi_leds::kPthShift,
                            shift ? 40 : 0, shift ? 40 : 0, shift ? 40 : 0);
+#ifdef CPU_METER
+    // Meter build: the Shift LED is the CPU load meter instead
+    // (green -> red, ~5 s peak-hold).
+    chompi_leds::SetPthLed(chompi_leds::kPthShift,
+                           static_cast<uint8_t>(48.0f * g_cpu_peak),
+                           static_cast<uint8_t>(48.0f * (1.0f - g_cpu_peak)),
+                           0);
+#endif
     // The encoder-1 LED follows the page: green = bowl volume,
     // orange = resonance character, violet = tuning.
     if(enc1_page_ == kEnc1PageCharacter)
@@ -947,6 +968,12 @@ void RenderLeds()
     chompi_leds::SetPthLed(chompi_leds::kPthEncoder2, 20, 11, 0); // strike
     chompi_leds::SetPthLed(chompi_leds::kPthEncoder3, 0, 8, 20);  // decay
     chompi_leds::SetPthLed(chompi_leds::kPthEncoder4, 14, 0, 20); // shimmer
+#ifdef CPU_METER
+    // Steal witness: encoder 4 LED goes white for ~300 ms when a strike
+    // steals a still-ringing voice - correlate it with audible chokes.
+    if(System::GetNow() < g_steal_flash_until)
+        chompi_leds::SetPthLed(chompi_leds::kPthEncoder4, 40, 40, 40);
+#endif
     const uint8_t rub = static_cast<uint8_t>(rub_display_ * 40.0f);
     chompi_leds::SetPthLed(chompi_leds::kPthWheelLeft, rub, rub, rub);
     chompi_leds::SetPthLed(chompi_leds::kPthWheelRight, rub, rub, rub);

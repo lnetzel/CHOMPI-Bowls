@@ -19,8 +19,9 @@
 // Every mode decays independently (no global amplitude envelope), so the
 // tone evolves naturally after the strike. Coefficients are computed only
 // at strike time or when a live parameter changes - no trig in the audio
-// path. A re-strike adds energy on top of the still-ringing state; the
-// resonator state is never reset.
+// path. A re-strike's contact briefly damps the still-ringing state (the
+// mallet rests on the bowl), so re-hits stay consistent instead of
+// phase-cancelling the old ring; the state is never hard-reset.
 //
 // Excitation = a finite-contact mallet model, not a raw impulse. A
 // single-sample impulse is flat to Nyquist - a digital click that the
@@ -35,9 +36,11 @@
 // mallet). Brightness adds a strong high-mode shelf (applied at the
 // next strike) and also opens up the rubbed modes live.
 // Rim rubbing feeds a low-level continuous noise into
-// the voice for as long as the wheel is turned: lowpassed (~2.5 kHz)
-// friction noise driving mainly the lowest modes - a real rubbed rim
-// sings the fundamental, full-band noise would sound like hiss.
+// the voice for as long as the wheel is turned: friction noise,
+// two-pole lowpassed to a narrow band (~3x the fundamental, capped at
+// 750 Hz), driving mainly the lowest modes - a real rubbed rim sings
+// the fundamental, and wideband noise reads as hiss (worst on high
+// bowls).
 //
 // Stereo: pair member A sits slightly left, member B slightly right, the
 // spread widening for higher modes; the fundamental stays ~centred. A
@@ -80,6 +83,7 @@ class BowlVoice
         rub_level_     = 0.0f;
         rub_smooth_    = 0.0f;
         rub_lp_        = 0.0f;
+        rub_lp2_       = 0.0f;
         rub_lp_coef_   = 0.08f;
         pan_l_         = 1.0f;
         pan_r_         = 1.0f;
@@ -98,6 +102,19 @@ class BowlVoice
             ga_l_[m] = ga_r_[m] = gb_l_[m] = gb_r_[m] = 0.0f;
             rub_weight_[m] = rw;
             rw *= 0.35f;
+
+            // Rotating shimmer: random start phase, 2..10 s orbit
+            // period spread across pairs and slightly randomized so two
+            // bowls never swirl in sync.
+            swirl_phase_[m] = 6.2831853f * (Noise() * 0.5f + 0.5f);
+            const float rate
+                = 0.10f * (1.0f + 0.22f * static_cast<float>(m))
+                  * (0.85f + 0.30f * (Noise() * 0.5f + 0.5f));
+            swirl_inc_[m]   = 2.0f * kPi * rate / fs_;
+            swirl_l_[m]     = swirl_l_t_[m] = 1.0f;
+            swirl_r_[m]     = swirl_r_t_[m] = 1.0f;
+            wander_[m]      = wander_target_[m] = wander_applied_[m] = 1.0f;
+            wander_hold_[m] = 0;
         }
     }
 
@@ -165,11 +182,14 @@ class BowlVoice
     }
 
     /** Strike the bowl. strike_norm 0..1 = soft..hard; the jitters are
-     *  small per-strike humanization factors (e.g. 0.9..1.1). */
+     *  small per-strike humanization factors (e.g. 0.9..1.1). damp_target
+     *  is how much of a previous ring survives the contact time (a
+     *  stolen voice is damped much deeper than a same-bowl re-hit). */
     void Strike(float fundamental_hz,
                 float strike_norm,
                 float amp_jitter,
-                float detune_jitter)
+                float detune_jitter,
+                float damp_target = 0.25f)
     {
         fundamental_     = fundamental_hz;
         detune_jitter_   = detune_jitter;
@@ -207,6 +227,13 @@ class BowlVoice
             burst_len_ = 1;
         burst_pos_ = burst_len_;
 
+        // Contact damping: during the contact time the mallet rests on
+        // the bowl and mutes the previous ring to ~25% (-12 dB), so a
+        // re-hit answers with a fresh, consistent ring instead of
+        // randomly phase-cancelling whatever was still sounding. On a
+        // quiet voice the state is ~zero and this is a no-op.
+        restrike_damp_ = powf(damp_target, 1.0f / static_cast<float>(burst_len_));
+
         // Bump gain: the bump's low-frequency mode energy matches the
         // old 0.6 single-sample impulse (the bump shape sums to
         // ~0.53 x its length), so the ring's body stays as loud.
@@ -239,15 +266,19 @@ class BowlVoice
         if(!IsActive() && rub_level_ < 0.001f && rub_smooth_ < 0.001f)
             return;
 
+        UpdateLife(n);
+
         float env = envelope_;
         float rub = rub_smooth_;
         for(size_t i = 0; i < n; ++i)
         {
-            // Per-sample rub slew (~200 ms): a bowl entering the rub
-            // set blooms from ITS OWN silence instead of jumping in at
-            // the shared level, and a bowl leaving the set fades out
-            // gently. Detent steps stay inaudible.
-            rub += 0.0001f * (rub_level_ - rub);
+            // Per-sample rub slew: a bowl entering the rub set blooms
+            // from ITS OWN silence (~0.5 s - a real rim crescendo takes
+            // time to catch) instead of jumping in at the shared level,
+            // and a bowl leaving the set fades out faster (~0.2 s).
+            // Detent steps stay inaudible.
+            rub += (rub_level_ > rub ? 0.00004f : 0.0001f)
+                   * (rub_level_ - rub);
 
             float exc = 0.0f;
             if(burst_pos_ > 0)
@@ -276,11 +307,13 @@ class BowlVoice
             float rub_exc = 0.0f;
             if(rub > 0.0f)
             {
-                // Soft friction excitation: the noise is lowpassed near
-                // the voice's own register, and the level is square-law
-                // shaped - slow turns stay gentle, nothing aggressive.
-                rub_lp_ += rub_lp_coef_ * (Noise() - rub_lp_);
-                rub_exc = rub * rub * 0.04f * rub_lp_;
+                // Soft friction excitation: two-pole lowpassed noise in
+                // a narrow friction band (12 dB/oct keeps high bowls
+                // clean), and the level is square-law shaped - slow
+                // turns stay gentle, nothing aggressive.
+                rub_lp_  += rub_lp_coef_ * (Noise() - rub_lp_);
+                rub_lp2_ += rub_lp_coef_ * (rub_lp_ - rub_lp2_);
+                rub_exc = rub * rub * 0.04f * rub_lp2_;
             }
 
             float sum_l = 0.0f;
@@ -297,14 +330,25 @@ class BowlVoice
                                       * rub_bright;
                 Resonator&   a = res_[2 * m];
                 Resonator&   b = res_[2 * m + 1];
+                if(burst_pos_ > 0)
+                {
+                    // Mallet contact damping: the previous ring is
+                    // smoothed toward silence over the contact time.
+                    a.y1 *= restrike_damp_;
+                    a.y2 *= restrike_damp_;
+                    b.y1 *= restrike_damp_;
+                    b.y2 *= restrike_damp_;
+                }
                 const float ya = x + a.c1 * a.y1 - a.c2 * a.y2;
                 a.y2           = a.y1;
                 a.y1           = ya;
                 const float yb = x + b.c1 * b.y1 - b.c2 * b.y2;
                 b.y2           = b.y1;
                 b.y1           = yb;
-                sum_l += ya * ga_l_[m] + yb * gb_l_[m];
-                sum_r += ya * ga_r_[m] + yb * gb_r_[m];
+                sum_l += (ya * ga_l_[m] + yb * gb_l_[m]) * swirl_l_[m];
+                sum_r += (ya * ga_r_[m] + yb * gb_r_[m]) * swirl_r_[m];
+                swirl_l_[m] += 0.004f * (swirl_l_t_[m] - swirl_l_[m]);
+                swirl_r_[m] += 0.004f * (swirl_r_t_[m] - swirl_r_[m]);
             }
             // Voice pan + per-bowl volume (~10 ms slews: live edits are
             // click-free).
@@ -350,39 +394,88 @@ class BowlVoice
      *  and on live decay/shimmer changes only - never per sample. */
     void UpdateCoeffs()
     {
-        const BowlProfile& p = GetBowlProfile(profile_);
         // Beat rate scales with pitch (detune_hz is a 220 Hz reference).
         const float det_scale = fundamental_ / 220.0f;
-        // The rub-noise lowpass tracks the voice's register (~3x the
-        // fundamental, capped at 6 kHz): a smooth friction texture for
-        // every bowl size.
+        // The rub-noise lowpass: ~3x the fundamental but capped at a
+        // narrow 750 Hz friction band - low bowls keep their texture,
+        // high bowls stay clean (wideband noise on a high bowl is hiss,
+        // not friction).
         float rub_cut = 3.0f * fundamental_;
-        if(rub_cut > 6000.0f)
-            rub_cut = 6000.0f;
+        if(rub_cut > 750.0f)
+            rub_cut = 750.0f;
         rub_lp_coef_ = 1.0f - expf(-2.0f * kPi * rub_cut / fs_);
         for(int m = 0; m < kPairs; ++m)
+            UpdatePairCoeffs(m, det_scale);
+    }
+
+    /** Recompute one pair's coefficients + pan gains. Called for every
+     *  pair by UpdateCoeffs(), and on its own when a pair's wandering
+     *  detune has drifted far enough to matter. */
+    void UpdatePairCoeffs(int m, float det_scale)
+    {
+        const BowlProfile& p = GetBowlProfile(profile_);
+        const float f0  = fundamental_ * p.ratio[m];
+        const float det = p.detune_hz[m] * det_scale * shimmer_mult_
+                          * detune_jitter_ * wander_[m];
+        const float t60 = p.t60_s[m] * decay_mult_;
+        SetResonator(res_[2 * m], f0, t60);
+        SetResonator(res_[2 * m + 1], f0 + det, t60);
+        wander_applied_[m] = wander_[m];
+
+        // Pair input gain: sin(w) equalizes the impulse-response
+        // peak across modes (a two-pole resonator's response peaks
+        // at ~g / sin(w)); 0 for a muted (above-Nyquist) resonator.
+        pair_in_[m] = PairInputGain(f0);
+
+        // Stereo: A slightly left, B slightly right; higher modes
+        // wider; the fundamental pair stays near-centre. kVoiceGain
+        // leaves headroom for the voices.
+        constexpr float kVoiceGain = 0.6f;
+        const float     w = 0.06f + 0.035f * static_cast<float>(m);
+        ga_l_[m] = (0.5f + w) * kVoiceGain;
+        ga_r_[m] = (0.5f - w) * kVoiceGain;
+        gb_l_[m] = (0.5f - w) * kVoiceGain;
+        gb_r_[m] = (0.5f + w) * kVoiceGain;
+    }
+
+    /** Block-rate "life": advance the swirl LFOs and the wandering
+     *  detune. All trig lives here - never per sample. */
+    void UpdateLife(size_t n)
+    {
+        const float det_scale = fundamental_ / 220.0f;
+        const float block_s   = static_cast<float>(n) / fs_;
+        for(int m = 0; m < kPairs; ++m)
         {
-            const float f0  = fundamental_ * p.ratio[m];
-            const float det = p.detune_hz[m] * det_scale * shimmer_mult_
-                              * detune_jitter_;
-            const float t60 = p.t60_s[m] * decay_mult_;
-            SetResonator(res_[2 * m], f0, t60);
-            SetResonator(res_[2 * m + 1], f0 + det, t60);
+            // Rotating shimmer: slow orbit, L/R in quadrature, so the
+            // pair's energy circles the stereo field.
+            swirl_phase_[m] += swirl_inc_[m] * static_cast<float>(n);
+            if(swirl_phase_[m] > 6.2831853f)
+                swirl_phase_[m] -= 6.2831853f;
+            constexpr float kSwirlDepth = 0.18f;
+            swirl_l_t_[m] = 1.0f + kSwirlDepth * cosf(swirl_phase_[m]);
+            swirl_r_t_[m] = 1.0f + kSwirlDepth * sinf(swirl_phase_[m]);
 
-            // Pair input gain: sin(w) equalizes the impulse-response
-            // peak across modes (a two-pole resonator's response peaks
-            // at ~g / sin(w)); 0 for a muted (above-Nyquist) resonator.
-            pair_in_[m] = PairInputGain(f0);
-
-            // Stereo: A slightly left, B slightly right; higher modes
-            // wider; the fundamental pair stays near-centre. kVoiceGain
-            // leaves headroom for four voices.
-            constexpr float kVoiceGain = 0.6f;
-            const float     w          = 0.06f + 0.035f * static_cast<float>(m);
-            ga_l_[m] = (0.5f + w) * kVoiceGain;
-            ga_r_[m] = (0.5f - w) * kVoiceGain;
-            gb_l_[m] = (0.5f - w) * kVoiceGain;
-            gb_r_[m] = (0.5f + w) * kVoiceGain;
+            // Wandering beat: random-walk the pair's detune multiplier
+            // within +/-8%, ~2.5 s drift constant, new target every
+            // ~0.7-2.5 s. The beat never settles into a metronome.
+            wander_hold_[m] -= static_cast<int>(n);
+            if(wander_hold_[m] <= 0)
+            {
+                wander_target_[m]
+                    = 0.92f + 0.16f * (Noise() * 0.5f + 0.5f);
+                const float hold_s
+                    = 0.7f + 1.8f * (Noise() * 0.5f + 0.5f);
+                wander_hold_[m] = static_cast<int>(hold_s * fs_);
+            }
+            wander_[m]
+                += (block_s / 2.5f) * (wander_target_[m] - wander_[m]);
+            if(wander_[m] > wander_applied_[m] + 0.003f
+               || wander_[m] < wander_applied_[m] - 0.003f)
+            {
+                // Steps are ~0.3% of the detune (<= ~0.15 Hz), so
+                // retuning the ringing pair is inaudible.
+                UpdatePairCoeffs(m, det_scale); // sets wander_applied_
+            }
         }
     }
 
@@ -430,13 +523,15 @@ class BowlVoice
     int       burst_pos_     = 0;
     int       burst_len_     = 1;   // contact time in samples
     float     pulse_gain_    = 0.0f; // contact-bump gain (per strike)
+    float     restrike_damp_ = 1.0f; // per-sample contact damping (per strike)
     float     exc_lp_coef_   = 0.2f; // contact-noise lowpass (per strike)
     float     exc_lp1_       = 0.0f; // contact-noise filter states
     float     exc_lp2_       = 0.0f;
     float     rub_level_     = 0.0f;
     float     rub_smooth_    = 0.0f;
-    float     rub_lp_        = 0.0f;  // lowpassed rub-noise state
-    float     rub_lp_coef_   = 0.08f; // register-relative rub LP
+    float     rub_lp_        = 0.0f;  // lowpassed rub-noise states (2-pole)
+    float     rub_lp2_       = 0.0f;
+    float     rub_lp_coef_   = 0.08f; // friction-band lowpass coefficient
     float     pan_l_         = 1.0f;  // smoothed pan gains
     float     pan_r_         = 1.0f;
     float     pan_l_target_  = 1.0f;
@@ -454,6 +549,20 @@ class BowlVoice
     float     ga_r_[kPairs];
     float     gb_l_[kPairs];
     float     gb_r_[kPairs];
+
+    // Rotating shimmer: slow per-pair stereo orbit.
+    float swirl_phase_[kPairs];   // LFO phase, radians
+    float swirl_inc_[kPairs];     // per-sample phase increment
+    float swirl_l_[kPairs];       // smoothed per-pair swirl gains
+    float swirl_r_[kPairs];
+    float swirl_l_t_[kPairs];     // block-rate targets
+    float swirl_r_t_[kPairs];
+
+    // Wandering beat: slow per-pair detune random walk.
+    float wander_[kPairs];         // current detune multiplier
+    float wander_target_[kPairs];  // where it is drifting to
+    float wander_applied_[kPairs]; // multiplier in the current coeffs
+    int   wander_hold_[kPairs];    // samples until a new target is picked
 };
 
 } // namespace bowls
