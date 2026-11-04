@@ -5,7 +5,8 @@
 // Settings for every render: 48 kHz, 24-sample blocks (the firmware's
 // control/audio quantum), deterministic voices (same Init seed).
 //
-//   T0  textured path is sample-identical to the pre-change baseline
+//   T0  rub path (both rimming characters + crossfade) is
+//       sample-identical to the hardware-accepted baseline
 //       (.baseline/baseline.raw; skipped with a note when absent)
 //   T1  textured sustained RMS matches the recorded anchor (<= 1 dB)
 //   T2  clean from silence: blooms, sustains at the friction path's
@@ -141,17 +142,22 @@ double GoertzelPower(const std::vector<float>& x, size_t off, size_t n,
     return s1 * s1 + s2 * s2 - cw * s1 * s2;
 }
 
-/** The fixed T0 script - must mirror baseline_gen.cpp EXACTLY. */
+/** The fixed T0 script - must mirror baseline_gen.cpp EXACTLY.
+ *  Rub-only: guards both rimming characters (and their crossfade) while
+ *  the strike model is intentionally changed. */
 void RunBaselineScript(std::vector<float>& out)
 {
     bowls::BowlVoice v;
     v.Init(kFs);
     v.SetProfile(0);
     v.SetBrightness(0.5f);
-    v.Strike(220.0f, 0.7f, 1.0f, 1.0f);
+    v.SelectForRub(220.0f, 1.0f);
+    v.SetRub(0.8f, 0.0f); // textured
+    Render(v, 1.0, 0.0, &out);
+    v.SetRub(0.8f, 1.0f); // crossfade to clean
+    Render(v, 1.0, 0.0, &out);
+    v.SetRub(0.0f, 1.0f); // wheel stops: fade + ring-down
     Render(v, 0.5, 0.0, &out);
-    v.SetRub(0.8f, 0.0f);
-    Render(v, 1.5, 0.0, &out);
 }
 
 void T0_BaselineIdentity()
@@ -160,8 +166,8 @@ void T0_BaselineIdentity()
     if(!f)
     {
         std::printf("%-46s SKIP  (.baseline/baseline.raw missing - run "
-                    "'make baseline' from the pre-change tree)\n",
-                    "T0 textured sample-identity vs pre-change");
+                    "'make baseline' from the accepted tree)\n",
+                    "T0 rub sample-identity vs accepted build");
         return;
     }
     std::vector<float> ref;
@@ -187,7 +193,7 @@ void T0_BaselineIdentity()
     std::snprintf(det, sizeof(det), "samples=%u max|diff|=%g",
                   static_cast<unsigned>(now.size()), max_diff);
     Check(ref.size() == now.size() && max_diff == 0.0,
-          "T0 textured sample-identity vs pre-change", det);
+          "T0 rub sample-identity vs accepted build", det);
 }
 
 /** Sustained rubbed render at the reference setup (220 Hz, Temple,

@@ -1,9 +1,10 @@
 // Generates .baseline/baseline.raw: the reference render of the fixed
-// script below, compiled against the PRE-CHANGE snapshot of
-// bowl_voice.h / bowl_profile.h in .baseline/ (copied before the
-// direction-selected rim texture was implemented). Run `make baseline`
-// once; render_test.cpp T0 replays the identical script against the
-// current header and requires bit-identical output.
+// script below, compiled against the ACCEPTED post-rimming snapshot of
+// bowl_voice.h / bowl_profile.h in .baseline/. Run `make baseline` once
+// after a feature is hardware-accepted; render_test.cpp T0 replays the
+// identical script against the current header and requires bit-identical
+// output. The script is RUB-ONLY on purpose: it guards both rimming
+// characters while the strike model is intentionally changed.
 //
 // The script must mirror RunBaselineScript() in render_test.cpp EXACTLY
 // (same calls, same order, same values - the voice's RNG sequence and
@@ -23,16 +24,21 @@ int main()
     v.Init(kFs);
     v.SetProfile(0);
     v.SetBrightness(0.5f);
-    v.Strike(220.0f, 0.7f, 1.0f, 1.0f);
+    v.SelectForRub(220.0f, 1.0f);
 
-    // 0.5 s struck, then 1.5 s struck + textured rub (level 0.8).
+    // 1.0 s textured rub, 1.0 s crossfade into clean, 0.5 s stopped
+    // (fade + natural ring-down).
     std::vector<float> mono;
     float              l[kBlk], r[kBlk];
-    for(int phase = 0; phase < 2; ++phase)
+    for(int phase = 0; phase < 3; ++phase)
     {
         if(phase == 1)
-            v.SetRub(0.8f);
-        const int blocks = phase == 0 ? 1000 : 3000;
+            v.SetRub(0.8f, 1.0f);
+        else if(phase == 2)
+            v.SetRub(0.0f, 1.0f);
+        else
+            v.SetRub(0.8f, 0.0f);
+        const int blocks = phase == 0 ? 2000 : (phase == 1 ? 2000 : 1000);
         for(int b = 0; b < blocks; ++b)
         {
             for(int i = 0; i < kBlk; ++i)

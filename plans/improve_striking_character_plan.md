@@ -1,6 +1,32 @@
 # Improve Bowl Striking Character
 
-Status: **awaiting approval**. Planning only; no firmware changes.
+Status: **implemented and approved on hardware** (2026-11-04).
+
+User-directed final voicing (felt mallet, bass-forward strike): contact
+4-6 ms, tilt exponent 2.4, `kStrikeUpper` 1.8 (+5.1 dB), tick band
+0.6-1 kHz at `kStrikeNoise` 0.5. Confirmed by the user on device:
+"It sounds better now" and the ring reads longer (side effect of strike
+energy feeding the long-lived modes plus register normalization).
+Brightness (SHIFT+encoder 2) restores the metallic side live.
+
+Implementation summary (details at the bottom of this file):
+
+- Strike excitation reworked in [bowl_voice.h](../code/src/bowl_voice.h):
+  asymmetric contact pulse (smoothstep press over ~75% then release,
+  ~4-6 ms hardness-scaled), the strike input is injected into the
+  resonator state (no direct raw-force feedthrough in the radiated
+  output), the contact tick is a brief ~1.2 ms high-band (4-6.5 kHz)
+  sub-burst at reduced gain (`kStrikeNoise` 0.8), and a calibrated
+  upper-mode shelf (`kStrikeUpper` 2.4 = +7.6 dB on modes 2+) restores
+  the references' modal balance. Mode-1 ring level is normalized per
+  strike via a Goertzel measurement of the pulse spectrum at the
+  fundamental (lift capped at 3x for bounded registers/tuning).
+- Host tooling in `code/tests/`: `make analyze` (reference WAV vs render
+  comparison), `make strike-test` (strike regressions), `make test`
+  (rimming regression - rub path still bit-identical to the accepted
+  rimming build).
+- The old symmetric-bump model with per-mode null compensation was tried
+  and rejected (deep spectral nulls destabilized mode-2 balance).
 
 ## Problem and goal
 
@@ -258,3 +284,53 @@ These metrics support, but do not replace, acceptance of the audible attack.
 - Measure worst-block CPU with reverb active and repeated attacks/control
   changes. Target below 80% load for margin, with no deadline overruns or
   audible dropouts. Report actual memory usage and deltas for each build.
+
+## Implementation measurements (2026-11-04)
+
+Analysis method as specified, with two documented corrections discovered
+during the baseline study:
+
+1. The plain 0.5-2 s ring window is corrupted by the render's deep
+   equal-amplitude pair beat null (default Shimmer lands a ~-20 dB null
+   inside the window) and by the residual T60 mismatch (references measure
+   ~38-41 s; the panel's Decay tops out at 24 s). Both effects drag the
+   ring-rate normalization down and masquerade as "attack too loud".
+   Ring windows were extended to 0.5-4 s and renders are decay-matched to
+   the reference's measured mode-1 T60 (clamped to the panel range).
+2. Reference onsets contain essentially no direct-force transient
+   (first 2 ms at -40..-58 dB rel ring rate); the audible bloom is a
+   ~5-10 ms swell.
+
+Acceptance metrics (decay-matched, defaults: Strike 16, Brightness 16,
+profile Temple; render at the reference pitch):
+
+| Metric | Ref bowl 1 | Ref bowl 3 | Baseline err | Candidate err |
+|---|---:|---:|---|---|
+| B mode2/mode1 early | -10.9 dB | -19.6 dB | -3.6 / +8.1 dB | **-2.2 / +3.8 dB** |
+| mode3/mode1 early   | -25.9 dB | -31.7 dB | n/a | +2.0 / +2.1 dB |
+| A 0-100 ms/ring     | -11.2 dB | -9.8 dB | +4.9 / +2.9 dB | +5.0 / +3.4 dB |
+| Early centroid      | 458 Hz | 838 Hz | 369 / 552 Hz | 379 / 503 Hz |
+| >3 kHz early share  | -61.0 dB | -49.6 dB | -83.6 / -62.9 dB | -76.0 / -62.2 dB |
+
+B (the modal-balance acceptance metric) improves against **both**
+references. A does not materially move: its residual is structural
+(panel-limited decay + equal-amplitude pair beats, ~+8.6 dB of the early
+window is predicted by ring-window decay and beat coherence alone), not
+attack energy; the model comparison showed the same +5/+3 dB gap with
+the tick disabled entirely. Per the plan's own rule this is recorded as
+the locked tolerance, and final approval is by listening.
+
+Envelope: first 5 ms sits ~+12 dB rel ring (was a full-amplitude step;
+references ~-10..+1 dB). The bloom over the 4-6 ms contact is audible
+and click-free; the remaining onset-level difference is part of the
+structural gap above. `E(0-2 ms)` dropped from +11.8 to about +8-10 dB.
+
+Strike regression suite (`make strike-test`): determinism (bit-exact),
+block-size 1 vs 24 (max diff 3.8e-05), re-strikes at 10/50/200/1000 ms,
+20 rapid hard hits + steal (peak 1.51 vs old engine's 1.42 on the same
+script), strike->rim reuse without burst restart, above-band modes at
+2x tuning (peak 1.10; an early uncapped normalization exploded to 11.8,
+hence the 3x cap), and the 12-bowl x 5-profile x control-extreme sweep
+(peak 0.99, ring spread 17.7 dB) all pass. Rimming regression
+(`make test`) remains bit-identical to the hardware-accepted rimming
+build.

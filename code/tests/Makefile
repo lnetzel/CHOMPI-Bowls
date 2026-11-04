@@ -15,6 +15,21 @@ test: render_test.exe
 cal: render_test.exe
 	./render_test.exe cal
 
+# Strike work (plans/improve_striking_character_plan.md): analyze the
+# two reference recordings vs current-engine renders at matched pitches.
+analyze: strike_analyze.exe
+	./strike_analyze.exe compare
+
+strike_analyze.exe: strike_analyze.cpp ../src/bowl_voice.h ../src/bowl_profile.h
+	$(CXX) $(CXXFLAGS) -o $@ strike_analyze.cpp
+
+# Strike regression suite (determinism, re-hits, steals, sweeps).
+strike-test: strike_test.exe
+	./strike_test.exe
+
+strike_test.exe: strike_test.cpp ../src/bowl_voice.h ../src/bowl_profile.h ../src/bowl_scale.h
+	$(CXX) $(CXXFLAGS) -o $@ strike_test.cpp
+
 # Regenerate .baseline/baseline.raw from the PRE-CHANGE header snapshot
 # in .baseline/. The snapshot was copied before the rim-texture change;
 # do not refresh it from a post-change tree (that defeats T0).
@@ -28,6 +43,6 @@ baseline_gen.exe: baseline_gen.cpp .baseline/bowl_voice.h .baseline/bowl_profile
 	$(CXX) $(CXXFLAGS) -o $@ baseline_gen.cpp
 
 clean:
-	rm -f render_test.exe baseline_gen.exe
+	rm -f render_test.exe baseline_gen.exe strike_analyze.exe
 
-.PHONY: test cal baseline clean
+.PHONY: test cal analyze baseline clean
