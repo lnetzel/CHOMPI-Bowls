@@ -155,8 +155,25 @@ class BowlVoice
     /** Rough loudness estimate for quietest-voice stealing. */
     float Envelope() const { return envelope_; }
 
-    /** Still sounding (or about to sound)? */
+    /** Still sounding (or about to sound)? Drives voice allocation and
+     *  the LED ring glow - an AUDIBILITY notion, not an audio gate. */
     bool IsActive() const { return envelope_ > 1.0e-4f || burst_pos_ > 0; }
+
+    /** Still holds computable ring energy? Unlike IsActive() this reads
+     *  the resonator STATES: the output sum can null between two beating
+     *  pair members while the ring is still alive, so gating the audio
+     *  path on the output envelope killed the tail mid-swell - the beat
+     *  simply stopped ~20 dB early instead of ringing out. The state
+     *  check is null-immune, and its -100 dBFS threshold sits below the
+     *  codec noise floor, so the ring decays until it is truly silent. */
+    bool HasTail() const
+    {
+        for(int k = 0; k < kResonators; ++k)
+            if(res_[k].y1 > 1.0e-5f || res_[k].y1 < -1.0e-5f
+               || res_[k].y2 > 1.0e-5f || res_[k].y2 < -1.0e-5f)
+                return true;
+        return false;
+    }
 
     // -- parameters ------------------------------------------------------
 
@@ -363,7 +380,14 @@ class BowlVoice
     /** Accumulate the voice into the stereo block. */
     void ProcessBlock(float* out_l, float* out_r, size_t n)
     {
-        if(!IsActive() && rub_level_ < 0.001f && rub_smooth_ < 0.001f)
+        // Idle gate: skip only when the ring is TRULY over. Gating on
+        // the output envelope (IsActive) cut the voice during a beat
+        // null with the tail still faintly audible; the null-immune
+        // state check lets every mode ring out to silence. The
+        // anti-denormal snap below eventually drops the states to exact
+        // zero, so a fully decayed voice still costs nothing.
+        if(burst_pos_ <= 0 && rub_level_ < 0.001f && rub_smooth_ < 0.001f
+           && !HasTail())
             return;
 
         UpdateLife(n);
