@@ -28,7 +28,7 @@ Variants:
 
 - First build / toolchain sanity check: add `make check-toolchain` before the build (must print GCC 10.3.1).
 - Clean rebuild: `make clean` first.
-- CPU-meter build (user passes `cpu-meter`): append `CPU_METER=1`.
+- CPU-meter build (user passes `cpu-meter`): append `CPU_METER=1`. Otherwise, NEVER include the CPU meter in the build.
 - A build request runs only the firmware build and required memory report. Do not run tests by default.
 - If the user explicitly requests both a build and tests (for example, "build and test"), run the native test suite after the firmware build succeeds: `make -C /c/Dev/CHOMPI-BOWLS/code/tests test` from the MSYS2 UCRT64 shell. Report test results separately from the firmware build and memory usage.
 
@@ -77,4 +77,4 @@ and sum section sizes by load address (per `code/src/chompi_sram.lds`):
 
 - Output binary: `code/src/build/CHOMPI_BOWLS_v1.0.bin` — install by copying it to the SD card root (delete other `.bin` files); do not flash the bootloader.
 - Do **not** rebuild the vendored libDaisy/DaisySP libraries unless asked; the build links the committed prebuilt `.a` files.
-- Native DSP tests are a separate target (`make -C code/tests test`); run them only when the user explicitly requests tests alongside the build.
+- Native DSP tests are a separate target (`make -C code/tests test`); run them only when the user explicitly requests tests alongside the build. Never do this on your own initiative.

@@ -36,7 +36,11 @@
 //                         until the wheel turns while it is selected
 //                         (slow = soft, fast = loud; only the two wheel
 //                         LEDs follow the level - no keyboard bar, so
-//                         held keys stay visible while rimming)
+//                         held keys stay visible while rimming). The
+//                         DIRECTION picks the sound: clockwise = the
+//                         classic friction texture, counter-clockwise
+//                         = a clean sustained bowl tone; the last
+//                         direction sticks while the wheel is still.
 //   Volume encoder      : press cycles page 1 master volume (green->
 //                         amber->red bar, LED10 follows the gradient;
 //                         the bar shows briefly at boot) / page 2 temple-
@@ -427,6 +431,14 @@ void EnsureRimVoice(int key)
 // silence.
 float rim_level_[bowls::kBowlCount] = {};
 
+// Per-bowl rim character, chosen by the wheel DIRECTION of the last
+// turn while the bowl was in the active set: false = clockwise
+// friction texture (the original sound), true = counter-clockwise
+// clean sustained tone. Transient performance state - never saved to
+// the preset and no LED mode; a bowl keeps its last character while
+// its level fades, and bowls outside the active set are untouched.
+bool rim_clean_[bowls::kBowlCount] = {};
+
 // What the wheel LEDs show (set in ApplyControls, read in RenderLeds).
 volatile float rub_display_ = 0.0f;
 
@@ -454,7 +466,16 @@ void ApplyRub()
         const int   key    = voices[i].Key();
         const float target
             = key >= 0 && InRubSet(key) ? rim_level_[key] : 0.0f;
-        voices[i].SetRub(target);
+        // Level AND character travel together: a rim voice reacquired
+        // after a strike-steal picks up the bowl's last direction
+        // choice along with its level. A fading bowl outside the rub
+        // set keeps its own character (rim keys only - a strike key
+        // never rims).
+        const float clean
+            = key >= 0 && key <= bowls::kRimKeyLast && rim_clean_[key]
+                  ? 1.0f
+                  : 0.0f;
+        voices[i].SetRub(target, clean);
     }
 }
 
@@ -628,6 +649,14 @@ void ApplyControls()
         const float pump = 0.06f * static_cast<float>(wheel_inc < 0
                                                           ? -wheel_inc
                                                           : wheel_inc);
+        // The wheel DIRECTION selects the rim character of the active
+        // set (the magnitude keeps pumping the level as before):
+        // clockwise = friction texture, counter-clockwise = clean
+        // sustained tone. QuadratureEncoder documents +1 detent =
+        // clockwise; if the physical wheel reads backwards, flip this
+        // one comparison. A stopped wheel changes nothing - zero
+        // movement is not a direction.
+        const bool clean = wheel_inc < 0;
         if(rim_held_n_ > 0)
         {
             for(int k = 0; k < rim_held_n_; ++k)
@@ -635,6 +664,7 @@ void ApplyControls()
                 rim_level_[rim_held_[k]] += pump;
                 if(rim_level_[rim_held_[k]] > 1.0f)
                     rim_level_[rim_held_[k]] = 1.0f;
+                rim_clean_[rim_held_[k]] = clean;
                 // Make sure the active rub set actually HAS voices: a
                 // strike chord may have stolen them since the last turn.
                 EnsureRimVoice(rim_held_[k]);
@@ -645,6 +675,7 @@ void ApplyControls()
             rim_level_[rim_latch_] += pump;
             if(rim_level_[rim_latch_] > 1.0f)
                 rim_level_[rim_latch_] = 1.0f;
+            rim_clean_[rim_latch_] = clean;
             EnsureRimVoice(rim_latch_);
         }
         // No keyboard overlay here: the two wheel LEDs follow the rub

@@ -35,12 +35,26 @@
 // (soft = low modes; the hardest contact is capped at a medium-bright
 // mallet). Brightness adds a strong high-mode shelf (applied at the
 // next strike) and also opens up the rubbed modes live.
-// Rim rubbing feeds a low-level continuous noise into
-// the voice for as long as the wheel is turned: friction noise,
-// two-pole lowpassed to a narrow band (~3x the fundamental, capped at
-// 750 Hz), driving mainly the lowest modes - a real rubbed rim sings
-// the fundamental, and wideband noise reads as hiss (worst on high
-// bowls).
+// Rim rubbing feeds a low-level continuous excitation into the voice
+// for as long as the wheel is turned, in two characters selected by
+// the wheel direction (chompi_main.cpp):
+//   clockwise         = friction noise, two-pole lowpassed to a narrow
+//                       band (~3x the fundamental, capped at 750 Hz),
+//                       driving mainly the lowest modes - a real rubbed
+//                       rim sings the fundamental, and wideband noise
+//                       reads as hiss (worst on high bowls)
+//   counter-clockwise = a CLEAN sustained tone: phase-continuous
+//                       rotation oscillators at each pair's (wandering)
+//                       modal frequencies drive the same resonators in
+//                       place of the noise. The drive is normalized by
+//                       sqrt(1-r): a sustained sine at resonance builds
+//                       to A/(2(1-r)), so the sustained level scales
+//                       with 1/sqrt(1-r) - the same Decay-knob law as
+//                       broadband friction noise - and stays bounded at
+//                       the longest decays.
+// The characters crossfade over ~100 ms on a reversal (no re-strike,
+// no phase reset, no doubled drive); in full clean mode the friction
+// path is skipped outright, so its contribution is exactly zero.
 //
 // Stereo: pair member A sits slightly left, member B slightly right, the
 // spread widening for higher modes; the fundamental stays ~centred. A
@@ -85,6 +99,9 @@ class BowlVoice
         rub_lp_        = 0.0f;
         rub_lp2_       = 0.0f;
         rub_lp_coef_   = 0.08f;
+        char_target_   = 0.0f; // power-on character: friction texture
+        char_clean_    = 0.0f;
+        char_step_     = 10.0f / sample_rate; // ~100 ms crossfade
         pan_l_         = 1.0f;
         pan_r_         = 1.0f;
         pan_l_target_  = 1.0f;
@@ -102,6 +119,15 @@ class BowlVoice
             ga_l_[m] = ga_r_[m] = gb_l_[m] = gb_r_[m] = 0.0f;
             rub_weight_[m] = rw;
             rw *= 0.35f;
+
+            // Clean-drive oscillators: unit amplitude, phase 0
+            // (deterministic, like strikes); identity rotation and zero
+            // drive until the first UpdateCoeffs.
+            osc_sa_[m] = osc_sb_[m] = 0.0f;
+            osc_ca_[m] = osc_cb_[m] = 1.0f;
+            cos_a_[m] = cos_b_[m] = 1.0f;
+            sin_a_[m] = sin_b_[m] = 0.0f;
+            clean_amp_a_[m] = clean_amp_b_[m] = 0.0f;
 
             // Rotating shimmer: random start phase, 2..10 s orbit
             // period spread across pairs and slightly randomized so two
@@ -156,8 +182,16 @@ class BowlVoice
         UpdateCoeffs();
     }
 
-    /** Rim-rubbing level 0..1 (continuous noise excitation). */
-    void SetRub(float level) { rub_level_ = level; }
+    /** Rim-rubbing level 0..1 and character (0 = clockwise friction
+     *  texture, 1 = counter-clockwise clean sustained tone). The level
+     *  slews with the usual bloom/fade; the character crossfades over
+     *  ~100 ms and lands exactly on its target, so a reversal never
+     *  re-strikes, resets a phase, or doubles the drive. */
+    void SetRub(float level, float clean)
+    {
+        rub_level_   = level;
+        char_target_ = clean > 0.0f ? 1.0f : 0.0f;
+    }
 
     /** Per-bowl stereo pan -1 (left) .. +1 (right); smoothed per sample. */
     void SetPan(float pan)
@@ -280,6 +314,25 @@ class BowlVoice
             rub += (rub_level_ > rub ? 0.00004f : 0.0001f)
                    * (rub_level_ - rub);
 
+            // Rim-character crossfade: a fixed-rate linear ramp that
+            // lands EXACTLY on the target. In full clean mode the
+            // friction path below is skipped outright, so its
+            // contribution is exactly zero (no leftover noise floor),
+            // and in full texture mode the clean oscillators are not
+            // advanced (textured output is sample-identical).
+            if(char_clean_ < char_target_)
+            {
+                char_clean_ += char_step_;
+                if(char_clean_ > char_target_)
+                    char_clean_ = char_target_;
+            }
+            else if(char_clean_ > char_target_)
+            {
+                char_clean_ -= char_step_;
+                if(char_clean_ < char_target_)
+                    char_clean_ = char_target_;
+            }
+
             float exc = 0.0f;
             if(burst_pos_ > 0)
             {
@@ -305,16 +358,25 @@ class BowlVoice
                 --burst_pos_;
             }
             float rub_exc = 0.0f;
-            if(rub > 0.0f)
+            if(rub > 0.0f && char_clean_ < 1.0f)
             {
                 // Soft friction excitation: two-pole lowpassed noise in
                 // a narrow friction band (12 dB/oct keeps high bowls
                 // clean), and the level is square-law shaped - slow
-                // turns stay gentle, nothing aggressive.
+                // turns stay gentle, nothing aggressive. Crossfaded
+                // against the clean drive; at char_clean_ == 0 the
+                // multiply is by exactly 1.0f (textured output
+                // unchanged), at 1.0f the path never runs.
                 rub_lp_  += rub_lp_coef_ * (Noise() - rub_lp_);
                 rub_lp2_ += rub_lp_coef_ * (rub_lp_ - rub_lp2_);
-                rub_exc = rub * rub * 0.04f * rub_lp2_;
+                rub_exc = rub * rub * 0.04f * rub_lp2_
+                          * (1.0f - char_clean_);
             }
+            // Clean modal excitation level for this sample (square-law
+            // shaped like the friction path); 0 in full-texture mode.
+            const float clean_lvl = char_clean_ > 0.0f && rub > 0.0f
+                                        ? rub * rub * char_clean_
+                                        : 0.0f;
 
             float sum_l = 0.0f;
             float sum_r = 0.0f;
@@ -325,9 +387,32 @@ class BowlVoice
                 // opens up the rubbed higher modes live.
                 const float rub_bright
                     = 1.0f + 1.2f * brightness_ * static_cast<float>(m);
+                float clean_exc = 0.0f;
+                if(clean_lvl > 0.0f)
+                {
+                    // Phase-continuous rotation oscillators locked to
+                    // the pair's (wandering) resonant frequencies; the
+                    // per-mode drive is decay-normalized at coefficient
+                    // time, so a long ring cannot overbuild. Reversals
+                    // keep the phase - only the drive level fades.
+                    const float sa = cos_a_[m] * osc_sa_[m]
+                                     - sin_a_[m] * osc_ca_[m];
+                    osc_ca_[m]     = sin_a_[m] * osc_sa_[m]
+                                     + cos_a_[m] * osc_ca_[m];
+                    osc_sa_[m]     = sa;
+                    const float sb = cos_b_[m] * osc_sb_[m]
+                                     - sin_b_[m] * osc_cb_[m];
+                    osc_cb_[m]     = sin_b_[m] * osc_sb_[m]
+                                     + cos_b_[m] * osc_cb_[m];
+                    osc_sb_[m]     = sb;
+                    clean_exc = clean_lvl * rub_bright
+                                * (clean_amp_a_[m] * sa
+                                   + clean_amp_b_[m] * sb);
+                }
                 const float x = exc * pair_in_[m] * in_weight_[m]
                                 + rub_exc * pair_in_[m] * rub_weight_[m]
-                                      * rub_bright;
+                                      * rub_bright
+                                + clean_exc;
                 Resonator&   a = res_[2 * m];
                 Resonator&   b = res_[2 * m + 1];
                 if(burst_pos_ > 0)
@@ -389,6 +474,16 @@ class BowlVoice
 
     static constexpr float kPi = 3.14159265358979f;
 
+    /** Clean rim-drive calibration constant: per-mode drive amplitude
+     *  = kCleanDrive x sqrt(1-r) x pair input gain x rub weight. A
+     *  sustained sine at resonance builds to A/(2(1-r)), so the
+     *  sustained clean level at the resonator output scales with
+     *  kCleanDrive/2 x 1/sqrt(1-r) - the same Decay-knob law as the
+     *  friction path's broadband noise, and bounded at max decay.
+     *  Calibrated against the friction path's sustained loudness with
+     *  the host renderer (code/tests, `make cal`). */
+    static constexpr float kCleanDrive = 0.0245f;
+
     /** Recompute every resonator coefficient + pan gain from the current
      *  fundamental, profile and live parameters. Called at strike time
      *  and on live decay/shimmer changes only - never per sample. */
@@ -418,14 +513,51 @@ class BowlVoice
         const float det = p.detune_hz[m] * det_scale * shimmer_mult_
                           * detune_jitter_ * wander_[m];
         const float t60 = p.t60_s[m] * decay_mult_;
-        SetResonator(res_[2 * m], f0, t60);
-        SetResonator(res_[2 * m + 1], f0 + det, t60);
+        const float ra  = SetResonator(res_[2 * m], f0, t60);
+        const float rb  = SetResonator(res_[2 * m + 1], f0 + det, t60);
         wander_applied_[m] = wander_[m];
 
         // Pair input gain: sin(w) equalizes the impulse-response
         // peak across modes (a two-pole resonator's response peaks
         // at ~g / sin(w)); 0 for a muted (above-Nyquist) resonator.
         pair_in_[m] = PairInputGain(f0);
+
+        // Clean rim drive: rotation-oscillator coefficients locked to
+        // the pair's resonant frequencies (phase states are untouched,
+        // so retunes and wander steps never click). A sustained sine at
+        // resonance builds to A / (2(1-r)), so the drive is normalized
+        // by sqrt(1-r): the sustained level scales with 1/sqrt(1-r) -
+        // the same Decay-knob law as broadband friction noise - and
+        // stays bounded at the longest decays. Muted (above-band)
+        // members get zero drive and no rotation.
+        if(ra > 0.0f)
+        {
+            const float w = 2.0f * kPi * f0 / fs_;
+            cos_a_[m] = cosf(w);
+            sin_a_[m] = sinf(w);
+            clean_amp_a_[m] = kCleanDrive * sqrtf(1.0f - ra)
+                              * pair_in_[m] * rub_weight_[m];
+        }
+        else
+        {
+            cos_a_[m]       = 1.0f;
+            sin_a_[m]       = 0.0f;
+            clean_amp_a_[m] = 0.0f;
+        }
+        if(rb > 0.0f)
+        {
+            const float w = 2.0f * kPi * (f0 + det) / fs_;
+            cos_b_[m] = cosf(w);
+            sin_b_[m] = sinf(w);
+            clean_amp_b_[m] = kCleanDrive * sqrtf(1.0f - rb)
+                              * pair_in_[m] * rub_weight_[m];
+        }
+        else
+        {
+            cos_b_[m]       = 1.0f;
+            sin_b_[m]       = 0.0f;
+            clean_amp_b_[m] = 0.0f;
+        }
 
         // Stereo: A slightly left, B slightly right; higher modes
         // wider; the fundamental pair stays near-centre. kVoiceGain
@@ -476,22 +608,48 @@ class BowlVoice
                 // retuning the ringing pair is inaudible.
                 UpdatePairCoeffs(m, det_scale); // sets wander_applied_
             }
+
+            // Clean-drive oscillators: the rotation recurrence drifts
+            // in magnitude over minutes of float math - pull back to
+            // unit amplitude once per block (cheap Newton step, no
+            // trig). Frozen states (full-texture mode) are unaffected.
+            if(char_clean_ > 0.0f)
+            {
+                RenormOsc(osc_sa_[m], osc_ca_[m]);
+                RenormOsc(osc_sb_[m], osc_cb_[m]);
+            }
         }
     }
 
-    void SetResonator(Resonator& r, float freq, float t60)
+    /** Pull a rotation oscillator's state back to unit magnitude
+     *  (Newton step for 1/sqrt, no divide). Block-rate only. */
+    static void RenormOsc(float& s, float& c)
+    {
+        const float mag2 = s * s + c * c;
+        if(mag2 > 1.0e-12f)
+        {
+            const float corr = 0.5f * (3.0f - mag2);
+            s *= corr;
+            c *= corr;
+        }
+    }
+
+    /** Set a resonator's coefficients; returns the pole radius r (0
+     *  when muted) for the clean-drive normalization. */
+    float SetResonator(Resonator& r, float freq, float t60)
     {
         if(freq < 20.0f || freq > 0.45f * fs_ || t60 <= 0.0f)
         {
             // Above-Nyquist (high modes of the highest bowls) or
             // degenerate: keep the resonator silent.
             r.c1 = r.c2 = 0.0f;
-            return;
+            return 0.0f;
         }
         const float rad   = 2.0f * kPi * freq / fs_;
         const float decay = expf(-6.907755f / (t60 * fs_));
         r.c1              = 2.0f * decay * cosf(rad);
         r.c2              = decay * decay;
+        return decay;
     }
 
     /** sin(w) frequency equalization; 0 for a muted resonator. */
@@ -532,6 +690,9 @@ class BowlVoice
     float     rub_lp_        = 0.0f;  // lowpassed rub-noise states (2-pole)
     float     rub_lp2_       = 0.0f;
     float     rub_lp_coef_   = 0.08f; // friction-band lowpass coefficient
+    float     char_target_   = 0.0f;  // rim character: 0 texture, 1 clean
+    float     char_clean_    = 0.0f;  // smoothed (exact-landing ramp)
+    float     char_step_     = 2.0e-4f; // per-sample step (~100 ms)
     float     pan_l_         = 1.0f;  // smoothed pan gains
     float     pan_r_         = 1.0f;
     float     pan_l_target_  = 1.0f;
@@ -563,6 +724,21 @@ class BowlVoice
     float wander_target_[kPairs];  // where it is drifting to
     float wander_applied_[kPairs]; // multiplier in the current coeffs
     int   wander_hold_[kPairs];    // samples until a new target is picked
+
+    // Clean rim drive: one phase-continuous rotation oscillator per
+    // resonator (16 per voice), coefficient-locked to the resonator
+    // frequencies (UpdatePairCoeffs) and advanced per sample only while
+    // the clean character is active.
+    float osc_sa_[kPairs];      // quadrature states, member A
+    float osc_ca_[kPairs];
+    float osc_sb_[kPairs];      // quadrature states, member B
+    float osc_cb_[kPairs];
+    float cos_a_[kPairs];       // rotation coefficients (block-rate)
+    float sin_a_[kPairs];
+    float cos_b_[kPairs];
+    float sin_b_[kPairs];
+    float clean_amp_a_[kPairs]; // decay-normalized per-mode drive
+    float clean_amp_b_[kPairs];
 };
 
 } // namespace bowls

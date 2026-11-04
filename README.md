@@ -4,6 +4,18 @@ A small starting point for a new CHOMPI firmware. This is not a copy of TAPE: it
 
 The example initializes the Daisy Seed and CHOMPI's external SAI codec, then routes each input channel to the matching output channel. It does not include instrument behavior, controls, LEDs, MIDI, SD-card support, presets, or battery management.
 
+## Transport wheel: rimming direction
+
+The current firmware rims the selected bowl(s) with the transport wheel.
+Turn speed sets the level; the **direction** selects the sound:
+
+- **Clockwise** – the classic rim-rubbing friction texture.
+- **Counter-clockwise** – a clean, sustained bowl tone with no friction noise.
+- **Stopped** – the excitation fades; the bowl rings down naturally.
+
+The last-used direction sticks per bowl while the wheel is still; it is a
+performance gesture, not a saved setting.
+
 ## Toolchain
 
 Use GNU Arm Embedded Toolchain **10.3-2021.10** (GCC 10.3.1), plus `make`. This matches TAPE's known-good toolchain. Newer GCC versions can exceed the firmware's SRAM_EXEC link region. This starter does not use TEMPO's GCC 13.3 toolchain.

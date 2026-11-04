@@ -1,6 +1,13 @@
 # Direction-Controlled Rimming Texture
 
-Status: **planned, not implemented**. Firmware changes require approval.
+Status: **implemented** (2026-11-04). Clockwise = friction texture
+(unchanged, verified sample-identical against the pre-change baseline);
+counter-clockwise = clean sustained modal tone. Host regressions in
+`code/tests/` all pass; `kCleanDrive` = 0.0245 with sqrt(1-r)
+decay normalization (clean level tracks the Decay knob like the
+friction path). On-device audition of both directions and reversals is
+still pending, as is physical verification of the encoder sign (flip
+`wheel_inc < 0` in chompi_main.cpp if the wheel reads backwards).
 
 ## Problem and goal
 
