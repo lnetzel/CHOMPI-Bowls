@@ -81,10 +81,11 @@
 //                         Send FX routing (audio_routing.h); the
 //                         combo is consumed - it never sounds a note
 //                         or moves the bowl editor target.
-//   LOOP (KEY_28)       : toggles the Rimming note latch (LOOP LED lit
-//                         while enabled; latched keys glow violet);
-//                         reserved in the other modes. PLAY (KEY_27)
-//                         and the mode toggle (SW_TOG) are reserved.
+//   LOOP (KEY_28)       : toggles the Rimming note latch (LOOP LED
+//                         yellow while enabled; latched keys glow
+//                         the same yellow); reserved in the other
+//                         modes. PLAY (KEY_27) and the mode toggle
+//                         (SW_TOG) are reserved.
 //
 // Every encoder turn shows its bar on the 15 white keys for ~500 ms (the
 // CHOMPI-PhaseOff overlay pattern); with no bar up, held keys light
@@ -1155,21 +1156,12 @@ void DrawOverlayBar(uint32_t now)
     }
 
     // Pressed keys light white, ringing voices glow dim amber on their
-    // key, and LOOP-latched Rimming notes glow violet - but NOT while a
+    // key, and LOOP-latched Rimming notes glow yellow - but NOT while a
     // temporary overlay bar is up, so the bars stay readable while a
     // setting is edited. (A stolen note's latch is cleared by the state
-    // machine, so its violet indication disappears at the steal.)
+    // machine, so its yellow indication disappears at the steal.)
     if(!overlay_active)
     {
-        // The active routing's selection key glows pink (Black 6 =
-        // Normal, Black 7 = Send FX) at the lowest priority: held
-        // keys, ringing voices and latched notes drawn below
-        // overwrite it.
-        chompi_leds::SetSmtLed(
-            chompi_leds::kKeyLeds[bowls::RoutingSelectKey(routing_)],
-            static_cast<uint8_t>(48.0f * bowls::kRoutingColorR),
-            static_cast<uint8_t>(48.0f * bowls::kRoutingColorG),
-            static_cast<uint8_t>(48.0f * bowls::kRoutingColorB));
         for(unsigned key = 0; key < 25; ++key)
             if(hw.KeyHeld(key))
                 chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key], 48, 48, 48);
@@ -1183,8 +1175,9 @@ void DrawOverlayBar(uint32_t now)
         if(play_modes.Mode() == PlayMode::kRimming)
             for(int key = 0; key < bowls::kKeyCount; ++key)
                 if(play_modes.Latched(key) && !hw.KeyHeld(key))
+                    // The same yellow as the LOOP LED.
                     chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key],
-                                           26, 0, 48);
+                                           40, 40, 0);
     }
 }
 
@@ -1245,12 +1238,13 @@ void RenderLeds()
     const uint8_t rub = static_cast<uint8_t>(rub_display_ * 40.0f);
     chompi_leds::SetPthLed(chompi_leds::kPthWheelLeft, rub, rub, rub);
     chompi_leds::SetPthLed(chompi_leds::kPthWheelRight, rub, rub, rub);
-    // The LOOP LED is lit only while the Rimming note latch is enabled.
+    // The LOOP LED glows yellow while the Rimming note latch is
+    // enabled - the exact same yellow as the latched keys.
     const bool    latch_on = play_modes.LatchEnabled();
     chompi_leds::SetPthLed(chompi_leds::kPthLoop,
                            latch_on ? 40 : 0,
                            latch_on ? 40 : 0,
-                           latch_on ? 40 : 0);
+                           0);
     // The volume knob LED follows the page: master volume uses the
     // bar's green->amber->red gradient; the reverb page is pale ice.
     if(vol_page_ == kVolPageReverb)

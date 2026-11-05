@@ -9,7 +9,7 @@ The example initializes the Daisy Seed and CHOMPI's external SAI codec, then rou
 All sound parameters and the active play mode autosave to
 BOWLS/state.json on the SD card. Parameter bars are temporary ~500 ms
 overlays on the 15 white keys; with no bar up, held keys light white,
-ringing voices glow dim amber, and LOOP-latched notes glow violet.
+ringing voices glow dim amber, and LOOP-latched notes glow yellow.
 
 | Control | Click | Turn | SHIFT + Turn | Indication |
 |---|---|---|---|---|
@@ -22,7 +22,7 @@ ringing voices glow dim amber, and LOOP-latched notes glow violet.
 | **Transport wheel** | - | Rim the current mode's wheel set (see Play modes): turn speed = loudness; **clockwise = friction texture, counter-clockwise = clean sustained tone**; the last direction sticks per key while the wheel is still. The wheel never starts a strike and never revives a stolen note | - | Wheel LEDs (LED6/LED7) follow the rub level |
 | **Volume knob** | Switch page | Page 1: master volume. Page 2: temple-room reverb dry/wet mix | - | LED10 follows the page (green->amber->red gradient / pale ice) |
 | **SHIFT** (KEY_26) | Hold + lower F#/G#/A# = play mode (below); hold + Black 6 (C#4) / Black 7 (D#4) = audio routing (below) | - | - | While held, the active mode's shortcut key glows blue and the active routing's selection key glows pink |
-| **LOOP** (KEY_28) | Toggle the Rimming note latch (Rimming mode only) | - | - | LOOP LED lit while latch is enabled; latched keys glow violet |
+| **LOOP** (KEY_28) | Toggle the Rimming note latch (Rimming mode only) | - | - | LOOP LED and latched keys glow the same yellow while the latch is enabled |
 
 \* The selected bowl = the last played/selected key **in the current
 mode**. Pan, bowl volume, tuning and resonance character are stored
@@ -80,13 +80,13 @@ saved to the SD state.
   headphones are silent - by design: the line out keeps sending the
   dry bowls.
 
-Patch: line out -> FX input, FX output (set 100% wet) -> AUX IN. The
-active routing's selection key glows pink (Black 6 = Normal, Black 7
-= Send FX) while SHIFT is held and in the default keyboard view (held
-keys and ringing voices take priority). Switching is instantaneous,
-like flipping a hardware routing switch - a brief click is possible
-when switching mid-note. The routing combo is consumed before note
-handling: it never sounds a bowl.
+Patch: line out -> FX input, FX output (set 100% wet) -> AUX IN.
+While SHIFT is held, the active routing's selection key glows pink
+(Black 6 = Normal, Black 7 = Send FX), next to the blue mode-shortcut
+key; with SHIFT up the keyboard shows only the playing state.
+Switching is instantaneous, like flipping a hardware routing switch -
+a brief click is possible when switching mid-note. The routing combo
+is consumed before note handling: it never sounds a bowl.
 
 ## Bowls and profiles
 
