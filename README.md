@@ -6,37 +6,70 @@ The example initializes the Daisy Seed and CHOMPI's external SAI codec, then rou
 
 ## Controls
 
-All parameters autosave to BOWLS/state.json on the SD card. Parameter
-bars are temporary ~500 ms overlays on the 15 white keys; with no bar
-up, held keys light white and ringing voices glow dim amber.
+All sound parameters and the active play mode autosave to
+BOWLS/state.json on the SD card. Parameter bars are temporary ~500 ms
+overlays on the 15 white keys; with no bar up, held keys light white,
+ringing voices glow dim amber, and LOOP-latched notes glow violet.
 
 | Control | Click | Turn | SHIFT + Turn | Indication |
 |---|---|---|---|---|
 | **Encoder 1** - page 1 (default) | Next page | Per-bowl volume of the selected bowl\* (16 = unity, 32 = +6 dB; rides ringing voices live) | Pan the selected bowl left/right (live) | LED2 green; green bar / cyan pan bar from white key 8 |
 | **Encoder 1** - page 2 | Next page | Resonance character: bowl profile 1-5 (two detent ticks per step) | - | LED2 orange; five 3-key orange sections |
-| **Encoder 1** - page 3 | Next page (wraps to 1) | Per-bowl tuning of the selected bowl\* (16 = unison, 0 = 1/2x, 32 = 2x; next strike) | - | LED2 violet; violet bar from white key 8 |
+| **Encoder 1** - page 3 | Next page (wraps to 1) | Per-bowl tuning of the selected bowl\* (16 = unison, 0 = 1/2x, 32 = 2x; next strike/selection) | - | LED2 violet; violet bar from white key 8 |
 | **Encoder 2** | - | Strike hardness (soft felt -> hard mallet) | Brightness (high-mode content, live; also brightens rimming) | LED3 amber; amber bar / yellow-white bar |
 | **Encoder 3** | - | Decay: ring time 0.25x .. 2x (live) | - | LED4 blue; blue bar |
 | **Encoder 4** | - | Shimmer: paired-mode beating 0 .. 2x (16 = profile detune; live) | - | LED5 purple; centered purple bar |
-| **Transport wheel** | - (unused in v1) | Rim the selected bowl(s): turn speed = loudness; **clockwise = friction texture, counter-clockwise = clean sustained tone**; the last direction sticks per bowl while the wheel is still | - | Wheel LEDs (LED6/LED7) follow the rub level |
+| **Transport wheel** | - | Rim the current mode's wheel set (see Play modes): turn speed = loudness; **clockwise = friction texture, counter-clockwise = clean sustained tone**; the last direction sticks per key while the wheel is still. The wheel never starts a strike and never revives a stolen note | - | Wheel LEDs (LED6/LED7) follow the rub level |
 | **Volume knob** | Switch page | Page 1: master volume. Page 2: temple-room reverb dry/wet mix | - | LED10 follows the page (green->amber->red gradient / pale ice) |
+| **SHIFT** (KEY_26) | Hold + lower F#/G#/A# = play mode (below) | - | - | While held, the active mode's shortcut key glows blue |
+| **LOOP** (KEY_28) | Toggle the Rimming note latch (Rimming mode only) | - | - | LOOP LED lit while latch is enabled; latched keys glow violet |
 
-\* The selected bowl = the last pressed rim or strike key.
+\* The selected bowl = the last played/selected key **in the current
+mode**. Pan, bowl volume, tuning and resonance character are stored
+independently for each key in each mode (75 editable bowls in total);
+master volume, strike hardness, brightness, decay, shimmer and reverb
+mix are global. PLAY (KEY_27) and the mode toggle (SW_TOG) are
+reserved.
 
-### Keyboard
+### Play modes (keyboard)
 
-- Keys C3-B3 (bottom octave): rim zone - select a bowl for wheel
-  rimming (up to two held at once); never strikes.
-- Keys C4-B4: strike zone - strikes the same 12 bowls.
-- Key C5: unassigned (silent). Black keys are playable in both zones.
-- SHIFT (KEY_26) is a modifier only; PLAY, LOOP and the mode toggle
-  are reserved in v1.
+The instrument has **five shared voices**; a sixth simultaneous note
+steals the quietest voice (a stolen latched note is simply unlatched).
+Switching modes never interrupts ringing voices or the reverb: outgoing
+notes keep their sound, and the wheel only drives notes started in the
+current mode. Black keys are playable everywhere.
+
+- **Strikes** (SHIFT + lower F#): all 25 keys strike distinct,
+  ascending bowls (99 Hz .. 1560 Hz). The wheel rims the currently
+  sounding, physically held strikes.
+- **Rimming** (SHIFT + lower G#): all 25 keys hold clean, sustained
+  bowl pads - 5 s attack to ~90%, 10 s release to ~10%; the bowl's
+  ring and the reverb can ring out longer. The wheel adds the
+  direction-dependent rimming on top. **LOOP** toggles a note latch:
+  enabling it captures the held sounding pads; a key press then toggles
+  that note on or off (key-up never releases a latched note); disabling
+  latch (or leaving Rimming) smoothly releases the latched-only notes.
+  The latch is never saved.
+- **Split** (SHIFT + lower A#): the original layout - keys C3-B3 select
+  one of the 12 bowls for wheel rimming (up to two held at once; never
+  strike), keys C4-B4 strike the same 12 bowls, and key C5 strikes an
+  added higher bowl (1240.8 Hz).
+
+A mode shortcut consumes its key through release - it never sounds a
+note or moves the bowl editor target. With no SD card (or an
+incompatible old state file) the instrument boots factory settings in
+**Strikes**; the first successful save replaces the old file (old
+saved settings are not imported).
 
 ## Bowls and profiles
 
-The 12 bowls (bowl_scale.h): the rim zone selects, the strike zone
-strikes the same bowl. Ratios are deliberately unequal - the bowls are
-NOT tuned to a chromatic scale; "nearest note" is just orientation.
+Split mode's 12 bowls (bowl_scale.h): the rim zone selects, the strike
+zone strikes the same bowl, C5 strikes 1240.8 Hz. The full-key modes
+share one 25-pitch table (99 .. 1560 Hz) that keeps the
+measured/reference anchors and interpolates the in-between pitches in
+frequency ratio - starting points, tuned by ear; they are NOT 25
+measured bowls. Ratios are deliberately unequal - the bowls are NOT
+tuned to a chromatic scale; "nearest note" is just orientation.
 Per-bowl tuning (encoder 1 page 3) adjusts each bowl +/-1 octave.
 
 | Bowl | Fundamental | Nearest note | Keys (rim / strike) | Origin |

@@ -1,56 +1,88 @@
 // CHOMPI-BOWLS.
 //
-// A six-voice modal singing-bowl instrument (plans:
-// plans/bowls-v1-first-firmware.md, plans/split-strike-and-rimming-plan.md).
+// A five-voice modal singing-bowl instrument with three play modes
+// (plans: plans/bowls-v1-first-firmware.md,
+// plans/split-strike-and-rimming-plan.md, plans/improve-play-modes.md).
 // Each strike excites eight paired resonant modes (16 resonators per
 // voice) with per-mode decay, paired-mode beating (shimmer) and a
-// finite-contact mallet excitation. The 25-key bed is split over the
-// SAME 12 bowls (bowl_scale.h): keys 0-11 (C3-B3) are the rim zone -
-// pressing SELECTS a bowl for transport-wheel rimming (up to two held
-// bowls sing at once) and never strikes; keys 12-23 (C4-B4) are the
-// strike zone; key 24 is unassigned. Black keys are playable. All
-// parameters autosave to BOWLS/state.json on the SD card and are
-// restored at boot.
+// finite-contact mallet excitation. The five voices are shared by all
+// modes; a sixth simultaneous note steals the quietest voice (a stolen
+// latched note is unlatched, never silently restarted). Switching modes
+// never interrupts ringing voices or reverb tails: outgoing voices keep
+// their sound, and the wheel only drives notes started in the current
+// mode. All parameters autosave to BOWLS/state.json on the SD card and
+// are restored at boot (the mode included; the LOOP latch and all
+// performance state are never saved).
 //
+//   Play modes            : SHIFT + lower F# (key 6) = STRIKES - all 25
+//                         keys strike distinct ascending bowls; the
+//                         wheel rims currently sounding, physically
+//                         held strikes. SHIFT + lower G# (key 8) =
+//                         RIMMING - all 25 keys hold clean sustained
+//                         bowl pads (5 s attack to 90%, 10 s release
+//                         to 10%); the wheel adds the direction-
+//                         dependent rimming; LOOP toggles a note
+//                         latch: enabling captures the held sounding
+//                         pads, key-down toggles a note on/off, key-up
+//                         never releases a latched note. SHIFT + lower
+//                         A# (key 10) = SPLIT - the v1 layout: keys
+//                         0-11 (C3-B3) SELECT one of the 12 bowls for
+//                         wheel rimming (never strike), keys 12-23
+//                         strike the same 12 bowls, key 24 (C5)
+//                         strikes an added higher bowl. A shortcut
+//                         consumes its key through release - it never
+//                         sounds a note or moves the edit target.
 //   Physical encoder 1 (SW4/ENC_4): per-bowl editor for the selected
-//                         bowl (the last pressed rim/strike key); press
-//                         cycles three pages. Page 1: bowl volume
-//                         (LED2 green, green bar; 16 = unity, 32 =
-//                         +6 dB; rides ringing voices live);
-//                         SHIFT+turn = pan the bowl left/right (cyan
-//                         bar from white key 8 toward the panned
+//                         bowl (the last played/selected key IN THE
+//                         CURRENT MODE; pan, bowl volume, tuning and
+//                         resonance character are independent per key
+//                         per mode); press cycles three pages. Page 1:
+//                         bowl volume (LED2 green, green bar; 16 =
+//                         unity, 32 = +6 dB; rides ringing voices
+//                         live); SHIFT+turn = pan the bowl left/right
+//                         (cyan bar from white key 8 toward the panned
 //                         side). Page 2: resonance character -
 //                         profile select 1-5 (LED2 orange; five 3-key
 //                         orange sections; two detent ticks per
 //                         step). Page 3: tuning (LED2 violet, violet
 //                         bar from white key 8; 16 = unison, 0 =
-//                         half, 32 = double; next strike)
+//                         half, 32 = double; next strike/selection)
 //   Physical encoder 2 (SW1/ENC_1): strike hardness (LED3 amber, amber
 //                         bar); SHIFT+turn = brightness (yellow-white bar)
 //   Physical encoder 3 (SW2/ENC_2): decay (LED4 blue, blue bar)
 //   Physical encoder 4 (SW3/ENC_3): shimmer - paired-mode detune (LED5
 //                         purple, centered purple bar)
-//   Transport wheel     : rim rubbing - detents pump the PER-BOWL rub
-//                         level of the held rim-zone keys (max two) or
-//                         the last-pressed rim key: a bowl stays SILENT
-//                         until the wheel turns while it is selected
-//                         (slow = soft, fast = loud; only the two wheel
-//                         LEDs follow the level - no keyboard bar, so
-//                         held keys stay visible while rimming). The
-//                         DIRECTION picks the sound: clockwise = the
-//                         classic friction texture, counter-clockwise
-//                         = a clean sustained bowl tone; the last
-//                         direction sticks while the wheel is still.
+//   Transport wheel     : rimming - detents pump the PER-(MODE,KEY)
+//                         rub level of the wheel set: SPLIT = the held
+//                         rim-zone keys (max two) or the last-pressed
+//                         rim key (a bowl stays SILENT until the wheel
+//                         turns while it is selected); STRIKES = the
+//                         currently sounding held strikes; RIMMING =
+//                         the currently sounding held or latched pads
+//                         (slow = soft, fast = loud; only the two
+//                         wheel LEDs follow the level - no keyboard
+//                         bar). The wheel never creates a strike or
+//                         revives a stolen note. The DIRECTION picks
+//                         the sound: clockwise = the classic friction
+//                         texture, counter-clockwise = a clean
+//                         sustained bowl tone; the last direction
+//                         sticks per (mode, key) while the wheel is
+//                         still.
 //   Volume encoder      : press cycles page 1 master volume (green->
 //                         amber->red bar, LED10 follows the gradient;
-//                         the bar shows briefly at boot) / page 2 temple-
-//                         room reverb dry/wet mix (pale ice bar + LED)
-//   SHIFT (KEY_26)      : modifier only; PLAY (KEY_27), LOOP (KEY_28) and
-//                         the mode toggle (SW_TOG) are reserved in v1
+//                         the bar shows briefly at boot) / page 2
+//                         temple-room reverb dry/wet mix (pale ice
+//                         bar + LED)
+//   SHIFT (KEY_26)      : modifier + mode shortcuts; while held, the
+//                         active mode's shortcut key glows blue
+//   LOOP (KEY_28)       : toggles the Rimming note latch (LOOP LED lit
+//                         while enabled; latched keys glow violet);
+//                         reserved in the other modes. PLAY (KEY_27)
+//                         and the mode toggle (SW_TOG) are reserved.
 //
 // Every encoder turn shows its bar on the 15 white keys for ~500 ms (the
-// CHOMPI-PhaseOff overlay pattern); with no bar up, held keys light white
-// and ringing voices glow dim amber on their key.
+// CHOMPI-PhaseOff overlay pattern); with no bar up, held keys light
+// white and ringing voices glow dim amber on their key.
 //
 // Audio: 48 kHz, block 24, dual codec - headphones are outputs 0/1 and
 // the master line out is outputs 2/3 (per the TAPE firmware channel map).
@@ -59,6 +91,7 @@
 #include "leds.h"
 #include "bowl_profile.h"
 #include "bowl_scale.h"
+#include "play_modes.h"
 #include "bowl_voice.h"
 #include "BowlsPreset.h"
 #include "PresetStorage.h"
@@ -123,8 +156,16 @@ constexpr float kSendLpOpen      = 0.6922f;     // ~9 kHz (~open)
 // Parameter state
 // ---------------------------------------------------------------------------
 
-constexpr int kTickCount    = 32; // 0..32 -> 33 positions
-constexpr int kPlayableKeys = 24; // rim keys 0-11 + strike keys 12-23
+constexpr int kTickCount = 32; // 0..32 -> 33 positions
+
+using bowls::PlayMode;
+
+int ModeIdx(PlayMode mode) { return static_cast<int>(mode); }
+
+// The play-mode state machine: mode, shortcuts, per-key press
+// provenance and the Rimming LOOP latch (play_modes.h). Boot default
+// is Strikes; a valid preset restores the saved mode at boot.
+bowls::PlayModes play_modes;
 
 enum class Overlay : int
 {
@@ -149,37 +190,38 @@ struct Params
 {
     Params()
     {
-        for(int w = 0; w < kPlayableKeys; ++w)
-        {
-            pan_ticks[w].store(chompi::BowlsPreset::kDefaultPan,
-                               std::memory_order_relaxed);
-            bowl_vol_ticks[w].store(chompi::BowlsPreset::kDefaultBowlVol,
-                                    std::memory_order_relaxed);
-            tune_ticks[w].store(chompi::BowlsPreset::kDefaultTune,
-                                std::memory_order_relaxed);
-        }
+        for(int m = 0; m < bowls::kPlayModeCount; ++m)
+            for(int w = 0; w < bowls::kKeyCount; ++w)
+            {
+                pan_ticks[m][w].store(chompi::BowlsPreset::kDefaultPan,
+                                      std::memory_order_relaxed);
+                bowl_vol_ticks[m][w].store(
+                    chompi::BowlsPreset::kDefaultBowlVol,
+                    std::memory_order_relaxed);
+                tune_ticks[m][w].store(chompi::BowlsPreset::kDefaultTune,
+                                       std::memory_order_relaxed);
+                profile_ticks[m][w].store(
+                    chompi::BowlsPreset::kDefaultProfile,
+                    std::memory_order_relaxed);
+            }
     }
 
+    // Global controls (shared by all modes).
     std::atomic<int>      volume_ticks{chompi::BowlsPreset::kDefaultVolume};
     std::atomic<int>      strike_ticks{chompi::BowlsPreset::kDefaultStrike};
     std::atomic<int>      brightness_ticks{
         chompi::BowlsPreset::kDefaultBrightness};
     std::atomic<int>      decay_ticks{chompi::BowlsPreset::kDefaultDecay};
     std::atomic<int>      shimmer_ticks{chompi::BowlsPreset::kDefaultShimmer};
-    std::atomic<int>      profile_index{chompi::BowlsPreset::kDefaultProfile};
 
-    // Per-key pan positions: one 0..32 tick value per playable key
-    // (rim 0-11, strike 12-23; 16 = centre). Encoder 1 page 1,
-    // SHIFT+turn pans the selected bowl.
-    std::atomic<int>      pan_ticks[kPlayableKeys];
-
-    // Per-key volume trims: 0..32 ticks per playable key (16 = unity).
-    // Encoder 1 page 1 turn; rides ringing voices live.
-    std::atomic<int>      bowl_vol_ticks[kPlayableKeys];
-
-    // Per-key tuning: 0..32 ticks per playable key (16 = unison, ratio
-    // 1/2x..2x; applied at the next strike/select). Encoder 1 page 3.
-    std::atomic<int>      tune_ticks[kPlayableKeys];
+    // Per-mode/per-key banks [mode][key]: pan (16 = centre), bowl
+    // volume (16 = unity), tuning (16 = unison, 1/2x..2x) and resonance
+    // character (profile 0..4) are independent for each physical key
+    // in each mode. Encoder 1 edits the current mode's bank.
+    std::atomic<int>      pan_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
+    std::atomic<int>      bowl_vol_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
+    std::atomic<int>      tune_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
+    std::atomic<int>      profile_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
 
     // Volume knob page 2: temple-room reverb dry/wet mix.
     std::atomic<int>      reverb_mix_ticks{
@@ -301,8 +343,9 @@ int SectionStep(int& acc, int inc)
 // Voices
 // ---------------------------------------------------------------------------
 
-// Encoder-1 edit target: the last pressed rim/strike key (0..23).
-volatile int last_key_ = 0;
+// Encoder-1 edit target: the last musically played/selected key in each
+// mode (never a shortcut key). Transient, per mode, initialized to 0.
+int last_key_[bowls::kPlayModeCount] = {0, 0, 0};
 
 void ApplyDecayShimmerToVoices()
 {
@@ -328,14 +371,30 @@ void ApplyBrightnessToVoices()
         voices[v].SetBrightness(brightness);
 }
 
-/** Allocate a voice for `key`: the voice already holding the key (a
- *  re-strike adds energy on top of its ring), else a free voice, else
- *  steal the QUIETEST voice, not the oldest. */
-int AllocVoice(int key)
+/** Find the voice holding the identity (mode, key), or -1. Identity is
+ *  mode AND key: the same physical key in another mode is a different
+ *  note and must not reuse this voice. */
+int FindVoice(PlayMode mode, int key)
 {
+    const int m = ModeIdx(mode);
     for(int i = 0; i < kVoiceCount; ++i)
-        if(voices[i].Key() == key)
+        if(voices[i].Key() == key && voices[i].VoiceMode() == m)
             return i;
+    return -1;
+}
+
+/** Allocate a voice for (mode, key): the voice already holding that
+ *  identity (a re-strike/re-selection adds energy on top of its ring),
+ *  else a free voice, else steal the QUIETEST voice, not the oldest. A
+ *  just-started pad voice counts as active while its slow attack is
+ *  still inaudible (BowlVoice::IsActive includes the pad gate). A steal
+ *  is reported to the play-mode state machine, which clears the stolen
+ *  note's latch (and only that note's). */
+int AllocVoice(PlayMode mode, int key)
+{
+    const int found = FindVoice(mode, key);
+    if(found >= 0)
+        return found;
     for(int i = 0; i < kVoiceCount; ++i)
         if(!voices[i].IsActive())
             return i;
@@ -347,45 +406,58 @@ int AllocVoice(int key)
             quietest = voices[i].Envelope();
             v        = i;
         }
+    if(voices[v].IsActive() && voices[v].Key() >= 0)
+        play_modes.OnVoiceStolen(
+            static_cast<PlayMode>(voices[v].VoiceMode()),
+            voices[v].Key());
     return v;
 }
 
-/** Global + per-key excitation settings, shared by strikes and rim
- *  selection. */
-void ApplyVoiceSettings(int v, int key)
+/** Global + per-(mode,key) excitation settings, shared by strikes, rim
+ *  selection and pads. Pan and bowl volume ride live; profile and
+ *  tuning take effect here (excitation time) only. */
+void ApplyVoiceSettings(int v, PlayMode mode, int key)
 {
-    voices[v].SetProfile(params.profile_index.load(std::memory_order_relaxed));
+    const int m = ModeIdx(mode);
+    voices[v].SetProfile(
+        params.profile_ticks[m][key].load(std::memory_order_relaxed));
     voices[v].SetBrightness(
         TicksToNorm(params.brightness_ticks.load(std::memory_order_relaxed)));
-    voices[v].SetPan(
-        PanNormTicks(params.pan_ticks[key].load(std::memory_order_relaxed)));
+    voices[v].SetPan(PanNormTicks(
+        params.pan_ticks[m][key].load(std::memory_order_relaxed)));
     voices[v].SetBowlGain(BowlGainTicks(
-        params.bowl_vol_ticks[key].load(std::memory_order_relaxed)));
+        params.bowl_vol_ticks[m][key].load(std::memory_order_relaxed)));
 }
 
-/** Bowl fundamental for `key`: the zone's bowl times the key's tuning. */
-float KeyFundamental(int key)
+/** Bowl fundamental for (mode, key): the mode map's base pitch times
+ *  the key's tuning (which scales the complete modal structure). */
+float KeyFundamental(PlayMode mode, int key)
 {
-    return bowls::kBowlScaleHz[bowls::kBowlForKey[key]]
+    return bowls::BaseFundamentalHz(mode, key)
            * TuneRatioTicks(
-               params.tune_ticks[key].load(std::memory_order_relaxed));
+               params.tune_ticks[ModeIdx(mode)][key].load(
+                   std::memory_order_relaxed));
 }
 
-void StrikeKey(int key)
+void StrikeKey(PlayMode mode, int key)
 {
-    const int   v      = AllocVoice(key);
+    const int   v      = AllocVoice(mode, key);
     const float snorm
         = TicksToNorm(params.strike_ticks.load(std::memory_order_relaxed));
     // No per-strike randomization: a well-played bowl is consistent.
     // Hit-to-hit variation still comes for free from the still-ringing
     // state each new strike lands on (and the slow detune wander).
-    ApplyVoiceSettings(v, key);
-    // A STOLEN voice still rings another bowl: damp its ghost deep
-    // (-34 dB) so it can never interfere with the new strike; a
-    // same-bowl re-hit keeps the gentler -12 dB continuity.
-    const bool stolen = voices[v].Key() != key && voices[v].IsActive();
+    // A STOLEN voice (different (mode,key) identity, still ringing):
+    // damp its ghost deep (-34 dB) so it can never interfere with the
+    // new strike; a same-note re-hit keeps the gentler -12 dB
+    // continuity. The identity check runs before the voice is retagged.
+    const bool stolen
+        = (voices[v].Key() != key || voices[v].VoiceMode() != ModeIdx(mode))
+          && voices[v].IsActive();
+    ApplyVoiceSettings(v, mode, key);
     voices[v].SetKey(key);
-    voices[v].Strike(KeyFundamental(key), snorm, 1.0f, 1.0f,
+    voices[v].SetVoiceMode(ModeIdx(mode));
+    voices[v].Strike(KeyFundamental(mode, key), snorm, 1.0f, 1.0f,
                      stolen ? 0.02f : 0.25f);
 #ifdef CPU_METER
     if(stolen)
@@ -393,88 +465,113 @@ void StrikeKey(int key)
 #endif
     // The mallet contact burst barely excites a real room: darken the
     // reverb send (it re-opens into the pure ring over ~180 ms).
-    send_dark_ = 1.0f;
-    last_key_  = key;
+    send_dark_                = 1.0f;
+    last_key_[ModeIdx(mode)] = key;
 }
 
-/** Rim-zone key press: SELECT the bowl for wheel rimming - never
+/** Rimming-mode pad start: allocate/select the voice, tune it without
+ *  striking (SelectForRub reuses the phase-continuous clean modal
+ *  excitation - no second resonator bank) and open the slow pad gate. */
+void StartPadKey(int key)
+{
+    const PlayMode mode = PlayMode::kRimming;
+    const int      v    = AllocVoice(mode, key);
+    ApplyVoiceSettings(v, mode, key);
+    voices[v].SetKey(key);
+    voices[v].SetVoiceMode(ModeIdx(mode));
+    voices[v].SelectForRub(KeyFundamental(mode, key), 1.0f);
+    voices[v].SetPadGate(true);
+    last_key_[ModeIdx(mode)] = key;
+}
+
+/** Reconcile every Rimming voice's pad gate with the state machine's
+ *  desired gate. Runs every block: key-up, latch toggles, LOOP-off,
+ *  mode exits and voice steals all close their gates through here, so
+ *  no note-off is ever lost. */
+void SyncPadGates()
+{
+    for(int v = 0; v < kVoiceCount; ++v)
+    {
+        if(voices[v].VoiceMode() != ModeIdx(PlayMode::kRimming))
+            continue;
+        const int key = voices[v].Key();
+        if(key < 0)
+            continue;
+        const bool want = play_modes.PadOn(key);
+        if(voices[v].PadGate() != want)
+            voices[v].SetPadGate(want);
+    }
+}
+
+/** Split rim-zone key press: SELECT the bowl for wheel rimming - never
  *  strikes. The voice is (re)allocated and tuned now, so the wheel has
  *  something to sing into immediately. */
 void SelectRimKey(int key, bool make_edit_target)
 {
-    const int v = AllocVoice(key);
-    ApplyVoiceSettings(v, key);
+    const PlayMode mode = PlayMode::kSplit;
+    const int      v    = AllocVoice(mode, key);
+    ApplyVoiceSettings(v, mode, key);
     voices[v].SetKey(key);
+    voices[v].SetVoiceMode(ModeIdx(mode));
     // Deterministic detune, like strikes: the same bowl always sings
     // with the same voice when selected.
-    voices[v].SelectForRub(KeyFundamental(key), 1.0f);
+    voices[v].SelectForRub(KeyFundamental(mode, key), 1.0f);
     if(make_edit_target)
-        last_key_ = key;
+        last_key_[ModeIdx(mode)] = key;
 }
 
-/** If no voice currently holds rim key `key` (e.g. a strike chord stole
- *  it), re-select it silently - the wheel should always have a bowl to
- *  sing into. */
+/** Split only: if no voice currently holds rim key `key` (e.g. a strike
+ *  chord stole it), re-select it silently - the wheel should always
+ *  have a bowl to sing into. The full-key modes never reacquire: the
+ *  wheel must not create a strike or revive a stolen note. */
 void EnsureRimVoice(int key)
 {
-    for(int i = 0; i < kVoiceCount; ++i)
-        if(voices[i].Key() == key)
-            return;
+    if(FindVoice(PlayMode::kSplit, key) >= 0)
+        return;
     SelectRimKey(key, false);
 }
 
-// Rim rubbing: wheel detents pump the PER-BOWL rub level of the active
-// set (fast turns = louder). A bowl that has not been rimmed while
-// selected stays silent - even while other bowls' levels are still
+// Wheel rimming: detents pump the PER-(MODE,KEY) rub level of the
+// current mode's wheel set (fast turns = louder). A note that has not
+// been rimmed stays silent - even while other notes' levels are still
 // decaying. Every level decays back to silence over ~0.35 s of no
-// turning; the ~200 ms voice-side slew blooms each bowl from its own
-// silence.
-float rim_level_[bowls::kBowlCount] = {};
+// turning; the ~200 ms voice-side slew blooms each note from its own
+// silence. Level and character are tracked per (mode, key), so old and
+// new mode instances of the same physical key never affect one another.
+float wheel_level_[bowls::kPlayModeCount][bowls::kKeyCount] = {};
 
-// Per-bowl rim character, chosen by the wheel DIRECTION of the last
-// turn while the bowl was in the active set: false = clockwise
-// friction texture (the original sound), true = counter-clockwise
-// clean sustained tone. Transient performance state - never saved to
-// the preset and no LED mode; a bowl keeps its last character while
-// its level fades, and bowls outside the active set are untouched.
-bool rim_clean_[bowls::kBowlCount] = {};
+// Per-(mode,key) rim character, chosen by the wheel DIRECTION of the
+// last turn while the note was in the wheel set: false = clockwise
+// friction texture, true = counter-clockwise clean sustained tone.
+// Transient performance state - never saved; a note keeps its last
+// character while its level fades.
+bool wheel_clean_[bowls::kPlayModeCount][bowls::kKeyCount] = {};
 
 // What the wheel LEDs show (set in ApplyControls, read in RenderLeds).
 volatile float rub_display_ = 0.0f;
 
-// Rim selection (rim zone = keys 0-11): rim_held_ is the press-ordered
-// set of currently held rim keys (max 2 - two-bowl rimming); rim_latch_
-// is the last-pressed rim key, rubbed when nothing is held.
-int rim_held_[2] = {-1, -1};
-int rim_held_n_  = 0;
-int rim_latch_   = -1;
-
-/** In the active rub set? Held rim keys win; when none are held, the
- *  latched (last-pressed) rim key. */
-bool InRubSet(int key)
+/** Push each voice's rub level + character for this block. Only voices
+ *  whose (mode, key) is in the CURRENT mode's wheel set are driven;
+ *  outgoing-mode voices get target 0 and their last wheel excitation
+ *  falls away with the existing smooth slew (their resonator state is
+ *  never erased). */
+void ApplyWheel()
 {
-    if(rim_held_n_ > 0)
-        return key == rim_held_[0]
-                      || (rim_held_n_ > 1 && key == rim_held_[1]);
-    return key >= 0 && key == rim_latch_;
-}
-
-void ApplyRub()
-{
+    const int cur = ModeIdx(play_modes.Mode());
     for(int i = 0; i < kVoiceCount; ++i)
     {
-        const int   key    = voices[i].Key();
-        const float target
-            = key >= 0 && InRubSet(key) ? rim_level_[key] : 0.0f;
-        // Level AND character travel together: a rim voice reacquired
-        // after a strike-steal picks up the bowl's last direction
-        // choice along with its level. A fading bowl outside the rub
-        // set keeps its own character (rim keys only - a strike key
-        // never rims).
-        const float clean
-            = key >= 0 && key <= bowls::kRimKeyLast && rim_clean_[key]
-                  ? 1.0f
-                  : 0.0f;
+        const int key = voices[i].Key();
+        const int vm  = voices[i].VoiceMode();
+        float     target = 0.0f;
+        float     clean  = 0.0f;
+        if(key >= 0 && vm == cur && play_modes.WheelTargets(key))
+        {
+            target = wheel_level_[vm][key];
+            clean  = wheel_clean_[vm][key] ? 1.0f : 0.0f;
+        }
+        // Level AND character travel together: a Split rim voice
+        // reacquired after a strike-steal picks up the note's last
+        // direction choice along with its level.
         voices[i].SetRub(target, clean);
     }
 }
@@ -515,28 +612,37 @@ void ApplyControls()
     }
 
     // Physical encoder 1: three pages editing the selected bowl (the
-    // last struck white key). Page 1: turn = per-bowl volume (rides
-    // ringing voices live), SHIFT+turn = pan. Page 2: resonance
-    // character (profile 1-5). Page 3: per-bowl tuning (next strike).
-    // SHIFT+turn on pages 2/3 is reserved.
+    // last played/selected key in the CURRENT mode). Page 1: turn =
+    // per-bowl volume (rides ringing voices live), SHIFT+turn = pan.
+    // Page 2: resonance character (profile 1-5). Page 3: per-bowl
+    // tuning (next strike/selection). SHIFT+turn on pages 2/3 is
+    // reserved.
     const int enc1_inc = hw.EncoderIncrement(0);
     if(enc1_inc != 0)
     {
-        const int key = last_key_;
+        const int cur_mode = ModeIdx(play_modes.Mode());
+        const int key      = last_key_[cur_mode];
         if(enc1_page_ == kEnc1PageVolume && shift)
         {
             // Pan the selected bowl one tick per detent; a voice holding
-            // that key is re-panned live (smoothed inside the voice).
+            // that (mode, key) is re-panned live (smoothed inside the
+            // voice) - a same-key voice from ANOTHER mode keeps its own
+            // pan.
             int pan
-                = params.pan_ticks[key].load(std::memory_order_relaxed)
+                = params.pan_ticks[cur_mode][key].load(
+                      std::memory_order_relaxed)
                   + enc1_inc;
             pan = pan < 0 ? 0 : (pan > kTickCount ? kTickCount : pan);
-            if(pan != params.pan_ticks[key].load(std::memory_order_relaxed))
+            if(pan
+               != params.pan_ticks[cur_mode][key].load(
+                   std::memory_order_relaxed))
             {
-                params.pan_ticks[key].store(pan, std::memory_order_relaxed);
+                params.pan_ticks[cur_mode][key].store(
+                    pan, std::memory_order_relaxed);
                 const float pan_norm = PanNormTicks(pan);
                 for(int v = 0; v < kVoiceCount; ++v)
-                    if(voices[v].Key() == key)
+                    if(voices[v].Key() == key
+                       && voices[v].VoiceMode() == cur_mode)
                         voices[v].SetPan(pan_norm);
                 MarkDirty(now);
             }
@@ -547,17 +653,20 @@ void ApplyControls()
             // Per-bowl volume: rides the ringing voice live (smoothed
             // inside the voice, like the pan gains).
             int vol
-                = params.bowl_vol_ticks[key].load(std::memory_order_relaxed)
+                = params.bowl_vol_ticks[cur_mode][key].load(
+                      std::memory_order_relaxed)
                   + enc1_inc;
             vol = vol < 0 ? 0 : (vol > kTickCount ? kTickCount : vol);
             if(vol
-               != params.bowl_vol_ticks[key].load(std::memory_order_relaxed))
+               != params.bowl_vol_ticks[cur_mode][key].load(
+                   std::memory_order_relaxed))
             {
-                params.bowl_vol_ticks[key].store(vol,
-                                                 std::memory_order_relaxed);
+                params.bowl_vol_ticks[cur_mode][key].store(
+                    vol, std::memory_order_relaxed);
                 const float gain = BowlGainTicks(vol);
                 for(int v = 0; v < kVoiceCount; ++v)
-                    if(voices[v].Key() == key)
+                    if(voices[v].Key() == key
+                       && voices[v].VoiceMode() == cur_mode)
                         voices[v].SetBowlGain(gain);
                 MarkDirty(now);
             }
@@ -565,37 +674,45 @@ void ApplyControls()
         }
         else if(enc1_page_ == kEnc1PageCharacter && !shift)
         {
-            // Profile select: two detent ticks per step; the bar shows
-            // on any turn so the section is visible while arming.
+            // Resonance character (profile) of the selected bowl: two
+            // detent ticks per step; the bar shows on any turn so the
+            // section is visible while arming. Applies at the next
+            // strike/selection, like tuning.
             const int step = SectionStep(profile_sel_acc, enc1_inc);
             int       profile
-                = params.profile_index.load(std::memory_order_relaxed) + step;
+                = params.profile_ticks[cur_mode][key].load(
+                      std::memory_order_relaxed)
+                  + step;
             profile = profile < 0 ? 0
                                   : (profile >= bowls::kNumProfiles
                                          ? bowls::kNumProfiles - 1
                                          : profile);
             if(profile
-               != params.profile_index.load(std::memory_order_relaxed))
+               != params.profile_ticks[cur_mode][key].load(
+                   std::memory_order_relaxed))
             {
-                params.profile_index.store(profile,
-                                           std::memory_order_relaxed);
+                params.profile_ticks[cur_mode][key].store(
+                    profile, std::memory_order_relaxed);
                 MarkDirty(now);
             }
             ShowOverlay(Overlay::Character, now);
         }
         else if(enc1_page_ == kEnc1PageTune && !shift)
         {
-            // Per-bowl tuning: applied at the next strike (physical
-            // character); only the bar shows while a bowl rings.
+            // Per-bowl tuning: applied at the next strike/selection
+            // (physical character); only the bar shows while a bowl
+            // rings.
             int tune
-                = params.tune_ticks[key].load(std::memory_order_relaxed)
+                = params.tune_ticks[cur_mode][key].load(
+                      std::memory_order_relaxed)
                   + enc1_inc;
             tune = tune < 0 ? 0 : (tune > kTickCount ? kTickCount : tune);
             if(tune
-               != params.tune_ticks[key].load(std::memory_order_relaxed))
+               != params.tune_ticks[cur_mode][key].load(
+                   std::memory_order_relaxed))
             {
-                params.tune_ticks[key].store(tune,
-                                             std::memory_order_relaxed);
+                params.tune_ticks[cur_mode][key].store(
+                    tune, std::memory_order_relaxed);
                 MarkDirty(now);
             }
             ShowOverlay(Overlay::Tune, now); // also at the end stops
@@ -639,103 +756,139 @@ void ApplyControls()
     else
         BumpTicks(params.volume_ticks, volume_inc, Overlay::Volume, now);
 
-    // Transport wheel: rim rubbing. Detents pump the PER-BOWL rub
-    // levels of the active set only (the turn rate sets the level), so
-    // a bowl that has not been rimmed stays silent even while other
-    // bowls' levels are still decaying.
+    // Transport wheel: rimming. Detents pump the PER-(MODE,KEY) rub
+    // levels of the current mode's wheel set only (the turn rate sets
+    // the level), so a note that has not been rimmed stays silent even
+    // while other notes' levels are still decaying.
     const int wheel_inc = hw.EncoderIncrement(4);
     if(wheel_inc != 0)
     {
         const float pump = 0.06f * static_cast<float>(wheel_inc < 0
                                                           ? -wheel_inc
                                                           : wheel_inc);
-        // The wheel DIRECTION selects the rim character of the active
+        // The wheel DIRECTION selects the rim character of the wheel
         // set (the magnitude keeps pumping the level as before):
         // clockwise = friction texture, counter-clockwise = clean
         // sustained tone. QuadratureEncoder documents +1 detent =
         // clockwise; if the physical wheel reads backwards, flip this
         // one comparison. A stopped wheel changes nothing - zero
         // movement is not a direction.
-        const bool clean = wheel_inc < 0;
-        if(rim_held_n_ > 0)
+        const bool     clean    = wheel_inc < 0;
+        const PlayMode mode     = play_modes.Mode();
+        const int      cur_mode = ModeIdx(mode);
+        if(mode == PlayMode::kSplit)
         {
-            for(int k = 0; k < rim_held_n_; ++k)
+            // The v1 wheel rules: at most two held rim-zone keys,
+            // otherwise the last-selected rim key, including
+            // reacquisition on wheel movement after a strike-steal.
+            if(play_modes.RimHeldCount() > 0)
             {
-                rim_level_[rim_held_[k]] += pump;
-                if(rim_level_[rim_held_[k]] > 1.0f)
-                    rim_level_[rim_held_[k]] = 1.0f;
-                rim_clean_[rim_held_[k]] = clean;
-                // Make sure the active rub set actually HAS voices: a
-                // strike chord may have stolen them since the last turn.
-                EnsureRimVoice(rim_held_[k]);
+                for(int k = 0; k < play_modes.RimHeldCount(); ++k)
+                {
+                    const int key = play_modes.RimHeld(k);
+                    wheel_level_[cur_mode][key] += pump;
+                    if(wheel_level_[cur_mode][key] > 1.0f)
+                        wheel_level_[cur_mode][key] = 1.0f;
+                    wheel_clean_[cur_mode][key] = clean;
+                    EnsureRimVoice(key);
+                }
+            }
+            else if(play_modes.RimLatch() >= 0)
+            {
+                const int key = play_modes.RimLatch();
+                wheel_level_[cur_mode][key] += pump;
+                if(wheel_level_[cur_mode][key] > 1.0f)
+                    wheel_level_[cur_mode][key] = 1.0f;
+                wheel_clean_[cur_mode][key] = clean;
+                EnsureRimVoice(key);
             }
         }
-        else if(rim_latch_ >= 0)
+        else
         {
-            rim_level_[rim_latch_] += pump;
-            if(rim_level_[rim_latch_] > 1.0f)
-                rim_level_[rim_latch_] = 1.0f;
-            rim_clean_[rim_latch_] = clean;
-            EnsureRimVoice(rim_latch_);
+            // Full-key modes: the wheel addresses currently sounding
+            // held notes (Rimming: held or latched pads). It never
+            // creates a strike and never revives a stolen note.
+            for(int key = 0; key < bowls::kKeyCount; ++key)
+            {
+                if(!play_modes.WheelTargets(key))
+                    continue;
+                const int v = FindVoice(mode, key);
+                if(v < 0 || !voices[v].IsActive())
+                    continue;
+                wheel_level_[cur_mode][key] += pump;
+                if(wheel_level_[cur_mode][key] > 1.0f)
+                    wheel_level_[cur_mode][key] = 1.0f;
+                wheel_clean_[cur_mode][key] = clean;
+            }
         }
         // No keyboard overlay here: the two wheel LEDs follow the rub
         // level, and the keys keep showing held keys + ringing glow.
     }
     // All rub levels decay back to silence over ~0.35 s of no turning.
-    for(int k = 0; k < bowls::kBowlCount; ++k)
-        rim_level_[k] *= 0.9990f;
-    // The wheel LEDs follow the active set's loudest bowl: a freshly
+    for(int m = 0; m < bowls::kPlayModeCount; ++m)
+        for(int k = 0; k < bowls::kKeyCount; ++k)
+            wheel_level_[m][k] *= 0.9990f;
+    // The wheel LEDs follow the wheel set's loudest note: a freshly
     // selected, never-rimmed bowl reads dark until the wheel turns.
-    if(rim_held_n_ > 0)
     {
-        float d = 0.0f;
-        for(int k = 0; k < rim_held_n_; ++k)
-            if(rim_level_[rim_held_[k]] > d)
-                d = rim_level_[rim_held_[k]];
+        const int cur_mode = ModeIdx(play_modes.Mode());
+        float     d        = 0.0f;
+        for(int k = 0; k < bowls::kKeyCount; ++k)
+            if(play_modes.WheelTargets(k)
+               && wheel_level_[cur_mode][k] > d)
+                d = wheel_level_[cur_mode][k];
         rub_display_ = d;
     }
-    else if(rim_latch_ >= 0)
-        rub_display_ = rim_level_[rim_latch_];
-    else
-        rub_display_ = 0.0f;
-    ApplyRub();
+    ApplyWheel();
 
-    // Keys 0-11 (rim zone) SELECT bowls for wheel rimming - pressing
-    // never strikes. Keys 12-23 (strike zone) strike the same 12
-    // bowls. Key 24 is unassigned.
-    for(int key = 0; key < 25; ++key)
+    // Route every key through the play-mode state machine: SHIFT +
+    // lower F#/G#/A# are consumed as mode shortcuts through release;
+    // every other key press/release is interpreted in the mode it
+    // started in (so a key-up after a mode switch still releases the
+    // right note).
+    for(int key = 0; key < bowls::kKeyCount; ++key)
     {
-        if(key <= bowls::kRimKeyLast)
+        if(hw.KeyRising(key))
         {
-            if(hw.KeyRising(key))
+            const bowls::KeyAction act = play_modes.KeyDown(key, shift);
+            switch(act.kind)
             {
-                // The held set is press-ordered, max 2 (two-bowl
-                // rimming): a third held key drops the oldest from the
-                // rub set - its ring decays naturally.
-                if(rim_held_n_ < 2)
-                    rim_held_[rim_held_n_++] = key;
-                else
-                {
-                    rim_held_[0] = rim_held_[1];
-                    rim_held_[1] = key;
-                }
-                rim_latch_ = key;
-                SelectRimKey(key, true);
-            }
-            else if(hw.KeyFalling(key))
-            {
-                for(int k = 0; k < rim_held_n_; ++k)
-                    if(rim_held_[k] == key)
-                    {
-                        rim_held_[k] = rim_held_[rim_held_n_ - 1];
-                        --rim_held_n_;
-                        break;
-                    }
+                case bowls::KeyAction::kStrike:
+                    StrikeKey(act.mode, act.key);
+                    break;
+                case bowls::KeyAction::kPadOn:
+                    StartPadKey(act.key);
+                    break;
+                case bowls::KeyAction::kRimSelect:
+                    SelectRimKey(act.key, true);
+                    break;
+                case bowls::KeyAction::kModeChanged:
+                    // The mode change itself allocates no voice:
+                    // outgoing voices keep their sound and reverb; only
+                    // wheel control stops (ApplyWheel above) and
+                    // latched-only pads release (SyncPadGates below).
+                    // The mode is persisted.
+                    MarkDirty(now);
+                    break;
+                default: break;
             }
         }
-        else if(key <= bowls::kStrikeKeyLast && hw.KeyRising(key))
-            StrikeKey(key);
+        else if(hw.KeyFalling(key))
+        {
+            // Releases reconcile through the state machine (PadOn) and
+            // SyncPadGates below - no explicit action needed here.
+            play_modes.KeyUp(key);
+        }
     }
+
+    // LOOP toggles the Rimming note latch (transient; never saved and
+    // inert in the other modes).
+    if(hw.LoopClicked())
+        play_modes.LoopPressed();
+
+    // Pad gate reconciliation: key-ups, latch toggles, LOOP-off, mode
+    // exits and voice steals all close their gates through here.
+    SyncPadGates();
 }
 
 // ---------------------------------------------------------------------------
@@ -892,6 +1045,10 @@ void DrawOverlayBar(uint32_t now)
         = static_cast<int32_t>(
               params.overlay_until.load(std::memory_order_relaxed) - now)
           > 0;
+    // Encoder-1 overlays edit the current mode's bank for the selected
+    // (last played) key of that mode.
+    const int cur_mode = ModeIdx(play_modes.Mode());
+    const int edit_key = last_key_[cur_mode];
     if(overlay_active)
     {
         switch(static_cast<Overlay>(params.overlay.load(std::memory_order_relaxed)))
@@ -920,10 +1077,11 @@ void DrawOverlayBar(uint32_t now)
                 break;
             case Overlay::Character:
                 DrawCharacterSections(
-                    params.profile_index.load(std::memory_order_relaxed));
+                    params.profile_ticks[cur_mode][edit_key].load(
+                        std::memory_order_relaxed));
                 break;
             case Overlay::Pan:
-                DrawPanBar(params.pan_ticks[last_key_].load(
+                DrawPanBar(params.pan_ticks[cur_mode][edit_key].load(
                                std::memory_order_relaxed),
                            0, 40, 40); // cyan
                 break;
@@ -934,14 +1092,14 @@ void DrawOverlayBar(uint32_t now)
                 break;
             case Overlay::BowlVolume:
                 // Green bar: per-bowl volume of the selected bowl.
-                DrawBar(params.bowl_vol_ticks[last_key_].load(
+                DrawBar(params.bowl_vol_ticks[cur_mode][edit_key].load(
                             std::memory_order_relaxed),
                         0, 48, 0);
                 break;
             case Overlay::Tune:
                 // Violet centre-detent bar: flat to the left, sharp to
                 // the right, dead centre = unison.
-                DrawPanBar(params.tune_ticks[last_key_].load(
+                DrawPanBar(params.tune_ticks[cur_mode][edit_key].load(
                                std::memory_order_relaxed),
                            30, 0, 48);
                 break;
@@ -949,9 +1107,11 @@ void DrawOverlayBar(uint32_t now)
         }
     }
 
-    // Pressed keys light white, and ringing voices glow dim amber on
-    // their key - but NOT while a temporary overlay bar is up, so the
-    // bars stay readable while a setting is edited.
+    // Pressed keys light white, ringing voices glow dim amber on their
+    // key, and LOOP-latched Rimming notes glow violet - but NOT while a
+    // temporary overlay bar is up, so the bars stay readable while a
+    // setting is edited. (A stolen note's latch is cleared by the state
+    // machine, so its violet indication disappears at the steal.)
     if(!overlay_active)
     {
         for(unsigned key = 0; key < 25; ++key)
@@ -964,6 +1124,11 @@ void DrawOverlayBar(uint32_t now)
                 chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key],
                                        14, 8, 2);
         }
+        if(play_modes.Mode() == PlayMode::kRimming)
+            for(int key = 0; key < bowls::kKeyCount; ++key)
+                if(play_modes.Latched(key) && !hw.KeyHeld(key))
+                    chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key],
+                                           26, 0, 48);
     }
 }
 
@@ -975,6 +1140,16 @@ void RenderLeds()
         chompi_leds::SetSmtLed(led, 0, 0, 0);
 
     DrawOverlayBar(System::GetNow());
+
+    // While SHIFT is held, highlight the active mode's lower black
+    // shortcut key (blue). Black keys never collide with the white-key
+    // parameter bars, so this reads over either view.
+    if(hw.ShiftHeld())
+    {
+        const int sk
+            = bowls::kModeShortcutKey[ModeIdx(play_modes.Mode())];
+        chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[sk], 0, 26, 48);
+    }
 
     // Panel LEDs (PTH chain).
     const bool shift = hw.ShiftHeld();
@@ -1008,6 +1183,12 @@ void RenderLeds()
     const uint8_t rub = static_cast<uint8_t>(rub_display_ * 40.0f);
     chompi_leds::SetPthLed(chompi_leds::kPthWheelLeft, rub, rub, rub);
     chompi_leds::SetPthLed(chompi_leds::kPthWheelRight, rub, rub, rub);
+    // The LOOP LED is lit only while the Rimming note latch is enabled.
+    const bool    latch_on = play_modes.LatchEnabled();
+    chompi_leds::SetPthLed(chompi_leds::kPthLoop,
+                           latch_on ? 40 : 0,
+                           latch_on ? 40 : 0,
+                           latch_on ? 40 : 0);
     // The volume knob LED follows the page: master volume uses the
     // bar's green->amber->red gradient; the reverb page is pale ice.
     if(vol_page_ == kVolPageReverb)
@@ -1042,6 +1223,7 @@ void RenderLeds()
 chompi::BowlsPreset SnapshotParams()
 {
     chompi::BowlsPreset p;
+    p.mode = static_cast<uint8_t>(ModeIdx(play_modes.Mode()));
     p.volume = static_cast<uint8_t>(
         params.volume_ticks.load(std::memory_order_relaxed));
     p.strike = static_cast<uint8_t>(
@@ -1052,17 +1234,21 @@ chompi::BowlsPreset SnapshotParams()
         params.decay_ticks.load(std::memory_order_relaxed));
     p.shimmer = static_cast<uint8_t>(
         params.shimmer_ticks.load(std::memory_order_relaxed));
-    p.profile = static_cast<uint8_t>(
-        params.profile_index.load(std::memory_order_relaxed));
-    for(int w = 0; w < kPlayableKeys; ++w)
-    {
-        p.pan[w] = static_cast<uint8_t>(
-            params.pan_ticks[w].load(std::memory_order_relaxed));
-        p.bvol[w] = static_cast<uint8_t>(
-            params.bowl_vol_ticks[w].load(std::memory_order_relaxed));
-        p.tune[w] = static_cast<uint8_t>(
-            params.tune_ticks[w].load(std::memory_order_relaxed));
-    }
+    for(int m = 0; m < bowls::kPlayModeCount; ++m)
+        for(int w = 0; w < bowls::kKeyCount; ++w)
+        {
+            const int slot = m * bowls::kKeyCount + w;
+            p.pan[slot] = static_cast<uint8_t>(
+                params.pan_ticks[m][w].load(std::memory_order_relaxed));
+            p.bvol[slot] = static_cast<uint8_t>(
+                params.bowl_vol_ticks[m][w].load(
+                    std::memory_order_relaxed));
+            p.tune[slot] = static_cast<uint8_t>(
+                params.tune_ticks[m][w].load(std::memory_order_relaxed));
+            p.profile[slot] = static_cast<uint8_t>(
+                params.profile_ticks[m][w].load(
+                    std::memory_order_relaxed));
+        }
     p.reverb_mix = static_cast<uint8_t>(
         params.reverb_mix_ticks.load(std::memory_order_relaxed));
     return p;
@@ -1070,19 +1256,28 @@ chompi::BowlsPreset SnapshotParams()
 
 void ApplyPreset(const chompi::BowlsPreset& p)
 {
+    // Restore the saved mode (boot-time only, before audio starts:
+    // no voices exist yet, so nothing can be interrupted; latch and
+    // performance state stay at their transient defaults).
+    play_modes.Init(static_cast<PlayMode>(p.mode));
     params.volume_ticks.store(p.volume, std::memory_order_relaxed);
     params.strike_ticks.store(p.strike, std::memory_order_relaxed);
     params.brightness_ticks.store(p.brightness, std::memory_order_relaxed);
     params.decay_ticks.store(p.decay, std::memory_order_relaxed);
     params.shimmer_ticks.store(p.shimmer, std::memory_order_relaxed);
-    params.profile_index.store(p.profile, std::memory_order_relaxed);
-    for(int w = 0; w < kPlayableKeys; ++w)
-    {
-        params.pan_ticks[w].store(p.pan[w], std::memory_order_relaxed);
-        params.bowl_vol_ticks[w].store(p.bvol[w],
-                                       std::memory_order_relaxed);
-        params.tune_ticks[w].store(p.tune[w], std::memory_order_relaxed);
-    }
+    for(int m = 0; m < bowls::kPlayModeCount; ++m)
+        for(int w = 0; w < bowls::kKeyCount; ++w)
+        {
+            const int slot = m * bowls::kKeyCount + w;
+            params.pan_ticks[m][w].store(p.pan[slot],
+                                         std::memory_order_relaxed);
+            params.bowl_vol_ticks[m][w].store(p.bvol[slot],
+                                              std::memory_order_relaxed);
+            params.tune_ticks[m][w].store(p.tune[slot],
+                                          std::memory_order_relaxed);
+            params.profile_ticks[m][w].store(p.profile[slot],
+                                             std::memory_order_relaxed);
+        }
     params.reverb_mix_ticks.store(p.reverb_mix, std::memory_order_relaxed);
     ApplyDecayShimmerToVoices();
 }
@@ -1124,6 +1319,16 @@ int main()
         /* Staged, non-blocking SD-card work: one small FatFS step per
          * pass, at thread level only (never in the audio ISR). */
         preset_storage.Service();
+
+        /* One serial diagnostic per storage failure/recovery (no panel
+         * LED by request): a failed save is never treated as
+         * successful - the state lives in RAM until it can be saved. */
+        const auto storage_event = preset_storage.ConsumeStatusEvent();
+        if(storage_event == chompi::PresetStorage::kStatusFailed)
+            hw.seed.PrintLine("SD: save failed - state kept in RAM, "
+                              "retrying");
+        else if(storage_event == chompi::PresetStorage::kStatusRecovered)
+            hw.seed.PrintLine("SD: save recovered");
 
         /* autosave 1 s after the last parameter change */
         const uint32_t now = System::GetNow();

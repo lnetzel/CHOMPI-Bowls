@@ -25,9 +25,23 @@ namespace chompi
 class PresetStorage
 {
   public:
-    static constexpr size_t   kJsonSize    = 512; /* serialized ~340 B */
+    /* v6 state (mode + four 75-entry banks) serializes to ~1 KB worst
+     * case - well past one 512 B sector, so reads/writes go
+     * multi-sector; 1536 B leaves headroom (measured in the host
+     * preset test). Buffers stay members in SRAM (.bss): the SDMMC IDMA
+     * cannot reach DTCMRAM stack. */
+    static constexpr size_t   kJsonSize    = 1536;
     static constexpr int      kMaxRetries  = 3;
     static constexpr uint32_t kBackoffMs   = 250;
+
+    /** One-shot storage status change, for a single serial diagnostic
+     *  per failure/recovery (no panel LED by request). */
+    enum StatusEvent : uint8_t
+    {
+        kStatusNone = 0,
+        kStatusFailed,   // a write cycle exhausted its retries
+        kStatusRecovered // a write completed after a failure
+    };
 
     void Init()
     {
@@ -39,6 +53,8 @@ class PresetStorage
         pending_         = false;
         save_seq_        = 0;
         written_seq_     = 0;
+        failed_          = false;
+        event_           = kStatusNone;
 
         /* same SDMMC/FatFS init as chompi-tape/PhaseOff; with no card
          * inserted this configures the peripheral without touching a
@@ -191,6 +207,13 @@ class PresetStorage
                 if(written_seq_ == save_seq_)
                     pending_ = false;
                 /* else: a newer snapshot arrived mid-write - loop again */
+                if(failed_)
+                {
+                    /* a write cycle completed after a failure: report
+                     * the recovery once */
+                    failed_ = false;
+                    event_  = kStatusRecovered;
+                }
                 break;
 
             case kBackoff:
@@ -207,6 +230,21 @@ class PresetStorage
     /** A write cycle is in flight. */
     bool Busy() const { return stage_ != kIdle; }
 
+    /** A write cycle exhausted its retries and no successful write has
+     *  completed since. The RAM state is kept and saving retries on the
+     *  next change / card insertion. */
+    bool Degraded() const { return failed_; }
+
+    /** Consume the one-shot failure/recovery event (kStatusNone when
+     *  nothing changed): the caller emits ONE serial diagnostic per
+     *  transition, never per retry. */
+    StatusEvent ConsumeStatusEvent()
+    {
+        const StatusEvent e = event_;
+        event_              = kStatusNone;
+        return e;
+    }
+
   private:
     enum Stage : uint8_t
     {
@@ -220,7 +258,9 @@ class PresetStorage
     };
 
     /** Failed stage: retry a few times with a short backoff, then drop
-     *  the write (the RAM state remains; the next change re-requests). */
+     *  the write (the RAM state remains; the next change re-requests).
+     *  The failure is reported once and stays latched until a write
+     *  completes. */
     void Retry(uint32_t now, Stage retry_stage)
     {
         if(stage_ == kOpenTmp || stage_ == kWrite || stage_ == kSyncClose
@@ -229,6 +269,11 @@ class PresetStorage
         if(++retries_ >= kMaxRetries)
         {
             stage_ = kIdle;
+            if(!failed_)
+            {
+                failed_ = true;
+                event_  = kStatusFailed;
+            }
             return;
         }
         retry_stage_ = retry_stage;
@@ -265,6 +310,8 @@ class PresetStorage
     uint32_t      save_seq_;
     uint32_t      written_seq_;
     size_t        json_len_ = 0;
+    bool          failed_   = false; /* write failure latched until success */
+    StatusEvent   event_    = kStatusNone;
     char          json_[kJsonSize];
     char          read_buf_[kJsonSize];
 };

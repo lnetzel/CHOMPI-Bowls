@@ -1,6 +1,11 @@
 # Improve Play Modes
 
-Status: **planned; not implemented**. Intended repository destination:
+Status: **implemented** (2026-11-05). All host suites pass
+(`make -C code/tests modes-test` + `test` + `strike-test`; T0 rub
+baseline sample-identical). Firmware builds clean; worst-case preset
+serialization measured at 964 B incl. terminator (1536 B buffers).
+Hardware checklist below remains to be exercised on the device.
+Intended repository destination:
 `plans/improve-play-modes.md`. Links below are relative to that destination.
 Requirements: [improve_play_modes_requirement.md](../requirements/improve_play_modes_requirement.md).
 

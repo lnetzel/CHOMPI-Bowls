@@ -4,10 +4,15 @@
  *
  *  All panel parameters live in a single document that is autosaved
  *  shortly after the last change and loaded at boot, so the instrument
- *  remembers its state across power cycles (spec section 1). Parsing
- *  clamps to the field ranges and fills missing keys with the boot
- *  defaults, so slightly older/newer files are tolerated; a version
- *  mismatch rejects the file.
+ *  remembers its state across power cycles (spec section 1).
+ *
+ *  Schema v6 (plans/improve-play-modes.md): the active play mode, six
+ *  global controls, and four per-mode/per-key banks of 75 entries each
+ *  (3 modes x 25 keys), flattened with index = mode * 25 + key. Latch
+ *  and performance state are transient and never saved. v1-v5 files are
+ *  deliberately NOT imported: a version mismatch (or any corruption)
+ *  boots factory defaults in Strikes, and the first successful v6 save
+ *  replaces the old file.
  */
 #pragma once
 #include <cstdint>
@@ -23,15 +28,25 @@ namespace chompi
 struct BowlsPreset
 {
     /* v2: pan array; v3: reverb mix; v4: per-bowl volume + tuning;
-     * v5: split keybed - per-KEY slots 15 -> 24 (rim 0-11, strike 12-23) */
-    static constexpr int kVersion = 5;
+     * v5: split keybed - per-KEY slots 15 -> 24 (rim 0-11, strike 12-23);
+     * v6: play modes - mode field + per-mode/per-key banks of 25 slots
+     * (3 modes x 25 keys = 75), profile becomes per-bowl per-mode. */
+    static constexpr int kVersion = 6;
 
     /* field ranges (mirror the tick counts in chompi_main.cpp) */
     static constexpr int kMaxTicks   = 32; /* 0..32 tick parameters */
     static constexpr int kMaxProfile = 4;  /* bowl profiles 0..4 */
-    static constexpr int kKeySlots   = 24; /* rim keys 0-11 + strike 12-23 */
+    static constexpr int kKeySlots   = 25; /* keys per mode */
+    static constexpr int kModeCount  = 3;  /* Strikes / Rimming / Split */
+    static constexpr int kBankSlots  = kModeCount * kKeySlots; /* 75 */
+
+    /* play modes (mirror bowls::PlayMode in bowl_scale.h) */
+    static constexpr int kModeStrikes = 0;
+    static constexpr int kModeRimming = 1;
+    static constexpr int kModeSplit   = 2;
 
     /* boot defaults (mirror Params in chompi_main.cpp) */
+    static constexpr int kDefaultMode       = kModeStrikes;
     static constexpr int kDefaultVolume     = 16;
     static constexpr int kDefaultStrike     = 16;
     static constexpr int kDefaultBrightness = 16;
@@ -43,49 +58,53 @@ struct BowlsPreset
     static constexpr int kDefaultBowlVol    = 16; /* unity gain (0 dB) */
     static constexpr int kDefaultTune       = 16; /* unison (ratio 1) */
 
+    uint8_t mode;       /**< 0..2 active play mode */
     uint8_t volume;     /**< 0..32 master volume ticks */
     uint8_t strike;     /**< 0..32 strike hardness ticks */
     uint8_t brightness; /**< 0..32 high-mode excitation ticks */
     uint8_t decay;      /**< 0..32 decay multiplier ticks */
     uint8_t shimmer;    /**< 0..32 paired-mode detune ticks */
-    uint8_t profile;    /**< 0..4 selected bowl profile */
-    uint8_t pan[kKeySlots];  /**< per-key pan 0..32 (16 = centre) */
     uint8_t reverb_mix; /**< 0..32 reverb dry/wet mix ticks */
-    uint8_t bvol[kKeySlots]; /**< per-key volume 0..32 (16 = unity) */
-    uint8_t tune[kKeySlots]; /**< per-key tuning 0..32 (16 = unison) */
+    /* per-mode/per-key banks, flattened [mode * 25 + key] */
+    uint8_t pan[kBankSlots];     /**< per-key pan 0..32 (16 = centre) */
+    uint8_t bvol[kBankSlots];    /**< per-key volume 0..32 (16 = unity) */
+    uint8_t tune[kBankSlots];    /**< per-key tuning 0..32 (16 = unison) */
+    uint8_t profile[kBankSlots]; /**< per-key bowl profile 0..4 */
 
     void SetDefaults()
     {
+        mode       = kDefaultMode;
         volume     = kDefaultVolume;
         strike     = kDefaultStrike;
         brightness = kDefaultBrightness;
         decay      = kDefaultDecay;
         shimmer    = kDefaultShimmer;
-        profile    = kDefaultProfile;
         reverb_mix = kDefaultReverbMix;
-        for(int w = 0; w < kKeySlots; ++w)
+        for(int w = 0; w < kBankSlots; ++w)
         {
-            pan[w]  = kDefaultPan;
-            bvol[w] = kDefaultBowlVol;
-            tune[w] = kDefaultTune;
+            pan[w]     = kDefaultPan;
+            bvol[w]    = kDefaultBowlVol;
+            tune[w]    = kDefaultTune;
+            profile[w] = kDefaultProfile;
         }
     }
 };
 
-/** Append one `,"name":[v0,..,v23]` array at `off` (a scalar field
+/** Append one `,"name":[v0,..,vN-1]` array at `off` (a scalar field
  *  always precedes the arrays, hence the leading comma). Returns the
  *  new offset, or 0 when the buffer is too small. */
 inline size_t AppendArray(char *         buf,
                           size_t         size,
                           size_t         off,
                           const char *   name,
-                          const uint8_t *values)
+                          const uint8_t *values,
+                          int            count)
 {
     int n = snprintf(buf + off, size - off, ",\"%s\":[", name);
     if(n < 0 || static_cast<size_t>(n) >= size - off)
         return 0;
     off += static_cast<size_t>(n);
-    for(int w = 0; w < BowlsPreset::kKeySlots; ++w)
+    for(int w = 0; w < count; ++w)
     {
         n = snprintf(buf + off, size - off, "%s%u", w == 0 ? "" : ",",
                      (unsigned)values[w]);
@@ -106,26 +125,31 @@ inline size_t Serialize(const BowlsPreset &p, char *buf, size_t size)
 {
     int n = snprintf(buf,
                      size,
-                     "{\"version\":%d,"
+                     "{\"version\":%d,\"mode\":%u,"
                      "\"volume\":%u,\"strike\":%u,\"brightness\":%u,"
-                     "\"decay\":%u,\"shimmer\":%u,\"profile\":%u,"
+                     "\"decay\":%u,\"shimmer\":%u,"
                      "\"reverb_mix\":%u",
                      BowlsPreset::kVersion,
+                     (unsigned)p.mode,
                      (unsigned)p.volume,
                      (unsigned)p.strike,
                      (unsigned)p.brightness,
                      (unsigned)p.decay,
                      (unsigned)p.shimmer,
-                     (unsigned)p.profile,
                      (unsigned)p.reverb_mix);
     if(n < 0 || static_cast<size_t>(n) >= size)
         return 0;
     size_t off = static_cast<size_t>(n);
-    off        = AppendArray(buf, size, off, "pan", p.pan);
+    off = AppendArray(buf, size, off, "pan", p.pan, BowlsPreset::kBankSlots);
     if(off != 0)
-        off = AppendArray(buf, size, off, "bvol", p.bvol);
+        off = AppendArray(buf, size, off, "bvol", p.bvol,
+                          BowlsPreset::kBankSlots);
     if(off != 0)
-        off = AppendArray(buf, size, off, "tune", p.tune);
+        off = AppendArray(buf, size, off, "tune", p.tune,
+                          BowlsPreset::kBankSlots);
+    if(off != 0)
+        off = AppendArray(buf, size, off, "profile", p.profile,
+                          BowlsPreset::kBankSlots);
     if(off == 0)
         return 0;
     n = snprintf(buf + off, size - off, "}");
@@ -163,83 +187,94 @@ inline int QueryInt(char *      buf,
     return static_cast<int>(v);
 }
 
-/** Read one `"name":[v0,..]` array into dest, each value clamped to
- *  0..kMaxTicks. A missing or short array keeps the existing (default)
- *  values for the remaining keys. The buffer is non-const because
- *  coreJSON's JSON_Search takes a char* (it never writes). */
-inline void QueryArray(char *     buf,
-                       size_t     len,
-                       const char *name,
-                       uint8_t *  dest,
-                       int        count)
+/** Strictly read one `"name":[v0,..]` array of exactly `count` values,
+ *  each clamped to 0..max_value, into dest. Returns false when the
+ *  array is missing, malformed, or short - the caller then rejects the
+ *  whole document rather than partially applying corrupt state. The
+ *  buffer is non-const because coreJSON's JSON_Search takes a char*
+ *  (it never writes). */
+inline bool QueryArrayStrict(char *     buf,
+                             size_t     len,
+                             const char *name,
+                             uint8_t *  dest,
+                             int        count,
+                             int        max_value)
 {
     char * value     = nullptr;
     size_t value_len = 0;
     if(JSON_Search(buf, len, name, strlen(name), &value, &value_len)
            != JSONSuccess
        || value_len < 2 || value[0] != '[')
-        return;
+        return false;
     size_t i = 1;
-    for(int w = 0; w < count && i < value_len; ++w)
+    for(int w = 0; w < count; ++w)
     {
+        if(i >= value_len)
+            return false; /* short array */
         char *     end = nullptr;
         const long v   = strtol(value + i, &end, 10);
         if(end == value + i)
-            break; /* no number here: keep the remaining defaults */
+            return false; /* no number here: corrupt */
         dest[w] = static_cast<uint8_t>(
-            v < 0 ? 0
-                  : (v > BowlsPreset::kMaxTicks ? BowlsPreset::kMaxTicks
-                                                : v));
+            v < 0 ? 0 : (v > max_value ? max_value : v));
         i = static_cast<size_t>(end - value);
         while(i < value_len && (value[i] == ',' || value[i] == ' '))
             ++i;
     }
+    return true;
 }
 
-/** Parse a state document. Returns false for invalid JSON or a NEWER
- *  schema version; older files load with defaults for missing keys. */
+/** Parse a state document. Only the exact current schema version is
+ *  accepted: v1-v5 files (and newer files) are deliberately NOT
+ *  imported - the caller keeps factory defaults and the first
+ *  successful new save replaces the old file. Corrupt, truncated or
+ *  partially valid documents are rejected whole, never partially
+ *  applied. */
 inline bool Parse(char *buf, size_t len, BowlsPreset &p)
 {
     if(JSON_Validate(buf, len) != JSONSuccess)
         return false;
     const int version = QueryInt(buf, len, "version", 0, 0, 100);
-    if(version < 1 || version > BowlsPreset::kVersion)
-        return false; /* from a newer firmware: do not misread it */
-    p.SetDefaults();
-    p.volume = QueryInt(buf, len, "volume", BowlsPreset::kDefaultVolume,
-                        0, BowlsPreset::kMaxTicks);
-    p.strike = QueryInt(buf, len, "strike", BowlsPreset::kDefaultStrike,
-                        0, BowlsPreset::kMaxTicks);
-    p.brightness = QueryInt(buf, len, "brightness",
-                            BowlsPreset::kDefaultBrightness, 0,
-                            BowlsPreset::kMaxTicks);
-    p.decay = QueryInt(buf, len, "decay", BowlsPreset::kDefaultDecay, 0,
-                       BowlsPreset::kMaxTicks);
-    p.shimmer = QueryInt(buf, len, "shimmer", BowlsPreset::kDefaultShimmer,
-                         0, BowlsPreset::kMaxTicks);
-    p.profile = QueryInt(buf, len, "profile", BowlsPreset::kDefaultProfile,
-                         0, BowlsPreset::kMaxProfile);
-    p.reverb_mix = QueryInt(buf, len, "reverb_mix",
-                            BowlsPreset::kDefaultReverbMix, 0,
-                            BowlsPreset::kMaxTicks);
+    if(version != BowlsPreset::kVersion)
+        return false; /* old or newer firmware: do not misread it */
 
-    /* per-key arrays: "[v0,..,v23]" - a missing or short array keeps
-     * the defaults for the remaining keys. v4-and-older files hold 15
-     * white-key entries (one bowl per white key): load those into the
-     * rim keys, then copy bowls 0-11 onto the strike keys (12-23) so
-     * both halves inherit the bowl's old settings; the three dropped
-     * high bowls (old entries 12-14) are discarded. */
-    const int slots = version >= 5 ? BowlsPreset::kKeySlots : 15;
-    QueryArray(buf, len, "pan", p.pan, slots);
-    QueryArray(buf, len, "bvol", p.bvol, slots);
-    QueryArray(buf, len, "tune", p.tune, slots);
-    if(version < 5)
-        for(int k = 0; k < 12; ++k)
-        {
-            p.pan[12 + k]  = p.pan[k];
-            p.bvol[12 + k] = p.bvol[k];
-            p.tune[12 + k] = p.tune[k];
-        }
+    /* parse into a scratch copy first: nothing is applied unless the
+     * whole document validates */
+    BowlsPreset tmp;
+    tmp.SetDefaults();
+    const int mode = QueryInt(buf, len, "mode", -1, -1, 100);
+    if(mode < 0 || mode >= BowlsPreset::kModeCount)
+        return false; /* invalid mode: reject, do not clamp */
+    tmp.mode = static_cast<uint8_t>(mode);
+    tmp.volume = QueryInt(buf, len, "volume", BowlsPreset::kDefaultVolume,
+                          0, BowlsPreset::kMaxTicks);
+    tmp.strike = QueryInt(buf, len, "strike", BowlsPreset::kDefaultStrike,
+                          0, BowlsPreset::kMaxTicks);
+    tmp.brightness = QueryInt(buf, len, "brightness",
+                              BowlsPreset::kDefaultBrightness, 0,
+                              BowlsPreset::kMaxTicks);
+    tmp.decay = QueryInt(buf, len, "decay", BowlsPreset::kDefaultDecay, 0,
+                         BowlsPreset::kMaxTicks);
+    tmp.shimmer = QueryInt(buf, len, "shimmer",
+                           BowlsPreset::kDefaultShimmer, 0,
+                           BowlsPreset::kMaxTicks);
+    tmp.reverb_mix = QueryInt(buf, len, "reverb_mix",
+                              BowlsPreset::kDefaultReverbMix, 0,
+                              BowlsPreset::kMaxTicks);
+
+    /* per-mode/per-key banks: all four arrays must hold exactly
+     * kBankSlots values, or the document is corrupt */
+    if(!QueryArrayStrict(buf, len, "pan", tmp.pan,
+                         BowlsPreset::kBankSlots, BowlsPreset::kMaxTicks)
+       || !QueryArrayStrict(buf, len, "bvol", tmp.bvol,
+                            BowlsPreset::kBankSlots, BowlsPreset::kMaxTicks)
+       || !QueryArrayStrict(buf, len, "tune", tmp.tune,
+                            BowlsPreset::kBankSlots, BowlsPreset::kMaxTicks)
+       || !QueryArrayStrict(buf, len, "profile", tmp.profile,
+                            BowlsPreset::kBankSlots,
+                            BowlsPreset::kMaxProfile))
+        return false;
+    p = tmp;
     return true;
 }
 

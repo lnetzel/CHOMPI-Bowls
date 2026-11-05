@@ -36,6 +36,29 @@ strike_test.exe: strike_test.cpp ../src/bowl_voice.h ../src/bowl_profile.h ../sr
 baseline: baseline_gen.exe
 	./baseline_gen.exe
 
+# Play-modes feature tests (plans/improve-play-modes.md): the
+# hardware-independent mode/key/latch state machine, the clean-pad
+# envelope DSP, and the v6 preset schema (needs coreJSON, compiled as
+# C99 like the firmware does).
+modes-test: play_modes_test.exe pad_test.exe preset_test.exe
+	./play_modes_test.exe
+	./pad_test.exe
+	./preset_test.exe
+
+play_modes_test.exe: play_modes_test.cpp ../src/play_modes.h ../src/bowl_scale.h
+	$(CXX) $(CXXFLAGS) -o $@ play_modes_test.cpp
+
+pad_test.exe: pad_test.cpp ../src/bowl_voice.h ../src/bowl_profile.h ../src/bowl_scale.h
+	$(CXX) $(CXXFLAGS) -o $@ pad_test.cpp
+
+COREJSON_DIR = ../libs/coreJSON/source
+
+preset_test.exe: preset_test.cpp ../src/BowlsPreset.h core_json_host.o
+	$(CXX) $(CXXFLAGS) -I$(COREJSON_DIR)/include -o $@ preset_test.cpp core_json_host.o
+
+core_json_host.o: $(COREJSON_DIR)/core_json.c
+	gcc -O2 -std=c99 -I$(COREJSON_DIR)/include -c -o $@ $<
+
 render_test.exe: render_test.cpp ../src/bowl_voice.h ../src/bowl_profile.h
 	$(CXX) $(CXXFLAGS) -o $@ render_test.cpp
 
@@ -43,6 +66,6 @@ baseline_gen.exe: baseline_gen.cpp .baseline/bowl_voice.h .baseline/bowl_profile
 	$(CXX) $(CXXFLAGS) -o $@ baseline_gen.cpp
 
 clean:
-	rm -f render_test.exe baseline_gen.exe strike_analyze.exe
+	rm -f render_test.exe baseline_gen.exe strike_analyze.exe strike_test.exe play_modes_test.exe pad_test.exe preset_test.exe core_json_host.o
 
-.PHONY: test cal analyze baseline clean
+.PHONY: test cal analyze baseline modes-test strike-test clean
