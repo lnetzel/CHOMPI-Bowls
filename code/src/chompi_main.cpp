@@ -74,7 +74,13 @@
 //                         temple-room reverb dry/wet mix (pale ice
 //                         bar + LED)
 //   SHIFT (KEY_26)      : modifier + mode shortcuts; while held, the
-//                         active mode's shortcut key glows blue
+//                         active mode's shortcut key glows blue and
+//                         the active audio routing's selection key
+//                         glows pink. SHIFT + Black 6 (C#4) = Normal
+//                         audio routing, SHIFT + Black 7 (D#4) =
+//                         Send FX routing (audio_routing.h); the
+//                         combo is consumed - it never sounds a note
+//                         or moves the bowl editor target.
 //   LOOP (KEY_28)       : toggles the Rimming note latch (LOOP LED lit
 //                         while enabled; latched keys glow violet);
 //                         reserved in the other modes. PLAY (KEY_27)
@@ -85,13 +91,21 @@
 // white and ringing voices glow dim amber on their key.
 //
 // Audio: 48 kHz, block 24, dual codec - headphones are outputs 0/1 and
-// the master line out is outputs 2/3 (per the TAPE firmware channel map).
+// the master line out is outputs 2/3 (per the TAPE firmware channel
+// map); AUX IN is inputs 2/3. Two selectable routings
+// (audio_routing.h): Normal (boot default) sends the same bowl bus x
+// master gain to both output pairs; Send FX sends the dry bowl bus at
+// fixed unity (pre-master-gain) to the line out - an external-effects
+// send - and the AUX IN return x master gain to the headphones (the
+// volume knob is the return level). The return never leaves through
+// the line out, so a feedback loop is impossible.
 
 #include "chompi_hardware.h"
 #include "leds.h"
 #include "bowl_profile.h"
 #include "bowl_scale.h"
 #include "play_modes.h"
+#include "audio_routing.h"
 #include "bowl_voice.h"
 #include "BowlsPreset.h"
 #include "PresetStorage.h"
@@ -238,6 +252,11 @@ Params params;
 constexpr int kVolPageVolume = 0;
 constexpr int kVolPageReverb = 1;
 volatile int  vol_page_      = kVolPageVolume;
+
+// Audio routing selection (audio_routing.h): Normal (boot default) or
+// the external send-FX loop. Session-only - never saved to the SD
+// preset, so a fresh boot always starts in Normal monitoring.
+volatile int routing_ = bowls::kRoutingDefault;
 
 // Encoder-1 pages (press cycles): bowl volume -> character -> tuning.
 constexpr int kEnc1PageVolume    = 0;
@@ -842,14 +861,25 @@ void ApplyControls()
     ApplyWheel();
 
     // Route every key through the play-mode state machine: SHIFT +
-    // lower F#/G#/A# are consumed as mode shortcuts through release;
-    // every other key press/release is interpreted in the mode it
-    // started in (so a key-up after a mode switch still releases the
-    // right note).
+    // Black 6/Black 7 are consumed as the audio-routing selection
+    // first; SHIFT + lower F#/G#/A# are consumed as mode shortcuts
+    // through release; every other key press/release is interpreted
+    // in the mode it started in (so a key-up after a mode switch
+    // still releases the right note).
     for(int key = 0; key < bowls::kKeyCount; ++key)
     {
         if(hw.KeyRising(key))
         {
+            // SHIFT + Black 6 (C#4, key 13) / Black 7 (D#4, key 15):
+            // audio routing selection (audio_routing.h). Consumed
+            // before the play-mode state machine, so the combo never
+            // sounds a note or moves the bowl editor target; the
+            // release is a no-op (the key was never marked down).
+            if(shift && bowls::IsRoutingSelectKey(key))
+            {
+                routing_ = bowls::RoutingAfterKey(routing_, key);
+                continue;
+            }
             const bowls::KeyAction act = play_modes.KeyDown(key, shift);
             switch(act.kind)
             {
@@ -909,8 +939,6 @@ void AudioCallback(AudioHandle::InputBuffer  in,
     g_cpu_meter.OnBlockStart();
 #endif
 
-    (void)in; // no input monitoring in v1
-
     hw.ProcessControls();
     ApplyControls();
 
@@ -930,6 +958,9 @@ void AudioCallback(AudioHandle::InputBuffer  in,
         = TicksToNorm(params.volume_ticks.load(std::memory_order_relaxed));
     const float mix_target
         = TicksToNorm(params.reverb_mix_ticks.load(std::memory_order_relaxed));
+    // The routing is read once per block; the per-sample loop below
+    // branches on this cached value (audio_routing.h).
+    const int routing = routing_;
     for(size_t i = 0; i < size; ++i)
     {
         daisysp::fonepole(volume_smooth, volume_target, 0.001f);
@@ -950,14 +981,30 @@ void AudioCallback(AudioHandle::InputBuffer  in,
         reverb.Process(send_lp2_l_, send_lp2_r_, &wet_l, &wet_r);
         const float dry   = 1.0f - mix_smooth;
         const float gain  = volume_smooth * volume_smooth;
-        const float left  = daisysp::SoftClip(
-            (mix_l[i] * dry + wet_l * mix_smooth) * gain);
-        const float right = daisysp::SoftClip(
-            (mix_r[i] * dry + wet_r * mix_smooth) * gain);
-        out[0][i] = left;  // headphone L
-        out[1][i] = right; // headphone R
-        out[2][i] = left;  // master L
-        out[3][i] = right; // master R
+        const float bus_l = mix_l[i] * dry + wet_l * mix_smooth;
+        const float bus_r = mix_r[i] * dry + wet_r * mix_smooth;
+        // Audio routing (audio_routing.h): Normal sends the bus x
+        // master gain to all four outputs (the v1 behavior,
+        // bit-exact); Send FX sends the dry bowl bus at fixed unity
+        // to the line out (the external-effects send - the volume
+        // knob does not change it) and the AUX IN return x master
+        // gain to the headphones. SoftClip stays at the codec
+        // boundary for every output.
+        float hp_l, hp_r, line_l, line_r;
+        bowls::RouteOutputs(routing,
+                            bus_l,
+                            bus_r,
+                            in[2][i],
+                            in[3][i],
+                            gain,
+                            hp_l,
+                            hp_r,
+                            line_l,
+                            line_r);
+        out[0][i] = daisysp::SoftClip(hp_l);   // headphone L
+        out[1][i] = daisysp::SoftClip(hp_r);   // headphone R
+        out[2][i] = daisysp::SoftClip(line_l); // master L
+        out[3][i] = daisysp::SoftClip(line_r); // master R
     }
 
 #ifdef CPU_METER
@@ -1114,6 +1161,15 @@ void DrawOverlayBar(uint32_t now)
     // machine, so its violet indication disappears at the steal.)
     if(!overlay_active)
     {
+        // The active routing's selection key glows pink (Black 6 =
+        // Normal, Black 7 = Send FX) at the lowest priority: held
+        // keys, ringing voices and latched notes drawn below
+        // overwrite it.
+        chompi_leds::SetSmtLed(
+            chompi_leds::kKeyLeds[bowls::RoutingSelectKey(routing_)],
+            static_cast<uint8_t>(48.0f * bowls::kRoutingColorR),
+            static_cast<uint8_t>(48.0f * bowls::kRoutingColorG),
+            static_cast<uint8_t>(48.0f * bowls::kRoutingColorB));
         for(unsigned key = 0; key < 25; ++key)
             if(hw.KeyHeld(key))
                 chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key], 48, 48, 48);
@@ -1142,13 +1198,19 @@ void RenderLeds()
     DrawOverlayBar(System::GetNow());
 
     // While SHIFT is held, highlight the active mode's lower black
-    // shortcut key (blue). Black keys never collide with the white-key
+    // shortcut key (blue) and the active audio routing's selection
+    // key (pink). Black keys never collide with the white-key
     // parameter bars, so this reads over either view.
     if(hw.ShiftHeld())
     {
         const int sk
             = bowls::kModeShortcutKey[ModeIdx(play_modes.Mode())];
         chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[sk], 0, 26, 48);
+        chompi_leds::SetSmtLed(
+            chompi_leds::kKeyLeds[bowls::RoutingSelectKey(routing_)],
+            static_cast<uint8_t>(48.0f * bowls::kRoutingColorR),
+            static_cast<uint8_t>(48.0f * bowls::kRoutingColorG),
+            static_cast<uint8_t>(48.0f * bowls::kRoutingColorB));
     }
 
     // Panel LEDs (PTH chain).

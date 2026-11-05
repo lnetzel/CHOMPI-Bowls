@@ -45,6 +45,14 @@ modes-test: play_modes_test.exe pad_test.exe preset_test.exe
 	./pad_test.exe
 	./preset_test.exe
 
+# Audio-routing feature tests: the send-FX loop key mapping and the
+# per-sample output distribution (pure header, like play_modes.h).
+routing-test: audio_routing_test.exe
+	./audio_routing_test.exe
+
+audio_routing_test.exe: audio_routing_test.cpp ../src/audio_routing.h ../src/bowl_scale.h
+	$(CXX) $(CXXFLAGS) -o $@ audio_routing_test.cpp
+
 play_modes_test.exe: play_modes_test.cpp ../src/play_modes.h ../src/bowl_scale.h
 	$(CXX) $(CXXFLAGS) -o $@ play_modes_test.cpp
 
@@ -66,6 +74,6 @@ baseline_gen.exe: baseline_gen.cpp .baseline/bowl_voice.h .baseline/bowl_profile
 	$(CXX) $(CXXFLAGS) -o $@ baseline_gen.cpp
 
 clean:
-	rm -f render_test.exe baseline_gen.exe strike_analyze.exe strike_test.exe play_modes_test.exe pad_test.exe preset_test.exe core_json_host.o
+	rm -f render_test.exe baseline_gen.exe strike_analyze.exe strike_test.exe play_modes_test.exe pad_test.exe preset_test.exe audio_routing_test.exe core_json_host.o
 
-.PHONY: test cal analyze baseline modes-test strike-test clean
+.PHONY: test cal analyze baseline modes-test strike-test routing-test clean
