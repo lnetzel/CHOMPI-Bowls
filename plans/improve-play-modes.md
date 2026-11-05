@@ -44,8 +44,8 @@ from [chompi_hardware.h](../code/src/chompi_hardware.h):
 | Selection | Shortcut | Behavior |
 |---|---|---|
 | Strikes | SHIFT + lower F# (key index 6) | Strike on all keys |
-| Split | SHIFT + lower G# (key index 8) | Rim 0–11; strike 12–24 |
-| Rimming | SHIFT + lower A# (key index 10) | Sustained pad on all keys |
+| Rimming | SHIFT + lower G# (key index 8) | Sustained pad on all keys |
+| Split | SHIFT + lower A# (key index 10) | Rim 0–11; strike 12–24 |
 
 For Split, retain the present 12 frequencies and pairings. Use **1240.8 Hz**,
 the next higher frequency retained in the current scale's comments, for the
