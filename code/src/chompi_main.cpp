@@ -19,7 +19,7 @@
 //                         wheel rims currently sounding, physically
 //                         held strikes. SHIFT + lower G# (key 8) =
 //                         RIMMING - all 25 keys hold clean sustained
-//                         bowl pads (5 s attack to 90%, 10 s release
+//                         bowl pads (10 s attack to 90%, 10 s release
 //                         to 10%); the wheel adds the direction-
 //                         dependent rimming; LOOP toggles a note
 //                         latch: enabling captures the held sounding
@@ -34,9 +34,10 @@
 //                         sounds a note or moves the edit target.
 //   Physical encoder 1 (SW4/ENC_4): per-bowl editor for the selected
 //                         bowl (the last played/selected key IN THE
-//                         CURRENT MODE; pan, bowl volume, tuning and
-//                         resonance character are independent per key
-//                         per mode); press cycles three pages. Page 1:
+//                         CURRENT MODE; pan, bowl volume, tuning,
+//                         resonance character, brightness and decay
+//                         are independent per key per mode); press
+//                         cycles three pages. Page 1:
 //                         bowl volume (LED2 green, green bar; 16 =
 //                         unity, 32 = +6 dB; rides ringing voices
 //                         live); SHIFT+turn = pan the bowl left/right
@@ -48,8 +49,11 @@
 //                         bar from white key 8; 16 = unison, 0 =
 //                         half, 32 = double; next strike/selection)
 //   Physical encoder 2 (SW1/ENC_1): strike hardness (LED3 amber, amber
-//                         bar); SHIFT+turn = brightness (yellow-white bar)
-//   Physical encoder 3 (SW2/ENC_2): decay (LED4 blue, blue bar)
+//                         bar, GLOBAL); SHIFT+turn = brightness of the
+//                         selected bowl (yellow-white bar; rides the
+//                         ringing voice live)
+//   Physical encoder 3 (SW2/ENC_2): decay of the selected bowl (LED4
+//                         blue, blue bar; rides the ringing voice live)
 //   Physical encoder 4 (SW3/ENC_3): shimmer - paired-mode detune (LED5
 //                         purple, centered purple bar)
 //   Transport wheel     : rimming - detents pump the PER-(MODE,KEY)
@@ -218,25 +222,30 @@ struct Params
                 profile_ticks[m][w].store(
                     chompi::BowlsPreset::kDefaultProfile,
                     std::memory_order_relaxed);
+                brightness_ticks[m][w].store(
+                    chompi::BowlsPreset::kDefaultBrightness,
+                    std::memory_order_relaxed);
+                decay_ticks[m][w].store(chompi::BowlsPreset::kDefaultDecay,
+                                        std::memory_order_relaxed);
             }
     }
 
     // Global controls (shared by all modes).
     std::atomic<int>      volume_ticks{chompi::BowlsPreset::kDefaultVolume};
     std::atomic<int>      strike_ticks{chompi::BowlsPreset::kDefaultStrike};
-    std::atomic<int>      brightness_ticks{
-        chompi::BowlsPreset::kDefaultBrightness};
-    std::atomic<int>      decay_ticks{chompi::BowlsPreset::kDefaultDecay};
     std::atomic<int>      shimmer_ticks{chompi::BowlsPreset::kDefaultShimmer};
 
     // Per-mode/per-key banks [mode][key]: pan (16 = centre), bowl
-    // volume (16 = unity), tuning (16 = unison, 1/2x..2x) and resonance
-    // character (profile 0..4) are independent for each physical key
-    // in each mode. Encoder 1 edits the current mode's bank.
+    // volume (16 = unity), tuning (16 = unison, 1/2x..2x), resonance
+    // character (profile 0..4), brightness and decay are independent
+    // for each physical key in each mode. Encoders 1-3 edit the
+    // current mode's bank for the selected (last played) key.
     std::atomic<int>      pan_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
     std::atomic<int>      bowl_vol_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
     std::atomic<int>      tune_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
     std::atomic<int>      profile_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
+    std::atomic<int>      brightness_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
+    std::atomic<int>      decay_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
 
     // Volume knob page 2: temple-room reverb dry/wet mix.
     std::atomic<int>      reverb_mix_ticks{
@@ -269,6 +278,13 @@ volatile int  enc1_page_         = kEnc1PageVolume;
 // writes BOWLS/state.json once the panel has been quiet for 1 s.
 volatile bool     params_dirty      = false;
 volatile uint32_t params_changed_at = 0;
+
+// SD save-status flash on the SHIFT LED (persistence diagnostic): a
+// short green pulse = a save completed; 1 s red = a save failed.
+volatile uint32_t sd_flash_until_                  = 0;
+volatile uint8_t  sd_flash_r_                      = 0;
+volatile uint8_t  sd_flash_g_                      = 0;
+volatile uint8_t  sd_flash_b_                      = 0;
 
 void MarkDirty(uint32_t now)
 {
@@ -367,28 +383,15 @@ int SectionStep(int& acc, int inc)
 // mode (never a shortcut key). Transient, per mode, initialized to 0.
 int last_key_[bowls::kPlayModeCount] = {0, 0, 0};
 
-void ApplyDecayShimmerToVoices()
+// Shimmer stays GLOBAL: one paired-mode detune for the whole
+// instrument, pushed to every voice live and at boot (it is not part
+// of the per-key excitation settings).
+void ApplyShimmerToVoices()
 {
-    const float decay_mult
-        = DecayMultTicks(params.decay_ticks.load(std::memory_order_relaxed));
     const float shimmer_mult
         = ShimmerMultTicks(params.shimmer_ticks.load(std::memory_order_relaxed));
     for(int v = 0; v < kVoiceCount; ++v)
-    {
-        voices[v].SetDecayMult(decay_mult);
         voices[v].SetShimmerMult(shimmer_mult);
-    }
-}
-
-// Brightness is an excitation-time parameter for strikes, but it also
-// brightens the RUBBED modes live - so push it to the voices the moment
-// it changes (turning SHIFT+encoder 2 while rubbing is heard at once).
-void ApplyBrightnessToVoices()
-{
-    const float brightness
-        = TicksToNorm(params.brightness_ticks.load(std::memory_order_relaxed));
-    for(int v = 0; v < kVoiceCount; ++v)
-        voices[v].SetBrightness(brightness);
 }
 
 /** Find the voice holding the identity (mode, key), or -1. Identity is
@@ -433,16 +436,19 @@ int AllocVoice(PlayMode mode, int key)
     return v;
 }
 
-/** Global + per-(mode,key) excitation settings, shared by strikes, rim
- *  selection and pads. Pan and bowl volume ride live; profile and
- *  tuning take effect here (excitation time) only. */
+/** Per-(mode,key) excitation settings, shared by strikes, rim
+ *  selection and pads. Pan, bowl volume, brightness and decay also
+ *  ride live via the encoder handlers; profile and tuning take effect
+ *  here (excitation time) only. */
 void ApplyVoiceSettings(int v, PlayMode mode, int key)
 {
     const int m = ModeIdx(mode);
     voices[v].SetProfile(
         params.profile_ticks[m][key].load(std::memory_order_relaxed));
-    voices[v].SetBrightness(
-        TicksToNorm(params.brightness_ticks.load(std::memory_order_relaxed)));
+    voices[v].SetBrightness(TicksToNorm(
+        params.brightness_ticks[m][key].load(std::memory_order_relaxed)));
+    voices[v].SetDecayMult(DecayMultTicks(
+        params.decay_ticks[m][key].load(std::memory_order_relaxed)));
     voices[v].SetPan(PanNormTicks(
         params.pan_ticks[m][key].load(std::memory_order_relaxed)));
     voices[v].SetBowlGain(BowlGainTicks(
@@ -739,34 +745,78 @@ void ApplyControls()
         }
     }
 
-    // Physical encoder 2: strike hardness; SHIFT+turn = brightness
-    // (brightness is pushed to the voices live: it brightens rubbing
-    // immediately and the next strike).
+    // Physical encoder 2: strike hardness (GLOBAL); SHIFT+turn =
+    // brightness of the SELECTED bowl (per-(mode,key)). Brightness is
+    // pushed to the voice live: it brightens rubbing immediately and
+    // the next strike.
     const int strike_inc = hw.EncoderIncrement(1);
     if(shift)
     {
-        BumpTicks(params.brightness_ticks, strike_inc, Overlay::Brightness, now);
-        ApplyBrightnessToVoices();
+        if(strike_inc != 0)
+        {
+            const int cur_mode = ModeIdx(play_modes.Mode());
+            const int key      = last_key_[cur_mode];
+            int       bright
+                = params.brightness_ticks[cur_mode][key].load(
+                      std::memory_order_relaxed)
+                  + strike_inc;
+            bright = bright < 0 ? 0
+                                : (bright > kTickCount ? kTickCount : bright);
+            if(bright
+               != params.brightness_ticks[cur_mode][key].load(
+                   std::memory_order_relaxed))
+            {
+                params.brightness_ticks[cur_mode][key].store(
+                    bright, std::memory_order_relaxed);
+                const float bnorm = TicksToNorm(bright);
+                for(int v = 0; v < kVoiceCount; ++v)
+                    if(voices[v].Key() == key
+                       && voices[v].VoiceMode() == cur_mode)
+                        voices[v].SetBrightness(bnorm);
+                MarkDirty(now);
+            }
+            ShowOverlay(Overlay::Brightness, now); // also at the end stops
+        }
     }
     else
     {
         BumpTicks(params.strike_ticks, strike_inc, Overlay::Strike, now);
     }
 
-    // Physical encoder 3: decay (live-updates ringing voices).
+    // Physical encoder 3: decay of the SELECTED bowl (per-(mode,key));
+    // rides the ringing voice holding it live.
     const int decay_inc = hw.EncoderIncrement(2);
     if(decay_inc != 0)
     {
-        BumpTicks(params.decay_ticks, decay_inc, Overlay::Decay, now);
-        ApplyDecayShimmerToVoices();
+        const int cur_mode = ModeIdx(play_modes.Mode());
+        const int key      = last_key_[cur_mode];
+        int       decay
+            = params.decay_ticks[cur_mode][key].load(
+                  std::memory_order_relaxed)
+              + decay_inc;
+        decay = decay < 0 ? 0 : (decay > kTickCount ? kTickCount : decay);
+        if(decay
+           != params.decay_ticks[cur_mode][key].load(
+               std::memory_order_relaxed))
+        {
+            params.decay_ticks[cur_mode][key].store(
+                decay, std::memory_order_relaxed);
+            const float mult = DecayMultTicks(decay);
+            for(int v = 0; v < kVoiceCount; ++v)
+                if(voices[v].Key() == key
+                   && voices[v].VoiceMode() == cur_mode)
+                    voices[v].SetDecayMult(mult);
+            MarkDirty(now);
+        }
+        ShowOverlay(Overlay::Decay, now); // also at the end stops
     }
 
-    // Physical encoder 4: shimmer / paired-mode detune (also live).
+    // Physical encoder 4: shimmer / paired-mode detune (GLOBAL, live).
     const int shimmer_inc = hw.EncoderIncrement(3);
     if(shimmer_inc != 0)
     {
         BumpTicks(params.shimmer_ticks, shimmer_inc, Overlay::Shimmer, now);
-        ApplyDecayShimmerToVoices();
+        ApplyShimmerToVoices();
     }
 
     // Volume encoder: page 1 = master volume, page 2 = reverb dry/wet.
@@ -1110,12 +1160,16 @@ void DrawOverlayBar(uint32_t now)
                         48, 26, 0);
                 break;
             case Overlay::Brightness:
-                DrawBar(params.brightness_ticks.load(std::memory_order_relaxed),
-                        44, 44, 8); // yellow-white
+                // Yellow-white bar: brightness of the selected bowl.
+                DrawBar(params.brightness_ticks[cur_mode][edit_key].load(
+                            std::memory_order_relaxed),
+                        44, 44, 8);
                 break;
             case Overlay::Decay:
-                // Blue bar, matching the encoder 3 LED.
-                DrawBar(params.decay_ticks.load(std::memory_order_relaxed),
+                // Blue bar: decay of the selected bowl, matching the
+                // encoder 3 LED.
+                DrawBar(params.decay_ticks[cur_mode][edit_key].load(
+                            std::memory_order_relaxed),
                         0, 20, 48);
                 break;
             case Overlay::Shimmer:
@@ -1269,6 +1323,12 @@ void RenderLeds()
             chompi_leds::SetPthLed(chompi_leds::kPthVolume, 0, level, 0); // green
     }
 
+    // SD save-status flash: overrides the SHIFT LED briefly after a
+    // save completes (green) or fails (red).
+    if(System::GetNow() < sd_flash_until_)
+        chompi_leds::SetPthLed(chompi_leds::kPthShift,
+                               sd_flash_r_, sd_flash_g_, sd_flash_b_);
+
     chompi_leds::Flush();
 }
 
@@ -1284,10 +1344,6 @@ chompi::BowlsPreset SnapshotParams()
         params.volume_ticks.load(std::memory_order_relaxed));
     p.strike = static_cast<uint8_t>(
         params.strike_ticks.load(std::memory_order_relaxed));
-    p.brightness = static_cast<uint8_t>(
-        params.brightness_ticks.load(std::memory_order_relaxed));
-    p.decay = static_cast<uint8_t>(
-        params.decay_ticks.load(std::memory_order_relaxed));
     p.shimmer = static_cast<uint8_t>(
         params.shimmer_ticks.load(std::memory_order_relaxed));
     for(int m = 0; m < bowls::kPlayModeCount; ++m)
@@ -1304,6 +1360,11 @@ chompi::BowlsPreset SnapshotParams()
             p.profile[slot] = static_cast<uint8_t>(
                 params.profile_ticks[m][w].load(
                     std::memory_order_relaxed));
+            p.bright[slot] = static_cast<uint8_t>(
+                params.brightness_ticks[m][w].load(
+                    std::memory_order_relaxed));
+            p.decay[slot] = static_cast<uint8_t>(
+                params.decay_ticks[m][w].load(std::memory_order_relaxed));
         }
     p.reverb_mix = static_cast<uint8_t>(
         params.reverb_mix_ticks.load(std::memory_order_relaxed));
@@ -1318,8 +1379,6 @@ void ApplyPreset(const chompi::BowlsPreset& p)
     play_modes.Init(static_cast<PlayMode>(p.mode));
     params.volume_ticks.store(p.volume, std::memory_order_relaxed);
     params.strike_ticks.store(p.strike, std::memory_order_relaxed);
-    params.brightness_ticks.store(p.brightness, std::memory_order_relaxed);
-    params.decay_ticks.store(p.decay, std::memory_order_relaxed);
     params.shimmer_ticks.store(p.shimmer, std::memory_order_relaxed);
     for(int m = 0; m < bowls::kPlayModeCount; ++m)
         for(int w = 0; w < bowls::kKeyCount; ++w)
@@ -1333,9 +1392,29 @@ void ApplyPreset(const chompi::BowlsPreset& p)
                                           std::memory_order_relaxed);
             params.profile_ticks[m][w].store(p.profile[slot],
                                              std::memory_order_relaxed);
+            params.brightness_ticks[m][w].store(p.bright[slot],
+                                                std::memory_order_relaxed);
+            params.decay_ticks[m][w].store(p.decay[slot],
+                                           std::memory_order_relaxed);
         }
     params.reverb_mix_ticks.store(p.reverb_mix, std::memory_order_relaxed);
-    ApplyDecayShimmerToVoices();
+    ApplyShimmerToVoices();
+}
+
+/** Boot-only SD status signal on the SHIFT LED (storage has no panel
+ *  LED by request - this runs once, before audio starts): `count`
+ *  short pulses of the given colour. Blocking; polled-DMA Flush. */
+void BootBlink(int count, uint8_t r, uint8_t g, uint8_t b)
+{
+    for(int i = 0; i < count; ++i)
+    {
+        chompi_leds::SetPthLed(chompi_leds::kPthShift, r, g, b);
+        chompi_leds::Flush();
+        System::Delay(180);
+        chompi_leds::ClearAll();
+        chompi_leds::Flush();
+        System::Delay(180);
+    }
 }
 
 } // namespace
@@ -1348,7 +1427,7 @@ int main()
 
     for(int v = 0; v < kVoiceCount; ++v)
         voices[v].Init(kSampleRate);
-    ApplyDecayShimmerToVoices();
+    ApplyShimmerToVoices();
 
     // Temple-room reverb: a small wooden room, not a cathedral.
     reverb.Init(kSampleRate);
@@ -1359,8 +1438,34 @@ int main()
     // (no card / no file: factory defaults, saves become inert).
     preset_storage.Init();
     chompi::BowlsPreset preset;
-    if(preset_storage.Load(preset))
+    const bool          preset_loaded = preset_storage.Load(preset);
+    if(preset_loaded)
         ApplyPreset(preset);
+
+    // Boot-time SD diagnostic (one signal, before audio starts):
+    //   3 red blinks   = no card detected - settings will NOT persist
+    //   2 amber blinks = card OK, no state file yet (first boot - the
+    //                    next knob change writes one)
+    //   3 amber blinks = card OK, file present but unreadable/rejected
+    //                    (old schema version, read error, corruption)
+    //   1 green pulse  = saved state loaded
+    // The same line goes to the USB serial log.
+    if(preset_storage.NoSdCard())
+    {
+        hw.seed.PrintLine("SD: no card at boot - saves inert");
+        BootBlink(3, 48, 0, 0);
+    }
+    else if(!preset_loaded)
+    {
+        const int load_fail = preset_storage.LoadFail();
+        hw.seed.PrintLine("SD: load failed, code %d", load_fail);
+        BootBlink(load_fail == 2 ? 2 : 3, 40, 24, 0);
+    }
+    else
+    {
+        hw.seed.PrintLine("SD: saved state loaded");
+        BootBlink(1, 0, 40, 0);
+    }
 
     // Show the volume bar briefly at boot.
     params.overlay.store(static_cast<int>(Overlay::Volume),
@@ -1376,15 +1481,55 @@ int main()
          * pass, at thread level only (never in the audio ISR). */
         preset_storage.Service();
 
-        /* One serial diagnostic per storage failure/recovery (no panel
-         * LED by request): a failed save is never treated as
+        /* One serial diagnostic + SHIFT-LED flash per storage failure
+         * /recovery/completion: a failed save is never treated as
          * successful - the state lives in RAM until it can be saved. */
         const auto storage_event = preset_storage.ConsumeStatusEvent();
         if(storage_event == chompi::PresetStorage::kStatusFailed)
+        {
             hw.seed.PrintLine("SD: save failed - state kept in RAM, "
                               "retrying");
+            sd_flash_r_     = 48;
+            sd_flash_g_     = 0;
+            sd_flash_b_     = 0;
+            sd_flash_until_ = System::GetNow() + 1000;
+        }
         else if(storage_event == chompi::PresetStorage::kStatusRecovered)
+        {
             hw.seed.PrintLine("SD: save recovered");
+            sd_flash_r_     = 0;
+            sd_flash_g_     = 40;
+            sd_flash_b_     = 0;
+            sd_flash_until_ = System::GetNow() + 300;
+        }
+        else if(storage_event == chompi::PresetStorage::kStatusSaved)
+        {
+            hw.seed.PrintLine("SD: state saved");
+            sd_flash_r_     = 0;
+            sd_flash_g_     = 40;
+            sd_flash_b_     = 0;
+            sd_flash_until_ = System::GetNow() + 300;
+        }
+
+        /* Card-presence edge: a card detected at boot that later reads
+         * as gone (or comes back) flips the SHIFT LED purple for 1 s
+         * and logs - the runtime disk_status recheck is a live poll
+         * that can disagree with the boot-time state. */
+        static bool sd_was_present = !preset_storage.NoSdCard();
+        const bool  sd_present     = !preset_storage.NoSdCard();
+        if(sd_was_present && !sd_present)
+        {
+            hw.seed.PrintLine("SD: card LOST at runtime");
+            sd_flash_r_     = 32;
+            sd_flash_g_     = 0;
+            sd_flash_b_     = 40;
+            sd_flash_until_ = System::GetNow() + 1000;
+        }
+        else if(!sd_was_present && sd_present)
+        {
+            hw.seed.PrintLine("SD: card detected");
+        }
+        sd_was_present = sd_present;
 
         /* autosave 1 s after the last parameter change */
         const uint32_t now = System::GetNow();
@@ -1393,6 +1538,25 @@ int main()
         {
             params_dirty = false;
             preset_storage.RequestSave(SnapshotParams());
+            /* Trigger diagnostic: white pulse = autosave fired; purple
+             * 1 s instead when the card is (currently) seen as gone,
+             * which silently blocks the write in Service(). */
+            hw.seed.PrintLine("SD: autosave fired, card %s",
+                              preset_storage.NoSdCard() ? "GONE" : "present");
+            if(preset_storage.NoSdCard())
+            {
+                sd_flash_r_     = 32;
+                sd_flash_g_     = 0;
+                sd_flash_b_     = 40;
+                sd_flash_until_ = now + 1000;
+            }
+            else
+            {
+                sd_flash_r_     = 32;
+                sd_flash_g_     = 32;
+                sd_flash_b_     = 32;
+                sd_flash_until_ = now + 150;
+            }
         }
 
         RenderLeds();

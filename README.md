@@ -16,8 +16,8 @@ ringing voices glow dim amber, and LOOP-latched notes glow yellow.
 | **Encoder 1** - page 1 (default) | Next page | Per-bowl volume of the selected bowl\* (16 = unity, 32 = +6 dB; rides ringing voices live) | Pan the selected bowl left/right (live) | LED2 green; green bar / cyan pan bar from white key 8 |
 | **Encoder 1** - page 2 | Next page | Resonance character: bowl profile 1-5 (two detent ticks per step) | - | LED2 orange; five 3-key orange sections |
 | **Encoder 1** - page 3 | Next page (wraps to 1) | Per-bowl tuning of the selected bowl\* (16 = unison, 0 = 1/2x, 32 = 2x; next strike/selection) | - | LED2 violet; violet bar from white key 8 |
-| **Encoder 2** | - | Strike hardness (soft felt -> hard mallet) | Brightness (high-mode content, live; also brightens rimming) | LED3 amber; amber bar / yellow-white bar |
-| **Encoder 3** | - | Decay: ring time 0.25x .. 2x (live) | - | LED4 blue; blue bar |
+| **Encoder 2** | - | Strike hardness (global; soft felt -> hard mallet) | Brightness of the selected bowl\* (high-mode content, live; also brightens rimming) | LED3 amber; amber bar / yellow-white bar |
+| **Encoder 3** | - | Decay of the selected bowl\*: ring time 0.25x .. 2x (live) | - | LED4 blue; blue bar |
 | **Encoder 4** | - | Shimmer: paired-mode beating 0 .. 2x (16 = profile detune; live) | - | LED5 purple; centered purple bar |
 | **Transport wheel** | - | Rim the current mode's wheel set (see Play modes): turn speed = loudness; **clockwise = friction texture, counter-clockwise = clean sustained tone**; the last direction sticks per key while the wheel is still. The wheel never starts a strike and never revives a stolen note | - | Wheel LEDs (LED6/LED7) follow the rub level |
 | **Volume knob** | Switch page | Page 1: master volume. Page 2: temple-room reverb dry/wet mix | - | LED10 follows the page (green->amber->red gradient / pale ice) |
@@ -25,9 +25,9 @@ ringing voices glow dim amber, and LOOP-latched notes glow yellow.
 | **LOOP** (KEY_28) | Toggle the Rimming note latch (Rimming mode only) | - | - | LOOP LED and latched keys glow the same yellow while the latch is enabled |
 
 \* The selected bowl = the last played/selected key **in the current
-mode**. Pan, bowl volume, tuning and resonance character are stored
-independently for each key in each mode (75 editable bowls in total);
-master volume, strike hardness, brightness, decay, shimmer and reverb
+mode**. Pan, bowl volume, tuning, resonance character, brightness and
+decay are stored independently for each key in each mode (75 editable
+bowls in total); master volume, strike hardness, shimmer and reverb
 mix are global. PLAY (KEY_27) and the mode toggle (SW_TOG) are
 reserved.
 
@@ -43,7 +43,7 @@ current mode. Black keys are playable everywhere.
   ascending bowls (99 Hz .. 1560 Hz). The wheel rims the currently
   sounding, physically held strikes.
 - **Rimming** (SHIFT + lower G#): all 25 keys hold clean, sustained
-  bowl pads - 5 s attack to ~90%, 10 s release to ~10%; the bowl's
+  bowl pads - 10 s attack to ~90%, 10 s release to ~10%; the bowl's
   ring and the reverb can ring out longer. The wheel adds the
   direction-dependent rimming on top. **LOOP** toggles a note latch:
   enabling it captures the held sounding pads; a key press then toggles

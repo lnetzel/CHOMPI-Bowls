@@ -3,7 +3,7 @@
 // with `make -C code/tests modes-test` from the MSYS2 UCRT64 shell.
 //
 //   P1  pad attack: from silence the pad-drive envelope reaches
-//       0.90 +/- 0.005 after exactly 5 s
+//       0.90 +/- 0.005 after exactly 10 s
 //   P2  pad release: the envelope reaches 0.10 +/- 0.005 of its
 //       note-off level after exactly 10 s; the resonator ring and
 //       tails are NOT cut by the envelope
@@ -108,13 +108,13 @@ bowls::BowlVoice* FreshPad(bowls::BowlVoice& v, float fundamental)
 
 int main()
 {
-    // P1: attack reaches 0.90 +/- 0.005 at exactly 5 s.
+    // P1: attack reaches 0.90 +/- 0.005 at exactly 10 s.
     {
         bowls::BowlVoice v;
         FreshPad(v, 220.0f);
-        Run(v, static_cast<long>(5.0 * kFs));
+        Run(v, static_cast<long>(10.0 * kFs));
         const double env = v.PadEnvelope();
-        Check(std::fabs(env - 0.90) <= 0.005, "P1 pad attack 0.90 at 5 s", env);
+        Check(std::fabs(env - 0.90) <= 0.005, "P1 pad attack 0.90 at 10 s", env);
     }
 
     // P2: release reaches 0.10 +/- 0.005 of the note-off level at 10 s,
@@ -122,7 +122,7 @@ int main()
     {
         bowls::BowlVoice v;
         FreshPad(v, 220.0f);
-        Run(v, static_cast<long>(12.0 * kFs)); // attack converges ~1
+        Run(v, static_cast<long>(20.0 * kFs)); // attack converges ~1
         const double note_off = v.PadEnvelope();
         v.SetPadGate(false);
         Run(v, static_cast<long>(10.0 * kFs));
@@ -154,7 +154,7 @@ int main()
     {
         bowls::BowlVoice v;
         FreshPad(v, 220.0f);
-        Run(v, static_cast<long>(6.0 * kFs)); // past the attack
+        Run(v, static_cast<long>(20.0 * kFs)); // past the attack
         const Out o = Run(v, static_cast<long>(4.0 * kFs));
         Check(o.finite && o.peak < 2.0, "P4 pad bounded", o.peak);
         Check(o.rms > 0.005, "P4b pad audible", o.rms);

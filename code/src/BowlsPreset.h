@@ -6,13 +6,13 @@
  *  shortly after the last change and loaded at boot, so the instrument
  *  remembers its state across power cycles (spec section 1).
  *
- *  Schema v6 (plans/improve-play-modes.md): the active play mode, six
- *  global controls, and four per-mode/per-key banks of 75 entries each
- *  (3 modes x 25 keys), flattened with index = mode * 25 + key. Latch
- *  and performance state are transient and never saved. v1-v5 files are
- *  deliberately NOT imported: a version mismatch (or any corruption)
- *  boots factory defaults in Strikes, and the first successful v6 save
- *  replaces the old file.
+ *  Schema v7: the active play mode, four global controls, and six
+ *  per-mode/per-key banks of 75 entries each (3 modes x 25 keys),
+ *  flattened with index = mode * 25 + key. Latch and performance state
+ *  are transient and never saved. v1-v6 files are deliberately NOT
+ *  imported: a version mismatch (or any corruption) boots factory
+ *  defaults in Strikes, and the first successful v7 save replaces the
+ *  old file.
  */
 #pragma once
 #include <cstdint>
@@ -30,8 +30,10 @@ struct BowlsPreset
     /* v2: pan array; v3: reverb mix; v4: per-bowl volume + tuning;
      * v5: split keybed - per-KEY slots 15 -> 24 (rim 0-11, strike 12-23);
      * v6: play modes - mode field + per-mode/per-key banks of 25 slots
-     * (3 modes x 25 keys = 75), profile becomes per-bowl per-mode. */
-    static constexpr int kVersion = 6;
+     * (3 modes x 25 keys = 75), profile becomes per-bowl per-mode;
+     * v7: brightness and decay move from globals to per-mode/per-key
+     * banks (six banks of 75). */
+    static constexpr int kVersion = 7;
 
     /* field ranges (mirror the tick counts in chompi_main.cpp) */
     static constexpr int kMaxTicks   = 32; /* 0..32 tick parameters */
@@ -61,8 +63,6 @@ struct BowlsPreset
     uint8_t mode;       /**< 0..2 active play mode */
     uint8_t volume;     /**< 0..32 master volume ticks */
     uint8_t strike;     /**< 0..32 strike hardness ticks */
-    uint8_t brightness; /**< 0..32 high-mode excitation ticks */
-    uint8_t decay;      /**< 0..32 decay multiplier ticks */
     uint8_t shimmer;    /**< 0..32 paired-mode detune ticks */
     uint8_t reverb_mix; /**< 0..32 reverb dry/wet mix ticks */
     /* per-mode/per-key banks, flattened [mode * 25 + key] */
@@ -70,14 +70,14 @@ struct BowlsPreset
     uint8_t bvol[kBankSlots];    /**< per-key volume 0..32 (16 = unity) */
     uint8_t tune[kBankSlots];    /**< per-key tuning 0..32 (16 = unison) */
     uint8_t profile[kBankSlots]; /**< per-key bowl profile 0..4 */
+    uint8_t bright[kBankSlots];  /**< per-key brightness 0..32 */
+    uint8_t decay[kBankSlots];   /**< per-key decay 0..32 */
 
     void SetDefaults()
     {
         mode       = kDefaultMode;
         volume     = kDefaultVolume;
         strike     = kDefaultStrike;
-        brightness = kDefaultBrightness;
-        decay      = kDefaultDecay;
         shimmer    = kDefaultShimmer;
         reverb_mix = kDefaultReverbMix;
         for(int w = 0; w < kBankSlots; ++w)
@@ -86,6 +86,8 @@ struct BowlsPreset
             bvol[w]    = kDefaultBowlVol;
             tune[w]    = kDefaultTune;
             profile[w] = kDefaultProfile;
+            bright[w]  = kDefaultBrightness;
+            decay[w]   = kDefaultDecay;
         }
     }
 };
@@ -126,15 +128,12 @@ inline size_t Serialize(const BowlsPreset &p, char *buf, size_t size)
     int n = snprintf(buf,
                      size,
                      "{\"version\":%d,\"mode\":%u,"
-                     "\"volume\":%u,\"strike\":%u,\"brightness\":%u,"
-                     "\"decay\":%u,\"shimmer\":%u,"
+                     "\"volume\":%u,\"strike\":%u,\"shimmer\":%u,"
                      "\"reverb_mix\":%u",
                      BowlsPreset::kVersion,
                      (unsigned)p.mode,
                      (unsigned)p.volume,
                      (unsigned)p.strike,
-                     (unsigned)p.brightness,
-                     (unsigned)p.decay,
                      (unsigned)p.shimmer,
                      (unsigned)p.reverb_mix);
     if(n < 0 || static_cast<size_t>(n) >= size)
@@ -149,6 +148,12 @@ inline size_t Serialize(const BowlsPreset &p, char *buf, size_t size)
                           BowlsPreset::kBankSlots);
     if(off != 0)
         off = AppendArray(buf, size, off, "profile", p.profile,
+                          BowlsPreset::kBankSlots);
+    if(off != 0)
+        off = AppendArray(buf, size, off, "bright", p.bright,
+                          BowlsPreset::kBankSlots);
+    if(off != 0)
+        off = AppendArray(buf, size, off, "decay", p.decay,
                           BowlsPreset::kBankSlots);
     if(off == 0)
         return 0;
@@ -225,7 +230,7 @@ inline bool QueryArrayStrict(char *     buf,
 }
 
 /** Parse a state document. Only the exact current schema version is
- *  accepted: v1-v5 files (and newer files) are deliberately NOT
+ *  accepted: v1-v6 files (and newer files) are deliberately NOT
  *  imported - the caller keeps factory defaults and the first
  *  successful new save replaces the old file. Corrupt, truncated or
  *  partially valid documents are rejected whole, never partially
@@ -250,11 +255,6 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
                           0, BowlsPreset::kMaxTicks);
     tmp.strike = QueryInt(buf, len, "strike", BowlsPreset::kDefaultStrike,
                           0, BowlsPreset::kMaxTicks);
-    tmp.brightness = QueryInt(buf, len, "brightness",
-                              BowlsPreset::kDefaultBrightness, 0,
-                              BowlsPreset::kMaxTicks);
-    tmp.decay = QueryInt(buf, len, "decay", BowlsPreset::kDefaultDecay, 0,
-                         BowlsPreset::kMaxTicks);
     tmp.shimmer = QueryInt(buf, len, "shimmer",
                            BowlsPreset::kDefaultShimmer, 0,
                            BowlsPreset::kMaxTicks);
@@ -262,7 +262,7 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
                               BowlsPreset::kDefaultReverbMix, 0,
                               BowlsPreset::kMaxTicks);
 
-    /* per-mode/per-key banks: all four arrays must hold exactly
+    /* per-mode/per-key banks: all six arrays must hold exactly
      * kBankSlots values, or the document is corrupt */
     if(!QueryArrayStrict(buf, len, "pan", tmp.pan,
                          BowlsPreset::kBankSlots, BowlsPreset::kMaxTicks)
@@ -272,7 +272,11 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
                             BowlsPreset::kBankSlots, BowlsPreset::kMaxTicks)
        || !QueryArrayStrict(buf, len, "profile", tmp.profile,
                             BowlsPreset::kBankSlots,
-                            BowlsPreset::kMaxProfile))
+                            BowlsPreset::kMaxProfile)
+       || !QueryArrayStrict(buf, len, "bright", tmp.bright,
+                            BowlsPreset::kBankSlots, BowlsPreset::kMaxTicks)
+       || !QueryArrayStrict(buf, len, "decay", tmp.decay,
+                            BowlsPreset::kBankSlots, BowlsPreset::kMaxTicks))
         return false;
     p = tmp;
     return true;

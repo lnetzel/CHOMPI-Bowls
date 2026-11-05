@@ -1,15 +1,15 @@
-// Host-side tests for the v6 preset schema (plans/improve-play-modes.md).
+// Host-side tests for the v7 preset schema (plans/improve-play-modes.md).
 // Not part of the firmware build; run with `make -C code/tests
 // modes-test` from the MSYS2 UCRT64 shell.
 //
 //   S1  round-trip: distinct values in all 75 mode/key slots of all
-//       four banks, all globals, and each of the three modes survive
+//       six banks, all globals, and each of the three modes survive
 //       serialize -> parse
 //   S2  size: the worst-case serialization crosses 512 bytes (the old
 //       single-sector buffer - reads/writes must go multi-sector) and
-//       fits the 1536-byte storage buffers INCLUDING the terminator,
+//       fits the 2048-byte storage buffers INCLUDING the terminator,
 //       even with impossible 3-digit values
-//   S3  rejection: v5/v7 files, invalid JSON, truncation, an
+//   S3  rejection: v6/v8 files, invalid JSON, truncation, an
 //       out-of-range mode, a short array and non-integer array entries
 //       are all rejected WHOLE (never partially applied)
 //   S4  clamping: out-of-range array values clamp to the field ranges
@@ -41,7 +41,7 @@ void Check(bool ok, const char* name, long value)
 
 // Mirror of PresetStorage::kJsonSize (PresetStorage.h itself pulls in
 // daisy.h and is not host-compilable).
-constexpr size_t kStorageJsonSize = 1536;
+constexpr size_t kStorageJsonSize = 2048;
 
 chompi::BowlsPreset PatternPreset(int mode)
 {
@@ -50,8 +50,6 @@ chompi::BowlsPreset PatternPreset(int mode)
     p.mode       = static_cast<uint8_t>(mode);
     p.volume     = 3;
     p.strike     = 31;
-    p.brightness = 17;
-    p.decay      = 5;
     p.shimmer    = 29;
     p.reverb_mix = 21;
     for(int i = 0; i < chompi::BowlsPreset::kBankSlots; ++i)
@@ -60,6 +58,8 @@ chompi::BowlsPreset PatternPreset(int mode)
         p.bvol[i]    = static_cast<uint8_t>((i * 7) % 33);
         p.tune[i]    = static_cast<uint8_t>((i * 13) % 33);
         p.profile[i] = static_cast<uint8_t>(i % 5);
+        p.bright[i]  = static_cast<uint8_t>((i * 3) % 33);
+        p.decay[i]   = static_cast<uint8_t>((i * 11) % 33);
     }
     return p;
 }
@@ -67,12 +67,13 @@ chompi::BowlsPreset PatternPreset(int mode)
 bool Same(const chompi::BowlsPreset& a, const chompi::BowlsPreset& b)
 {
     return a.mode == b.mode && a.volume == b.volume && a.strike == b.strike
-           && a.brightness == b.brightness && a.decay == b.decay
            && a.shimmer == b.shimmer && a.reverb_mix == b.reverb_mix
            && std::memcmp(a.pan, b.pan, sizeof(a.pan)) == 0
            && std::memcmp(a.bvol, b.bvol, sizeof(a.bvol)) == 0
            && std::memcmp(a.tune, b.tune, sizeof(a.tune)) == 0
-           && std::memcmp(a.profile, b.profile, sizeof(a.profile)) == 0;
+           && std::memcmp(a.profile, b.profile, sizeof(a.profile)) == 0
+           && std::memcmp(a.bright, b.bright, sizeof(a.bright)) == 0
+           && std::memcmp(a.decay, b.decay, sizeof(a.decay)) == 0;
 }
 
 } // namespace
@@ -81,7 +82,7 @@ int main()
 {
     char buf[kStorageJsonSize];
 
-    // S1: round-trip all 75 slots x 4 banks, all globals, each mode.
+    // S1: round-trip all 75 slots x 6 banks, all globals, each mode.
     {
         bool ok = true;
         for(int mode = 0; mode < chompi::BowlsPreset::kModeCount; ++mode)
@@ -98,27 +99,30 @@ int main()
             if(!chompi::Parse(buf, len, dst) || !Same(src, dst))
                 ok = false;
         }
-        Check(ok, "S1 round-trip 75 slots x 4 banks + mode", "");
+        Check(ok, "S1 round-trip 75 slots x 6 banks + mode", "");
     }
 
-    // S2: worst-case size crosses 512 and fits 1536 incl. terminator.
+    // S2: worst-case size crosses 512 and fits 2048 incl. terminator.
     {
         chompi::BowlsPreset p;
         p.SetDefaults();
         for(int i = 0; i < chompi::BowlsPreset::kBankSlots; ++i)
         {
-            p.pan[i] = p.bvol[i] = p.tune[i] = 32;
-            p.profile[i]                     = 4;
+            p.pan[i] = p.bvol[i] = p.tune[i] = p.bright[i] = p.decay[i] = 32;
+            p.profile[i] = 4;
         }
         const size_t len = chompi::Serialize(p, buf, sizeof(buf));
         Check(len > 512, "S2 worst case crosses 512 B (multi-sector)",
               static_cast<long>(len));
         Check(len + 1 <= kStorageJsonSize,
-              "S2b worst case fits 1536 B incl. terminator",
+              "S2b worst case fits 2048 B incl. terminator",
               static_cast<long>(len + 1));
         // Even impossible 3-digit values (corrupt-but-uint8) must fit.
         for(int i = 0; i < chompi::BowlsPreset::kBankSlots; ++i)
+        {
             p.pan[i] = p.bvol[i] = p.tune[i] = p.profile[i] = 255;
+            p.bright[i] = p.decay[i] = 255;
+        }
         const size_t len3 = chompi::Serialize(p, buf, sizeof(buf));
         Check(len3 > 0 && len3 + 1 <= kStorageJsonSize,
               "S2c 3-digit values still fit", static_cast<long>(len3 + 1));
@@ -129,20 +133,20 @@ int main()
         chompi::BowlsPreset src = PatternPreset(1);
         const size_t        len = chompi::Serialize(src, buf, sizeof(buf));
 
-        // version 5 / version 7
-        char* v6 = std::strstr(buf, "\"version\":6");
-        Check(v6 != nullptr, "S3 pre: version field present", "");
+        // version 6 / version 8
+        char* v7 = std::strstr(buf, "\"version\":7");
+        Check(v7 != nullptr, "S3 pre: version field present", "");
         chompi::BowlsPreset dst;
         dst.SetDefaults();
-        v6[9] = '5';
-        Check(!chompi::Parse(buf, len, dst), "S3a v5 file rejected", "");
-        v6[9] = '7';
-        Check(!chompi::Parse(buf, len, dst), "S3b v7 file rejected", "");
-        v6[9] = '6';
+        v7[9] = '6';
+        Check(!chompi::Parse(buf, len, dst), "S3a v6 file rejected", "");
+        v7[9] = '8';
+        Check(!chompi::Parse(buf, len, dst), "S3b v8 file rejected", "");
+        v7[9] = '7';
 
         // invalid JSON
         char junk[64];
-        std::strcpy(junk, "{\"version\":6,\"mode\":0,not json");
+        std::strcpy(junk, "{\"version\":7,\"mode\":0,not json");
         Check(!chompi::Parse(junk, std::strlen(junk), dst),
               "S3c invalid JSON rejected", "");
 
@@ -161,9 +165,9 @@ int main()
         {
             char small[kStorageJsonSize];
             int  n = std::snprintf(small, sizeof(small),
-                                   "{\"version\":6,\"mode\":0,"
-                                   "\"volume\":1,\"strike\":1,\"brightness\":1,"
-                                   "\"decay\":1,\"shimmer\":1,\"reverb_mix\":1");
+                                   "{\"version\":7,\"mode\":0,"
+                                   "\"volume\":1,\"strike\":1,"
+                                   "\"shimmer\":1,\"reverb_mix\":1");
             size_t off = static_cast<size_t>(n);
             off = chompi::AppendArray(small, sizeof(small), off, "pan",
                                       src.pan, 74); // one short
@@ -173,6 +177,12 @@ int main()
                                       src.tune, chompi::BowlsPreset::kBankSlots);
             off = chompi::AppendArray(small, sizeof(small), off, "profile",
                                       src.profile,
+                                      chompi::BowlsPreset::kBankSlots);
+            off = chompi::AppendArray(small, sizeof(small), off, "bright",
+                                      src.bright,
+                                      chompi::BowlsPreset::kBankSlots);
+            off = chompi::AppendArray(small, sizeof(small), off, "decay",
+                                      src.decay,
                                       chompi::BowlsPreset::kBankSlots);
             n = std::snprintf(small + off, sizeof(small) - off, "}");
             off += static_cast<size_t>(n);
@@ -198,7 +208,10 @@ int main()
         chompi::BowlsPreset p;
         p.SetDefaults();
         for(int i = 0; i < chompi::BowlsPreset::kBankSlots; ++i)
+        {
             p.pan[i] = p.bvol[i] = p.tune[i] = p.profile[i] = 99;
+            p.bright[i] = p.decay[i] = 99;
+        }
         const size_t len = chompi::Serialize(p, buf, sizeof(buf));
         chompi::BowlsPreset dst;
         dst.SetDefaults();
@@ -206,7 +219,8 @@ int main()
         bool       clamped = ok;
         for(int i = 0; i < chompi::BowlsPreset::kBankSlots; ++i)
             if(dst.pan[i] != 32 || dst.bvol[i] != 32 || dst.tune[i] != 32
-               || dst.profile[i] != 4)
+               || dst.profile[i] != 4 || dst.bright[i] != 32
+               || dst.decay[i] != 32)
                 clamped = false;
         Check(clamped, "S4 out-of-range values clamp", "");
     }

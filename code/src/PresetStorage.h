@@ -25,12 +25,13 @@ namespace chompi
 class PresetStorage
 {
   public:
-    /* v6 state (mode + four 75-entry banks) serializes to ~1 KB worst
-     * case - well past one 512 B sector, so reads/writes go
-     * multi-sector; 1536 B leaves headroom (measured in the host
+    /* v7 state (mode + six 75-entry banks) serializes to ~1.4 KB worst
+     * case (~2 KB with impossible 3-digit values) - well past one 512 B
+     * sector, so reads/writes go multi-sector; 2048 B covers the
+     * uint8 worst case incl. the terminator (measured in the host
      * preset test). Buffers stay members in SRAM (.bss): the SDMMC IDMA
      * cannot reach DTCMRAM stack. */
-    static constexpr size_t   kJsonSize    = 1536;
+    static constexpr size_t   kJsonSize    = 2048;
     static constexpr int      kMaxRetries  = 3;
     static constexpr uint32_t kBackoffMs   = 250;
 
@@ -39,8 +40,9 @@ class PresetStorage
     enum StatusEvent : uint8_t
     {
         kStatusNone = 0,
-        kStatusFailed,   // a write cycle exhausted its retries
-        kStatusRecovered // a write completed after a failure
+        kStatusFailed,    // a write cycle exhausted its retries
+        kStatusRecovered, // a write completed after a failure
+        kStatusSaved      // a write completed (no prior failure)
     };
 
     void Init()
@@ -71,26 +73,46 @@ class PresetStorage
     }
 
     /** Boot load. Returns false (caller keeps defaults) when there is no
-     *  card, no file, or the file fails validation. */
+     *  card, no file, or the file fails validation. LoadFail() reports
+     *  the reason: 1 = no card, 2 = no state file, 3 = read error,
+     *  4 = content rejected (old schema / corruption). */
     bool Load(BowlsPreset &p)
     {
         if(no_sd_card_)
+        {
+            load_fail_ = 1;
             return false;
+        }
         /* read_fil_ and read_buf_ MUST be members (SRAM, .bss), never
          * stack locals: with _FS_TINY=0 every FIL carries its own
          * 512 B sector buffer and f_read DMAs the data sector into it.
          * The main stack is in DTCMRAM, which the SDMMC IDMA cannot
          * reach, so a stack FIL stalls the read forever. */
         if(f_open(&read_fil_, "BOWLS/state.json", FA_READ) != FR_OK)
+        {
+            load_fail_ = 2;
             return false;
+        }
         UINT    br = 0;
         FRESULT r  = f_read(&read_fil_, read_buf_, kJsonSize - 1, &br);
         f_close(&read_fil_);
         if(r != FR_OK)
+        {
+            load_fail_ = 3;
             return false;
+        }
         read_buf_[br] = '\0';
-        return Parse(read_buf_, br, p);
+        if(!Parse(read_buf_, br, p))
+        {
+            load_fail_ = 4;
+            return false;
+        }
+        load_fail_ = 0;
+        return true;
     }
+
+    /** Failure code of the last Load() (0 = it succeeded). */
+    int LoadFail() const { return load_fail_; }
 
     /** Snapshot the state and request a save. If a write is already in
      *  flight, the newest snapshot is written when the next cycle starts
@@ -200,9 +222,11 @@ class PresetStorage
             }
 
             case kRename:
+            {
                 /* done either way: a failed rename is not retried (the
                  * .tmp stays behind and is ignored by Load) */
-                f_rename("BOWLS/state.tmp", "BOWLS/state.json");
+                const FRESULT rr
+                    = f_rename("BOWLS/state.tmp", "BOWLS/state.json");
                 stage_ = kIdle;
                 if(written_seq_ == save_seq_)
                     pending_ = false;
@@ -214,7 +238,10 @@ class PresetStorage
                     failed_ = false;
                     event_  = kStatusRecovered;
                 }
+                else if(rr == FR_OK)
+                    event_ = kStatusSaved;
                 break;
+            }
 
             case kBackoff:
             default:
@@ -311,9 +338,16 @@ class PresetStorage
     uint32_t      written_seq_;
     size_t        json_len_ = 0;
     bool          failed_   = false; /* write failure latched until success */
+    uint8_t       load_fail_ = 0;    /* last Load() failure code */
     StatusEvent   event_    = kStatusNone;
-    char          json_[kJsonSize];
-    char          read_buf_[kJsonSize];
+    /* 32-byte alignment is MANDATORY: for whole-sector transfers FatFS
+     *  hands these buffers straight to the SDMMC IDMA, which requires a
+     *  word-aligned address and silently drops the low address bits
+     *  otherwise - an odd struct offset prepends junk bytes to the
+     *  file and smears the boot read (the v7 layout shift surfaced
+     *  this). 32 B also covers D-cache line maintenance. */
+    alignas(32) char json_[kJsonSize];
+    alignas(32) char read_buf_[kJsonSize];
 };
 
 } // namespace chompi

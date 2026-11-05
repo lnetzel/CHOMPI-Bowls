@@ -57,7 +57,7 @@
 // path is skipped outright, so its contribution is exactly zero.
 // The Rimming play mode adds a clean-pad gate: while a key is held (or
 // LOOP-latched), the same phase-continuous rotation oscillators are
-// driven by a slow pad envelope (5 s attack to 90%, 10 s release to
+// driven by a slow pad envelope (10 s attack to 90%, 10 s release to
 // 10% of the note-off level), mixed into the wheel's clean drive with
 // a bounded sum that can never exceed the wheel path's own maximum.
 // With the pad gate off the wheel DSP path is bit-identical to the
@@ -115,10 +115,10 @@ class BowlVoice
         pad_gate_      = false;
         pad_env_       = 0.0f;
         // Pad envelope coefficients (one-pole, no trig per sample):
-        // from silence the drive reaches 0.90 after exactly 5 s; after
+        // from silence the drive reaches 0.90 after exactly 10 s; after
         // note-off it falls to 0.10 of the note-off level after exactly
         // 10 s (env(N)/env(0) = (1-c)^N = 0.1 for N = T*fs).
-        pad_attack_coef_  = 1.0f - expf(-2.302585093f / (5.0f * sample_rate));
+        pad_attack_coef_  = 1.0f - expf(-2.302585093f / (10.0f * sample_rate));
         pad_release_coef_ = 1.0f - expf(-2.302585093f / (10.0f * sample_rate));
         pan_l_         = 1.0f;
         pan_r_         = 1.0f;
@@ -181,7 +181,7 @@ class BowlVoice
     /** Still sounding (or about to sound)? Drives voice allocation and
      *  the LED ring glow - an AUDIBILITY notion, not an audio gate. A
      *  gated pad counts from the instant its gate opens, so a
-     *  just-started pad voice is reserved while its slow 5 s attack is
+     *  just-started pad voice is reserved while its slow 10 s attack is
      *  still inaudible. */
     bool IsActive() const
     {
@@ -245,7 +245,7 @@ class BowlVoice
 
     /** Clean-pad gate (Rimming mode): while open, the phase-continuous
      *  clean modal oscillators are driven at kPadDrive x the pad
-     *  envelope - 5 s attack to 90%, 10 s release to 10% of the
+     *  envelope - 10 s attack to 90%, 10 s release to 10% of the
      *  note-off level. The bowl's natural ring and the reverb can decay
      *  well beyond the excitation envelope. Retriggering starts from
      *  the current envelope value, never from a reset. */
@@ -530,7 +530,7 @@ class BowlVoice
                                   ? rub * rub * char_clean_
                                   : 0.0f;
             // Pad envelope: one-pole toward the gate, retriggering from
-            // the current value (5 s to 90% attack, 10 s to 10%
+            // the current value (10 s to 90% attack, 10 s to 10%
             // release). Snaps to exact zero at -80 dB on release so an
             // idle pad costs nothing; the resonator tail is guarded by
             // HasTail(), not by this envelope.
@@ -664,10 +664,11 @@ class BowlVoice
 
     /** Clean-pad drive level (Rimming mode pads): the pad envelope
      *  scales the same sqrt(1-r)-normalized clean oscillators the
-     *  counter-clockwise wheel uses, so a pad sustains at roughly the
-     *  loudness of a firm clean rub (rub^2 ~ 0.5). Starting value,
-     *  subject to listening calibration. */
-    static constexpr float kPadDrive = 0.5f;
+     *  counter-clockwise wheel uses. A quarter of the firm-rub level
+     *  (rub^2 ~ 0.5): pads are a background bed and must sit well
+     *  below the strike loudness (listening calibration: 0.5 -> 0.25
+     *  -> 0.125). */
+    static constexpr float kPadDrive = 0.125f;
 
     /** Strike contact-tick gain: the felt-mallet thud is a small,
      *  dark articulation marker, subordinate to the bowl's bloom
@@ -913,7 +914,7 @@ class BowlVoice
     float     char_step_     = 2.0e-4f; // per-sample step (~100 ms)
     bool      pad_gate_      = false; // clean-pad gate (Rimming mode)
     float     pad_env_       = 0.0f;  // pad-drive envelope 0..1
-    float     pad_attack_coef_  = 1.0e-5f; // 5 s to 90% (set in Init)
+    float     pad_attack_coef_  = 5.0e-6f; // 10 s to 90% (set in Init)
     float     pad_release_coef_ = 5.0e-6f; // 10 s to 10% (set in Init)
     float     pan_l_         = 1.0f;  // smoothed pan gains
     float     pan_r_         = 1.0f;
