@@ -1,7 +1,8 @@
 # Six-Voice Polyphony
 
-Status: **proposed** (2026-11-06). Investigation and implementation require
-approval; hardware listening and timing validation are release gates.
+Status: **parked** (2026-11-07, user decision). The five-voice hardware
+configuration remains the supported default. Do not spend further effort on
+six-voice investigation unless the user reopens it.
 
 ## Problem and goal
 
@@ -266,3 +267,90 @@ Acceptance requires passing host regressions, the timing gate, successful
 memory/link checks, and player-confirmed clean hardware recordings.
 Document tested settings and limits; do not claim hardware validation from
 host tests or a successful build alone.
+
+## Implementation record (2026-11-07)
+
+- The production pad-start operation distinguishes same-identity reopening
+  from a different bowl taking over. A takeover keeps the old tuning active
+  while the outgoing state fades for 240 samples (5 ms), suppresses old
+  excitation, clears resonators, then applies the pending pitch/profile/
+  decay/shimmer before the new pad attack begins. Rapid replacement updates
+  the pending identity; same-bowl reopening keeps the current envelope.
+- The allocator now lives in `code/src/voice_pool.h`, shared by firmware and
+  host tests. `VOICE_COUNT=5` or `VOICE_COUNT=6` selects the pool size at
+  build time; the default is still five.
+- For comparable variants, run from `code/src` with the same compiler and
+  optimization flags: clean before each build, then use
+  `make -j4 DEBUG=0 OPT=-O3 CPU_METER=1 VOICE_COUNT=5` and repeat with
+  `VOICE_COUNT=6`. Release builds omit `CPU_METER`; clean again when changing
+  either build variable because the Makefile does not track define changes.
+- `CPU_METER=1` enables bounded callback-entry, phase, bus/reverb/output peak,
+  and finite-value diagnostics. Serial output is rate-limited in the main
+  loop. Maxima and saturating event counts persist until reboot.
+- `DIAG_LED_ONLY=1` suppresses the numeric audio serial report. In this
+  image, Shift is the callback-load bar (green to red); encoder 1-4 LEDs show
+  controls/voices/effects/output phase maxima against 500 us; the white-key
+  LEDs show bus/reverb/pre-clip peaks as red/green/blue bars; wheel-left red
+  latches any callback over 400 us; wheel-right blue latches any entry gap
+  over 500 us; Shift blue indicates non-finite output. The Play LED flashes
+  white on a voice steal. Reboot to clear latched diagnostics.
+- libDaisy dispatches the application callback from SAI half/full DMA events,
+  but its current SAI source exposes no audio-underrun/error counter. The
+  measured entry interval is therefore a scheduling proxy, not a verified
+  DMA-deadline detector. Application callback timing excludes libDaisy's
+  sample-format conversion and DMA handling around that callback.
+- Host coverage exercises five/six pad renders, allocator/latch decisions,
+  saturated-pool rapid replacement against a fresh-pad attack progression,
+  both wheel characters, and strike-burst takeover. It does not replace
+  hardware checks of those transitions, long soak, or listening.
+- The player confirms the five-voice configuration works on hardware; use it
+  as the known-good comparison reference. This does not establish six-voice
+  timing or listening acceptance.
+- The player reports audible digital artifacts with six voices on hardware
+  (2026-11-07). The player describes the noise as sample-rate-reduction-like.
+  It is heard in Rimming when voice six is enabled, but not in Striking. This
+  fails the six-voice listening gate; cause remains unclassified, so do not
+  infer CPU exhaustion or promote six as the default.
+- During the six-voice LED-only diagnostic run, the player observed wheel-left
+  red, wheel-right blue, Shift red, the first white-key LED white, and the
+  second white-key LED red. The latched wheel indicators mean at least one
+  callback exceeded 400 us and at least one callback-entry interval exceeded
+  500 us. This fails the proposed timing gate; the entry interval is only a
+  scheduling proxy, and the observation does not establish that timing caused
+  the audible artifacts. The key colors are peak-bar data, not event counts.
+- The player reports the five-voice diagnostic sounds clean, while the
+  six-voice diagnostic produces repeated digital noise, usually when the
+  sixth voice starts (2026-11-07). This strengthens the association with
+  enabling the sixth voice but does not classify the cause. The five-voice
+  full diagnostic also showed the timing warning LEDs, so compare with a
+  lower-overhead timing-only build. Test the sixth-note start separately from
+  six-voice steady state and correlate it with timing.
+- The player confirms timing-warning LEDs appeared on both five- and
+  six-voice versions; the major audible difference is Rimming with voice six.
+  The player chose to stop pursuing six-voice polyphony to avoid further
+  investigation cost. Preserve these findings; do not run the proposed
+  timing-only comparison or continue diagnosis without renewed approval.
+- Next diagnostic sequence: compare five and six held Rimming pads with the
+  wheel stopped, note whether noise is immediate at the sixth pad or starts
+  only in steady state, then compare six Striking voices. Record the latched
+  timing indicators at each point; identical warnings do not by themselves
+  establish the cause of the different sound.
+- Software verification on 2026-11-07: all required host targets passed
+  (`make test strike-test modes-test routing-test`), and both five/six
+  diagnostic and release builds linked with Arm GNU 10.3.1. Diagnostic maxima are not yet
+  validated on hardware; elapsed callback timing also excludes libDaisy's
+  sample conversion and DMA handling as noted above.
+- Linked usage, in bytes: five diagnostic SRAM_EXEC/SRAM/SDRAM =
+  166832/39536/2755412; six serial-report diagnostic =
+  167424/40848/2755412; five LED-only diagnostic =
+  167360/39528/2755412; six LED-only diagnostic = 168000/40840/2755412;
+  five timing-only LED diagnostic = 165760/39528/2755412; six timing-only LED
+  diagnostic = 166368/40840/2755412; five release = 164160/39460/2755412;
+  six release = 164784/40772/2755412.
+  The final default firmware artifact is the five-voice release build.
+- Current serial-free comparison images are
+  `code/src/build/CHOMPI_BOWLS_v1.0_5VOICE_TIMING_DIAG.bin` and
+  `code/src/build/CHOMPI_BOWLS_v1.0_6VOICE_TIMING_DIAG.bin`; both use
+  `CPU_METER=1 DIAG_LED_ONLY=1 DIAG_TIMING_ONLY=1` with their respective
+  voice-count overrides. The default five-voice release is
+  `code/src/build/CHOMPI_BOWLS_v1.0.bin`.
