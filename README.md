@@ -20,7 +20,7 @@ ringing voices glow dim amber, and LOOP-latched notes glow yellow.
 | **Encoder 3** | - | Decay of the selected bowl\*: ring time 0.25x .. 2x (live) | - | LED4 blue; blue bar |
 | **Encoder 4** | - | Shimmer: paired-mode beating 0 .. 2x (16 = profile detune; live) | - | LED5 purple; centered purple bar |
 | **Transport wheel** | - | Rim the current mode's wheel set (see Play modes): turn speed = loudness; **clockwise = friction texture, counter-clockwise = clean sustained tone**; the last direction sticks per key while the wheel is still. The wheel never starts a strike and never revives a stolen note | - | Wheel LEDs (LED6/LED7) follow the rub level |
-| **Volume knob** | Switch page | Page 1: master volume. Page 2: temple-room reverb dry/wet mix | - | LED10 follows the page (green->amber->red gradient / pale ice) |
+| **Volume knob** | Switch page | Page 1: master volume. Page 2: delay mix/feedback. Page 3: temple-room reverb dry/wet mix | Page 2: delay time (40-500 ms) | LED10 follows the page (green->amber->red / yellow / pale ice) |
 | **SHIFT** (KEY_26) | Hold + lower F#/G#/A# = play mode (below); hold + Black 6 (C#4) / Black 7 (D#4) = audio routing (below) | - | - | While held, the active mode's shortcut key glows blue and the active routing's selection key glows pink |
 | **PLAY** (KEY_27) | Tap in playback to pause/resume; hold alone for 2 s to enter or exit playback | - | - | Blue in playback; blinks while playing |
 | **LOOP** (KEY_28) | Tap to toggle the Rimming note latch (Rimming mode only); hold with PLAY for recording gestures | - | - | Yellow for the Rimming latch; blue while take looping is enabled |
@@ -69,6 +69,10 @@ saved settings are not imported).
 - Hold **PLAY** alone for 2 s to enter playback. This releases held pad gates, scans for the newest 15 takes, and temporarily selects Normal output routing. Hold PLAY alone for 2 s again to exit and restore the previous routing.
 - In playback, tap **PLAY** to pause/resume, tap **LOOP** to repeat the selected take, and press a populated white-key slot to select a take. The newest take is the leftmost slot; takes continue left to right. At the end, playback advances to the next take.
 - Recording arm fills the keybed red; the countdown turns its first four keys from white to red. Playback uses dim white for available takes and blue for the selection; the selection blinks while playing. SHIFT blinks red while recording and flashes rapidly after a recorder error. A missing card, empty library, invalid take, or player error is shown in red on the keybed.
+
+### Stereo delay
+
+The volume knob cycles **Master -> Delay -> Reverb**. On the Delay page, turning the encoder moves a combined control: the first half raises the wet mix from 0 to 50% at 35% feedback; the second half holds mix at 50% and raises feedback to a bounded 120%, entering self-oscillation above 100%. Hold SHIFT and turn to change delay time from 40 to 500 ms; changes glide smoothly without clearing echoes. The delay runs at 0% mix so history survives later mix changes and preset loads. Delay positions are saved in `BOWLS/state.json`; existing v7 presets keep their settings and receive the dry, 256 ms delay defaults.
 
 ### Audio routing (send-FX loop)
 

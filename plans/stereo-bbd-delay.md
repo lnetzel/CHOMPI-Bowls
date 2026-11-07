@@ -1,6 +1,6 @@
 # Stereo BBD Delay
 
-Status: **planned**. DSP reference: `C:\local dev\CHOMPI-Pipes\code\src\StereoBbdDelay.h`; its engine and UI integration are in `OrganEngine.h` and `chompi_main.cpp` in CHOMPI-PIPES.
+Status: **implemented**. The DSP port is algorithm-identical to the CHOMPI-PIPES `StereoBbdDelay` class; host delay/preset suites and the firmware build pass. Hardware audition, delay/reverb interaction checks, and worst-block CPU measurement remain. DSP reference: `C:\Dev\CHOMPI-Pipes\code\src\StereoBbdDelay.h`; its engine and UI integration are in `OrganEngine.h` and `chompi_main.cpp` in CHOMPI-PIPES.
 
 ## Problem and goal
 

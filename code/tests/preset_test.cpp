@@ -1,4 +1,4 @@
-// Host-side tests for the v7 preset schema (plans/improve-play-modes.md).
+// Host-side tests for the v8 preset schema and additive v7 migration.
 // Not part of the firmware build; run with `make -C code/tests
 // modes-test` from the MSYS2 UCRT64 shell.
 //
@@ -52,6 +52,8 @@ chompi::BowlsPreset PatternPreset(int mode)
     p.strike     = 31;
     p.shimmer    = 29;
     p.reverb_mix = 21;
+    p.delay_mix  = 27;
+    p.delay_time = 5;
     for(int i = 0; i < chompi::BowlsPreset::kBankSlots; ++i)
     {
         p.pan[i]     = static_cast<uint8_t>(i % 33);
@@ -68,6 +70,7 @@ bool Same(const chompi::BowlsPreset& a, const chompi::BowlsPreset& b)
 {
     return a.mode == b.mode && a.volume == b.volume && a.strike == b.strike
            && a.shimmer == b.shimmer && a.reverb_mix == b.reverb_mix
+           && a.delay_mix == b.delay_mix && a.delay_time == b.delay_time
            && std::memcmp(a.pan, b.pan, sizeof(a.pan)) == 0
            && std::memcmp(a.bvol, b.bvol, sizeof(a.bvol)) == 0
            && std::memcmp(a.tune, b.tune, sizeof(a.tune)) == 0
@@ -133,41 +136,55 @@ int main()
         chompi::BowlsPreset src = PatternPreset(1);
         const size_t        len = chompi::Serialize(src, buf, sizeof(buf));
 
-        // version 6 / version 8
-        char* v7 = std::strstr(buf, "\"version\":7");
-        Check(v7 != nullptr, "S3 pre: version field present", "");
+        // version 6 / version 9
+        char* version = std::strstr(buf, "\"version\":8");
+        Check(version != nullptr, "S3 pre: version field present", "");
         chompi::BowlsPreset dst;
         dst.SetDefaults();
-        v7[9] = '6';
+        version[10] = '6';
         Check(!chompi::Parse(buf, len, dst), "S3a v6 file rejected", "");
-        v7[9] = '8';
-        Check(!chompi::Parse(buf, len, dst), "S3b v8 file rejected", "");
-        v7[9] = '7';
+        version[10] = '9';
+        Check(!chompi::Parse(buf, len, dst), "S3b v9 file rejected", "");
+        version[10] = '8';
+
+          char missing_delay[kStorageJsonSize];
+          std::memcpy(missing_delay, buf, len + 1);
+          char* delay_fields = std::strstr(missing_delay, ",\"delay_mix\":");
+          char* arrays = delay_fields == nullptr
+                       ? nullptr
+                       : std::strstr(delay_fields, ",\"pan\":");
+          if(delay_fields != nullptr && arrays != nullptr)
+            std::memmove(delay_fields, arrays, std::strlen(arrays) + 1);
+          Check(delay_fields != nullptr && arrays != nullptr
+                && !chompi::Parse(missing_delay,
+                            std::strlen(missing_delay), dst),
+              "S3c v8 missing delay fields rejected", "");
 
         // invalid JSON
         char junk[64];
-        std::strcpy(junk, "{\"version\":7,\"mode\":0,not json");
-        Check(!chompi::Parse(junk, std::strlen(junk), dst),
-              "S3c invalid JSON rejected", "");
+          std::strcpy(junk, "{\"version\":8,\"mode\":0,not json");
+          Check(!chompi::Parse(junk, std::strlen(junk), dst),
+              "S3d invalid JSON rejected", "");
 
         // truncated mid-array
         Check(!chompi::Parse(buf, len * 3 / 5, dst),
-              "S3d truncated document rejected", "");
+              "S3e truncated document rejected", "");
 
         // out-of-range mode
         char* m1 = std::strstr(buf, "\"mode\":1");
         Check(m1 != nullptr, "S3 pre2: mode field present", "");
         m1[7] = '9';
-        Check(!chompi::Parse(buf, len, dst), "S3e mode 9 rejected", "");
+        Check(!chompi::Parse(buf, len, dst), "S3f mode 9 rejected", "");
         m1[7] = '1';
 
         // short array: rebuild a doc with a 74-entry pan array
         {
             char small[kStorageJsonSize];
             int  n = std::snprintf(small, sizeof(small),
-                                   "{\"version\":7,\"mode\":0,"
+                                   "{\"version\":8,\"mode\":0,"
                                    "\"volume\":1,\"strike\":1,"
-                                   "\"shimmer\":1,\"reverb_mix\":1");
+                                   "\"shimmer\":1,\"reverb_mix\":1,"
+                                   "\"delay_mix\":0,\"delay_time\":15");
             size_t off = static_cast<size_t>(n);
             off = chompi::AppendArray(small, sizeof(small), off, "pan",
                                       src.pan, 74); // one short
@@ -187,7 +204,7 @@ int main()
             n = std::snprintf(small + off, sizeof(small) - off, "}");
             off += static_cast<size_t>(n);
             Check(!chompi::Parse(small, off, dst),
-                  "S3f 74-entry array rejected", "");
+                  "S3g 74-entry array rejected", "");
         }
 
         // non-integer array entry (valid JSON, invalid schema):
@@ -198,12 +215,40 @@ int main()
             Check(pan_arr != nullptr, "S3 pre3: pan array present", "");
             pan_arr[8] = '.';
             Check(!chompi::Parse(buf, len, dst),
-                  "S3g float array entry rejected", "");
+                  "S3h float array entry rejected", "");
             pan_arr[8] = ',';
         }
     }
 
-    // S4: out-of-range values clamp to the field ranges.
+    // S4: v7 migration retains old state and defaults only new fields.
+    {
+        chompi::BowlsPreset src = PatternPreset(2);
+        const size_t len = chompi::Serialize(src, buf, sizeof(buf));
+        Check(len > 0, "S4 pre: v8 document serialized", "");
+        char legacy[kStorageJsonSize];
+        std::memcpy(legacy, buf, len + 1);
+        char* delay_fields = std::strstr(legacy, ",\"delay_mix\":");
+        char* arrays = delay_fields == nullptr
+                           ? nullptr
+                           : std::strstr(delay_fields, ",\"pan\":");
+        Check(delay_fields != nullptr && arrays != nullptr,
+              "S4 pre: delay scalars precede arrays", "");
+        if(delay_fields != nullptr && arrays != nullptr)
+        {
+            std::memmove(delay_fields, arrays, std::strlen(arrays) + 1);
+            char* legacy_version = std::strstr(legacy, "\"version\":8");
+            legacy_version[10] = '7';
+            chompi::BowlsPreset dst;
+            dst.SetDefaults();
+            const bool parsed = chompi::Parse(legacy, std::strlen(legacy), dst);
+            src.delay_mix = chompi::BowlsPreset::kDefaultDelayMix;
+            src.delay_time = chompi::BowlsPreset::kDefaultDelayTime;
+            Check(parsed && Same(src, dst),
+                  "S4 v7 migration preserves state and defaults delay", "");
+        }
+    }
+
+    // S5: out-of-range values clamp to the field ranges.
     {
         chompi::BowlsPreset p;
         p.SetDefaults();
@@ -212,6 +257,7 @@ int main()
             p.pan[i] = p.bvol[i] = p.tune[i] = p.profile[i] = 99;
             p.bright[i] = p.decay[i] = 99;
         }
+        p.delay_mix = p.delay_time = 99;
         const size_t len = chompi::Serialize(p, buf, sizeof(buf));
         chompi::BowlsPreset dst;
         dst.SetDefaults();
@@ -222,20 +268,24 @@ int main()
                || dst.profile[i] != 4 || dst.bright[i] != 32
                || dst.decay[i] != 32)
                 clamped = false;
-        Check(clamped, "S4 out-of-range values clamp", "");
+        Check(clamped, "S5 out-of-range values clamp", "");
+        Check(dst.delay_mix == 32 && dst.delay_time == 32,
+              "S5 delay positions clamp", "");
     }
 
-    // S5: factory defaults are Strikes; no latch/performance state is
+    // S6: factory defaults are Strikes; no latch/performance state is
     // ever serialized.
     {
         chompi::BowlsPreset p;
         p.SetDefaults();
         Check(p.mode == chompi::BowlsPreset::kModeStrikes,
-              "S5a factory default mode is Strikes", "");
+              "S6a factory default mode is Strikes", "");
+          Check(p.delay_mix == 0 && p.delay_time == 15,
+              "S6b delay defaults are dry and 256 ms", "");
         const size_t len = chompi::Serialize(p, buf, sizeof(buf));
         Check(std::strstr(buf, "latch") == nullptr
                   && std::strstr(buf, "held") == nullptr,
-              "S5b no latch/performance state in JSON", "");
+              "S6c no latch/performance state in JSON", "");
         (void)len;
     }
 

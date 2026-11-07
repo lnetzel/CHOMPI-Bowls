@@ -72,11 +72,10 @@
 //                         sustained bowl tone; the last direction
 //                         sticks per (mode, key) while the wheel is
 //                         still.
-//   Volume encoder      : press cycles page 1 master volume (green->
-//                         amber->red bar, LED10 follows the gradient;
-//                         the bar shows briefly at boot) / page 2
-//                         temple-room reverb dry/wet mix (pale ice
-//                         bar + LED)
+//   Volume encoder      : press cycles page 1 master volume / page 2
+//                         stereo delay (yellow bar/LED; turn = combined
+//                         mix/feedback, SHIFT+turn = 40..500 ms time) /
+//                         page 3 temple-room reverb mix (pale ice)
 //   SHIFT (KEY_26)      : modifier + mode shortcuts; while held, the
 //                         active mode's shortcut key glows blue and
 //                         the active audio routing's selection key
@@ -116,6 +115,8 @@
 #include "PresetStorage.h"
 #include "SdRecorder.h"
 #include "SdPlayer.h"
+#include "StereoBbdDelay.h"
+#include "delay_parameters.h"
 
 #include "Utility/dsp.h"
 #include "Effects/reverbsc.h"
@@ -152,6 +153,9 @@ bowls::BowlVoice voices[kVoiceCount];
 // The delay buffers (~387 KB) live in SDRAM - SRAM is for state that
 // must be fast, not for bulk audio memory.
 daisysp::ReverbSc DSY_SDRAM_BSS reverb;
+float DSY_SDRAM_BSS delay_buffer_l[chompi::StereoBbdDelay::kBufferSize];
+float DSY_SDRAM_BSS delay_buffer_r[chompi::StereoBbdDelay::kBufferSize];
+chompi::StereoBbdDelay bbd_delay;
 
 #ifdef CPU_METER
 // CPU meter with a ~5 s peak-hold: dropouts come from the WORST block,
@@ -204,6 +208,8 @@ enum class Overlay : int
     Character,
     Pan,
     ReverbMix,
+    DelayMix,
+    DelayTime,
     BowlVolume,
     Tune,
 };
@@ -257,6 +263,10 @@ struct Params
     // Volume knob page 2: temple-room reverb dry/wet mix.
     std::atomic<int>      reverb_mix_ticks{
         chompi::BowlsPreset::kDefaultReverbMix};
+    std::atomic<int>      delay_mix_ticks{
+        chompi::BowlsPreset::kDefaultDelayMix};
+    std::atomic<int>      delay_time_ticks{
+        chompi::BowlsPreset::kDefaultDelayTime};
 
     // UI overlay: which parameter bar is shown on the white keys.
     std::atomic<int>      overlay{static_cast<int>(Overlay::Volume)};
@@ -265,9 +275,10 @@ struct Params
 
 Params params;
 
-// Volume-knob pages (press cycles): master volume -> reverb mix.
+// Volume-knob pages (press cycles): master volume -> delay -> reverb.
 constexpr int kVolPageVolume = 0;
-constexpr int kVolPageReverb = 1;
+constexpr int kVolPageDelay  = 1;
+constexpr int kVolPageReverb = 2;
 volatile int  vol_page_      = kVolPageVolume;
 
 // Audio routing selection (audio_routing.h): Normal (boot default) or
@@ -360,6 +371,18 @@ float TicksToNorm(int ticks)
 float PanNormTicks(int ticks)
 {
     return static_cast<float>(ticks - 16) / 16.0f; // -1 (left) .. +1 (right)
+}
+
+void ApplyDelayTargets()
+{
+    const int mix_position
+        = params.delay_mix_ticks.load(std::memory_order_relaxed);
+    bbd_delay.SetMix(chompi::delay_parameters::DelayMix(mix_position));
+    bbd_delay.SetFeedback(
+        chompi::delay_parameters::DelayFeedback(mix_position));
+    bbd_delay.SetDelayMs(static_cast<float>(
+        chompi::delay_parameters::DelayTimeMs(
+            params.delay_time_ticks.load(std::memory_order_relaxed))));
 }
 
 void BumpTicks(std::atomic<int>& ticks, int inc, Overlay overlay, uint32_t now)
@@ -951,13 +974,15 @@ void ApplyControls()
     const uint32_t now   = System::GetNow();
     const bool     shift = hw.ShiftHeld();
 
-    // Volume knob press: page 1 = master volume, page 2 = reverb mix.
+    // Volume knob press: page 1 = master, page 2 = delay, page 3 = reverb.
     // The newly active page's bar shows as confirmation.
     if(hw.VolumeClicked())
     {
-        vol_page_ = (vol_page_ + 1) % 2;
-        ShowOverlay(vol_page_ == kVolPageVolume ? Overlay::Volume
-                                                : Overlay::ReverbMix,
+        vol_page_ = (vol_page_ + 1) % 3;
+        ShowOverlay(vol_page_ == kVolPageVolume
+                        ? Overlay::Volume
+                        : (vol_page_ == kVolPageDelay ? Overlay::DelayMix
+                                                      : Overlay::ReverbMix),
                     now);
     }
 
@@ -1157,12 +1182,34 @@ void ApplyControls()
         ApplyShimmerToVoices();
     }
 
-    // Volume encoder: page 1 = master volume, page 2 = reverb dry/wet.
+    // Volume encoder pages: master; combined delay mix/feedback with
+    // SHIFT+turn for time; then reverb mix.
     const int volume_inc = hw.EncoderIncrement(5);
-    if(vol_page_ == kVolPageReverb)
-        BumpTicks(params.reverb_mix_ticks, volume_inc, Overlay::ReverbMix, now);
-    else
-        BumpTicks(params.volume_ticks, volume_inc, Overlay::Volume, now);
+    if(volume_inc != 0)
+    {
+        if(vol_page_ == kVolPageDelay)
+        {
+            if(shift)
+            {
+                BumpTicks(params.delay_time_ticks, volume_inc,
+                          Overlay::DelayTime, now);
+            }
+            else
+            {
+                BumpTicks(params.delay_mix_ticks, volume_inc,
+                          Overlay::DelayMix, now);
+            }
+            ApplyDelayTargets();
+        }
+        else if(vol_page_ == kVolPageReverb)
+        {
+            if(!shift)
+                BumpTicks(params.reverb_mix_ticks, volume_inc,
+                          Overlay::ReverbMix, now);
+        }
+        else if(!shift)
+            BumpTicks(params.volume_ticks, volume_inc, Overlay::Volume, now);
+    }
 
     // Transport wheel: rimming. Detents pump the PER-(MODE,KEY) rub
     // levels of the current mode's wheel set only (the turn rate sets
@@ -1357,18 +1404,20 @@ void AudioCallback(AudioHandle::InputBuffer  in,
         // lowpassed dark right after a strike (the mallet contact burst
         // barely excites a real room) and re-opens into the pure ring;
         // the dry path keeps the full spectrum.
+        float delay_l, delay_r;
+        bbd_delay.Process(mix_l[i], mix_r[i], delay_l, delay_r);
         send_dark_ -= kSendDarkRelease * send_dark_;
         const float send_coef
             = kSendLpOpen + (kSendLpDark - kSendLpOpen) * send_dark_;
-        daisysp::fonepole(send_lp_l_, mix_l[i], send_coef);
-        daisysp::fonepole(send_lp_r_, mix_r[i], send_coef);
+        daisysp::fonepole(send_lp_l_, delay_l, send_coef);
+        daisysp::fonepole(send_lp_r_, delay_r, send_coef);
         daisysp::fonepole(send_lp2_l_, send_lp_l_, send_coef);
         daisysp::fonepole(send_lp2_r_, send_lp_r_, send_coef);
         float wet_l, wet_r;
         reverb.Process(send_lp2_l_, send_lp2_r_, &wet_l, &wet_r);
         const float dry   = 1.0f - mix_smooth;
-        bus_l[i] = mix_l[i] * dry + wet_l * mix_smooth;
-        bus_r[i] = mix_r[i] * dry + wet_r * mix_smooth;
+        bus_l[i] = delay_l * dry + wet_l * mix_smooth;
+        bus_r[i] = delay_r * dry + wet_r * mix_smooth;
     }
 
     sd_recorder.Capture(bus_l, bus_r, size);
@@ -1528,6 +1577,14 @@ void DrawOverlayBar(uint32_t now)
                 // Pale ice bar for the temple-room reverb mix.
                 DrawBar(params.reverb_mix_ticks.load(std::memory_order_relaxed),
                         24, 32, 48);
+                break;
+                case Overlay::DelayMix:
+                DrawBar(params.delay_mix_ticks.load(std::memory_order_relaxed),
+                    44, 38, 0);
+                break;
+                case Overlay::DelayTime:
+                DrawBar(params.delay_time_ticks.load(std::memory_order_relaxed),
+                    44, 38, 0);
                 break;
             case Overlay::BowlVolume:
                 // Green bar: per-bowl volume of the selected bowl.
@@ -1760,9 +1817,11 @@ void RenderLeds()
                                play_modes.LatchEnabled() ? 40 : 0,
                                0);
     }
-    // The volume knob LED follows the page: master volume uses the
-    // bar's green->amber->red gradient; the reverb page is pale ice.
-    if(vol_page_ == kVolPageReverb)
+    // The volume knob LED follows the page: master gradient, yellow
+    // delay, or pale-ice reverb.
+    if(vol_page_ == kVolPageDelay)
+        chompi_leds::SetPthLed(chompi_leds::kPthVolume, 24, 20, 0);
+    else if(vol_page_ == kVolPageReverb)
     {
         const float mnorm = TicksToNorm(
             params.reverb_mix_ticks.load(std::memory_order_relaxed));
@@ -1847,6 +1906,10 @@ chompi::BowlsPreset SnapshotParams()
         }
     p.reverb_mix = static_cast<uint8_t>(
         params.reverb_mix_ticks.load(std::memory_order_relaxed));
+    p.delay_mix = static_cast<uint8_t>(
+        params.delay_mix_ticks.load(std::memory_order_relaxed));
+    p.delay_time = static_cast<uint8_t>(
+        params.delay_time_ticks.load(std::memory_order_relaxed));
     return p;
 }
 
@@ -1877,6 +1940,9 @@ void ApplyPreset(const chompi::BowlsPreset& p)
                                            std::memory_order_relaxed);
         }
     params.reverb_mix_ticks.store(p.reverb_mix, std::memory_order_relaxed);
+    params.delay_mix_ticks.store(p.delay_mix, std::memory_order_relaxed);
+    params.delay_time_ticks.store(p.delay_time, std::memory_order_relaxed);
+    ApplyDelayTargets();
     ApplyShimmerToVoices();
 }
 
@@ -1901,6 +1967,8 @@ void BootBlink(int count, uint8_t r, uint8_t g, uint8_t b)
 int main()
 {
     hw.Init();
+    bbd_delay.Init(kSampleRate, delay_buffer_l, delay_buffer_r);
+    ApplyDelayTargets();
     chompi_leds::Init();
     chompi_leds::ClearAll();
 

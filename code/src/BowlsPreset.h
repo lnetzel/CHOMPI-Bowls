@@ -6,13 +6,9 @@
  *  shortly after the last change and loaded at boot, so the instrument
  *  remembers its state across power cycles (spec section 1).
  *
- *  Schema v7: the active play mode, four global controls, and six
- *  per-mode/per-key banks of 75 entries each (3 modes x 25 keys),
- *  flattened with index = mode * 25 + key. Latch and performance state
- *  are transient and never saved. v1-v6 files are deliberately NOT
- *  imported: a version mismatch (or any corruption) boots factory
- *  defaults in Strikes, and the first successful v7 save replaces the
- *  old file.
+ *  Schema v8: additive stereo-delay controls atop v7. A valid v7 file
+ *  migrates without changing existing values; the new delay fields get
+ *  their defaults. v1-v6 files remain unsupported.
  */
 #pragma once
 #include <cstdint>
@@ -31,9 +27,9 @@ struct BowlsPreset
      * v5: split keybed - per-KEY slots 15 -> 24 (rim 0-11, strike 12-23);
      * v6: play modes - mode field + per-mode/per-key banks of 25 slots
      * (3 modes x 25 keys = 75), profile becomes per-bowl per-mode;
-     * v7: brightness and decay move from globals to per-mode/per-key
-     * banks (six banks of 75). */
-    static constexpr int kVersion = 7;
+    * v7: brightness and decay move from globals to per-mode/per-key
+    * banks (six banks of 75); v8: delay mix and time positions. */
+    static constexpr int kVersion = 8;
 
     /* field ranges (mirror the tick counts in chompi_main.cpp) */
     static constexpr int kMaxTicks   = 32; /* 0..32 tick parameters */
@@ -57,6 +53,8 @@ struct BowlsPreset
     static constexpr int kDefaultProfile    = 0;
     static constexpr int kDefaultPan        = 16; /* centre */
     static constexpr int kDefaultReverbMix  = 8;  /* subtle temple room */
+    static constexpr int kDefaultDelayMix   = 0;  /* dry, 35% feedback */
+    static constexpr int kDefaultDelayTime  = 15; /* 256 ms */
     static constexpr int kDefaultBowlVol    = 16; /* unity gain (0 dB) */
     static constexpr int kDefaultTune       = 16; /* unison (ratio 1) */
 
@@ -65,6 +63,8 @@ struct BowlsPreset
     uint8_t strike;     /**< 0..32 strike hardness ticks */
     uint8_t shimmer;    /**< 0..32 paired-mode detune ticks */
     uint8_t reverb_mix; /**< 0..32 reverb dry/wet mix ticks */
+    uint8_t delay_mix;  /**< 0..32 combined wet/feedback control */
+    uint8_t delay_time; /**< 0..32 delay time (40..500 ms) */
     /* per-mode/per-key banks, flattened [mode * 25 + key] */
     uint8_t pan[kBankSlots];     /**< per-key pan 0..32 (16 = centre) */
     uint8_t bvol[kBankSlots];    /**< per-key volume 0..32 (16 = unity) */
@@ -80,6 +80,8 @@ struct BowlsPreset
         strike     = kDefaultStrike;
         shimmer    = kDefaultShimmer;
         reverb_mix = kDefaultReverbMix;
+        delay_mix  = kDefaultDelayMix;
+        delay_time = kDefaultDelayTime;
         for(int w = 0; w < kBankSlots; ++w)
         {
             pan[w]     = kDefaultPan;
@@ -129,13 +131,16 @@ inline size_t Serialize(const BowlsPreset &p, char *buf, size_t size)
                      size,
                      "{\"version\":%d,\"mode\":%u,"
                      "\"volume\":%u,\"strike\":%u,\"shimmer\":%u,"
-                     "\"reverb_mix\":%u",
+                     "\"reverb_mix\":%u,\"delay_mix\":%u,"
+                     "\"delay_time\":%u",
                      BowlsPreset::kVersion,
                      (unsigned)p.mode,
                      (unsigned)p.volume,
                      (unsigned)p.strike,
                      (unsigned)p.shimmer,
-                     (unsigned)p.reverb_mix);
+                     (unsigned)p.reverb_mix,
+                     (unsigned)p.delay_mix,
+                     (unsigned)p.delay_time);
     if(n < 0 || static_cast<size_t>(n) >= size)
         return 0;
     size_t off = static_cast<size_t>(n);
@@ -192,6 +197,33 @@ inline int QueryInt(char *      buf,
     return static_cast<int>(v);
 }
 
+/** Read a present integer scalar, rejecting missing or non-integer JSON
+ *  values while clamping numeric positions to the supported range. */
+inline bool QueryIntPresent(char *buf, size_t len, const char *query,
+                            int lo, int hi, int &result)
+{
+    char *value = nullptr;
+    size_t value_len = 0;
+    if(JSON_Search(buf, len, query, strlen(query), &value, &value_len)
+           != JSONSuccess
+       || value_len == 0 || value_len >= 12)
+        return false;
+    char tmp[12];
+    memcpy(tmp, value, value_len);
+    tmp[value_len] = '\0';
+    char *end = nullptr;
+    const long parsed = strtol(tmp, &end, 10);
+    if(end == tmp || *end != '\0')
+        return false;
+    if(parsed < lo)
+        result = lo;
+    else if(parsed > hi)
+        result = hi;
+    else
+        result = static_cast<int>(parsed);
+    return true;
+}
+
 /** Strictly read one `"name":[v0,..]` array of exactly `count` values,
  *  each clamped to 0..max_value, into dest. Returns false when the
  *  array is missing, malformed, or short - the caller then rejects the
@@ -230,9 +262,8 @@ inline bool QueryArrayStrict(char *     buf,
 }
 
 /** Parse a state document. Only the exact current schema version is
- *  accepted: v1-v6 files (and newer files) are deliberately NOT
- *  imported - the caller keeps factory defaults and the first
- *  successful new save replaces the old file. Corrupt, truncated or
+ *  accepted. v7 is migrated additively; v1-v6 and newer files are
+ *  rejected. Corrupt, truncated or
  *  partially valid documents are rejected whole, never partially
  *  applied. */
 inline bool Parse(char *buf, size_t len, BowlsPreset &p)
@@ -240,7 +271,7 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
     if(JSON_Validate(buf, len) != JSONSuccess)
         return false;
     const int version = QueryInt(buf, len, "version", 0, 0, 100);
-    if(version != BowlsPreset::kVersion)
+    if(version != BowlsPreset::kVersion && version != 7)
         return false; /* old or newer firmware: do not misread it */
 
     /* parse into a scratch copy first: nothing is applied unless the
@@ -261,6 +292,18 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
     tmp.reverb_mix = QueryInt(buf, len, "reverb_mix",
                               BowlsPreset::kDefaultReverbMix, 0,
                               BowlsPreset::kMaxTicks);
+    if(version == BowlsPreset::kVersion)
+    {
+        int delay_mix = BowlsPreset::kDefaultDelayMix;
+        int delay_time = BowlsPreset::kDefaultDelayTime;
+          if(!QueryIntPresent(buf, len, "delay_mix", 0,
+                            BowlsPreset::kMaxTicks, delay_mix)
+              || !QueryIntPresent(buf, len, "delay_time", 0,
+                               BowlsPreset::kMaxTicks, delay_time))
+            return false;
+        tmp.delay_mix = static_cast<uint8_t>(delay_mix);
+        tmp.delay_time = static_cast<uint8_t>(delay_time);
+    }
 
     /* per-mode/per-key banks: all six arrays must hold exactly
      * kBankSlots values, or the document is corrupt */

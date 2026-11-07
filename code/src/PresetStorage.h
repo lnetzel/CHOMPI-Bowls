@@ -25,11 +25,11 @@ namespace chompi
 class PresetStorage
 {
   public:
-    /* v7 state (mode + six 75-entry banks) serializes to ~1.4 KB worst
-     * case (~2 KB with impossible 3-digit values) - well past one 512 B
-     * sector, so reads/writes go multi-sector; 2048 B covers the
-     * uint8 worst case incl. the terminator (measured in the host
-     * preset test). Buffers stay members in SRAM (.bss): the SDMMC IDMA
+    /* v8 state (mode + six 75-entry banks + delay controls) serializes
+     * to ~1.5 KB worst case (under 2 KB with impossible 3-digit values)
+     * - well past one 512 B sector, so reads/writes go multi-sector;
+     * 2048 B covers the uint8 worst case incl. terminator. Buffers stay
+     * members in SRAM (.bss): the SDMMC IDMA
      * cannot reach DTCMRAM stack. */
     static constexpr size_t   kJsonSize    = 2048;
     static constexpr int      kMaxRetries  = 3;
