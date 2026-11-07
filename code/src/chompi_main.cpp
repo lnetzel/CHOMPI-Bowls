@@ -85,11 +85,11 @@
 //                         Send FX routing (audio_routing.h); the
 //                         combo is consumed - it never sounds a note
 //                         or moves the bowl editor target.
-//   LOOP (KEY_28)       : toggles the Rimming note latch (LOOP LED
-//                         yellow while enabled; latched keys glow
-//                         the same yellow); reserved in the other
-//                         modes. PLAY (KEY_27) and the mode toggle
-//                         (SW_TOG) are reserved.
+//   LOOP (KEY_28)       : tap toggles the Rimming note latch (yellow);
+//                         hold with PLAY for recording arm/stop; in
+//                         playback, tap toggles take looping (blue).
+//   PLAY (KEY_27)       : hold alone 2 s to enter/exit playback; tap
+//                         pauses/resumes playback. SW_TOG is reserved.
 //
 // Every encoder turn shows its bar on the 15 white keys for ~500 ms (the
 // CHOMPI-PhaseOff overlay pattern); with no bar up, held keys light
@@ -114,6 +114,8 @@
 #include "bowl_voice.h"
 #include "BowlsPreset.h"
 #include "PresetStorage.h"
+#include "SdRecorder.h"
+#include "SdPlayer.h"
 
 #include "Utility/dsp.h"
 #include "Effects/reverbsc.h"
@@ -132,9 +134,14 @@ namespace
 {
 constexpr float kSampleRate = 48000.0f;
 constexpr int   kBlockSize  = 24;
+constexpr size_t kSdRingFrames = 1u << 18;
 
 chompi::ChompiHardware hw;
 chompi::PresetStorage  preset_storage;
+chompi::sd_audio::StereoRing<kSdRingFrames> DSY_SDRAM_BSS record_ring;
+chompi::sd_audio::StereoRing<kSdRingFrames> DSY_SDRAM_BSS playback_ring;
+chompi::SdRecorder<kSdRingFrames> sd_recorder(record_ring);
+chompi::SdPlayer<kSdRingFrames>   sd_player(playback_ring);
 
 constexpr int  kVoiceCount = 5; // shared pool, quietest-voice steal
 bowls::BowlVoice voices[kVoiceCount];
@@ -285,6 +292,59 @@ volatile uint32_t sd_flash_until_                  = 0;
 volatile uint8_t  sd_flash_r_                      = 0;
 volatile uint8_t  sd_flash_g_                      = 0;
 volatile uint8_t  sd_flash_b_                      = 0;
+
+enum class RecordUiState : uint8_t
+{
+    kIdle = 0,
+    kArmHold,
+    kCountdown,
+    kStopHold
+};
+
+enum class PlaybackUiState : uint8_t
+{
+    kNormal = 0,
+    kEntering,
+    kPlaying,
+    kExiting
+};
+
+enum TransportFeedback : int
+{
+    kFeedbackNone = 0,
+    kFeedbackRecordRefused,
+    kFeedbackNoTakes,
+    kFeedbackPlayerFatal,
+    kFeedbackRecorderError,
+    kFeedbackInvalidTake
+};
+
+std::atomic<RecordUiState> record_ui_state{RecordUiState::kIdle};
+std::atomic<uint32_t>      record_ui_started{0};
+std::atomic<PlaybackUiState> playback_ui_state{PlaybackUiState::kNormal};
+std::atomic<bool>          playback_entry_pending{false};
+std::atomic<int>           transport_feedback{kFeedbackNone};
+std::atomic<uint32_t>      transport_feedback_until{0};
+std::atomic<int>           transport_feedback_slot{-1};
+std::atomic<uint32_t>      playback_hold_started{0};
+
+uint32_t play_hold_started_ = 0;
+uint32_t loop_hold_started_ = 0;
+uint32_t chord_hold_started_ = 0;
+uint32_t countdown_started_ = 0;
+bool play_hold_valid_ = false;
+bool loop_hold_valid_ = false;
+bool chord_hold_valid_ = false;
+bool play_gesture_consumed_ = false;
+bool loop_gesture_consumed_ = false;
+bool play_solo_cancelled_ = false;
+bool chord_action_done_ = false;
+bool playback_route_saved_ = false;
+int  playback_saved_routing_ = bowls::kRoutingDefault;
+bool transport_wait_for_release_ = true;
+
+constexpr int kWhiteKeyIndices[15] = {
+    0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21, 23, 24};
 
 void MarkDirty(uint32_t now)
 {
@@ -606,10 +666,288 @@ void ApplyWheel()
 // Controls
 // ---------------------------------------------------------------------------
 
+void SetTransportFeedback(TransportFeedback feedback, uint32_t duration_ms,
+                          int slot = -1)
+{
+    transport_feedback_slot.store(slot, std::memory_order_relaxed);
+    transport_feedback_until.store(System::GetNow() + duration_ms,
+                                   std::memory_order_relaxed);
+    transport_feedback.store(feedback, std::memory_order_release);
+}
+
+void BeginPlaybackEntry()
+{
+    if(playback_ui_state.load(std::memory_order_relaxed)
+       != PlaybackUiState::kNormal)
+        return;
+    playback_saved_routing_ = routing_;
+    playback_route_saved_   = true;
+    routing_                = bowls::kRoutingNormal;
+    playback_ui_state.store(PlaybackUiState::kEntering,
+                            std::memory_order_release);
+    playback_entry_pending.store(true, std::memory_order_release);
+    record_ui_state.store(RecordUiState::kIdle, std::memory_order_release);
+    chord_hold_valid_ = false;
+    if(sd_recorder.IsBusy())
+        sd_recorder.RequestStop();
+    play_modes.Init(play_modes.Mode());
+    SyncPadGates();
+    ApplyWheel();
+}
+
+void FinishPlaybackTransition()
+{
+    if(playback_route_saved_)
+    {
+        routing_ = playback_saved_routing_;
+        playback_route_saved_ = false;
+    }
+    playback_entry_pending.store(false, std::memory_order_release);
+    playback_ui_state.store(PlaybackUiState::kNormal,
+                            std::memory_order_release);
+}
+
+/** Transport gestures run beside ordinary performance controls. */
+bool HandleTransport()
+{
+    const uint32_t now = System::GetNow();
+    const bool play_clicked = hw.PlayClicked();
+    const bool loop_clicked = hw.LoopClicked();
+    const bool play_released = hw.PlayReleased();
+    const bool loop_released = hw.LoopReleased();
+    PlaybackUiState playback_state
+        = playback_ui_state.load(std::memory_order_acquire);
+
+    if(transport_wait_for_release_)
+    {
+        if(!hw.PlayPressed() && !hw.LoopPressed())
+            transport_wait_for_release_ = false;
+        return playback_state != PlaybackUiState::kNormal;
+    }
+
+    if(playback_state == PlaybackUiState::kEntering)
+    {
+        if(sd_player.Ready())
+        {
+            /* The hold that entered playback must not count toward the
+             * exit hold: require a fresh PLAY press. */
+            play_hold_valid_ = false;
+            play_gesture_consumed_ = true;
+            playback_ui_state.store(PlaybackUiState::kPlaying,
+                                    std::memory_order_release);
+        }
+        else if(!sd_player.ModeActive()
+                && !playback_entry_pending.load(std::memory_order_acquire))
+            FinishPlaybackTransition();
+        return true;
+    }
+    if(playback_state == PlaybackUiState::kExiting)
+    {
+        if(!sd_player.ModeActive())
+            FinishPlaybackTransition();
+        return true;
+    }
+    if(playback_state == PlaybackUiState::kPlaying
+       && !sd_player.ModeActive())
+    {
+        FinishPlaybackTransition();
+        return true;
+    }
+    if(playback_state == PlaybackUiState::kPlaying && sd_player.ModeActive())
+    {
+        if(play_clicked)
+        {
+            play_hold_started_ = now;
+            play_hold_valid_ = true;
+            play_gesture_consumed_ = false;
+            play_solo_cancelled_ = hw.LoopPressed();
+        }
+        if(loop_clicked)
+        {
+            loop_hold_started_ = now;
+            loop_hold_valid_ = true;
+            loop_gesture_consumed_ = false;
+            if(hw.PlayPressed())
+                play_solo_cancelled_ = true;
+        }
+        if(hw.PlayPressed() && !hw.LoopPressed() && play_hold_valid_
+           && !play_gesture_consumed_ && !play_solo_cancelled_
+           && now - play_hold_started_ >= 2000)
+        {
+            playback_hold_started.store(play_hold_started_,
+                                        std::memory_order_relaxed);
+            play_gesture_consumed_ = true;
+            sd_player.RequestExit();
+            playback_ui_state.store(PlaybackUiState::kExiting,
+                                    std::memory_order_release);
+            return true;
+        }
+        if(play_released)
+        {
+            if(!play_gesture_consumed_)
+                sd_player.TogglePause();
+            play_hold_valid_ = false;
+            play_gesture_consumed_ = false;
+            play_solo_cancelled_ = false;
+        }
+        if(loop_released)
+        {
+            if(!loop_gesture_consumed_)
+                sd_player.ToggleLoop();
+            loop_hold_valid_ = false;
+            loop_gesture_consumed_ = false;
+        }
+        for(int slot = 0; slot < 15; ++slot)
+            if(sd_player.TakeAt(slot) != 0
+               && hw.KeyRising(kWhiteKeyIndices[slot]))
+                sd_player.SelectSlot(slot);
+        return true;
+    }
+
+    if(playback_state != PlaybackUiState::kNormal)
+        return true;
+
+    if(play_clicked)
+    {
+        play_hold_started_ = now;
+        play_hold_valid_ = true;
+        play_gesture_consumed_ = false;
+        play_solo_cancelled_ = hw.LoopPressed();
+    }
+    if(loop_clicked)
+    {
+        loop_hold_started_ = now;
+        loop_hold_valid_ = true;
+        loop_gesture_consumed_ = false;
+        if(hw.PlayPressed())
+            play_solo_cancelled_ = true;
+    }
+
+    const RecordUiState record_state
+        = record_ui_state.load(std::memory_order_acquire);
+    if(record_state == RecordUiState::kCountdown)
+    {
+        if(play_clicked || loop_clicked)
+        {
+            record_ui_state.store(RecordUiState::kIdle,
+                                  std::memory_order_release);
+            if(play_clicked)
+                play_gesture_consumed_ = true;
+            if(loop_clicked)
+                loop_gesture_consumed_ = true;
+        }
+        else if(now - countdown_started_ >= 4000)
+        {
+            record_ui_state.store(RecordUiState::kIdle,
+                                  std::memory_order_release);
+            sd_recorder.RequestStart();
+        }
+    }
+    else
+    {
+        /* One action per fresh chord hold: the SAME hold that stops a
+         * recording must never fall through to re-arming, and an arm
+         * hold must never retrigger before full release. */
+        const bool chord = hw.PlayPressed() && hw.LoopPressed();
+        const bool recorder_active
+            = sd_recorder.IsRecording() || sd_recorder.IsBusy();
+        if(chord)
+        {
+            if(!chord_hold_valid_ && !play_gesture_consumed_
+               && !loop_gesture_consumed_)
+            {
+                chord_hold_started_ = now;
+                chord_hold_valid_ = true;
+                chord_action_done_ = false;
+                record_ui_started.store(now, std::memory_order_relaxed);
+                record_ui_state.store(recorder_active
+                                          ? RecordUiState::kStopHold
+                                          : RecordUiState::kArmHold,
+                                      std::memory_order_release);
+            }
+            if(chord_hold_valid_ && !chord_action_done_)
+            {
+                if(recorder_active && now - chord_hold_started_ >= 1000)
+                {
+                    sd_recorder.RequestStop();
+                    chord_action_done_ = true;
+                    play_gesture_consumed_ = true;
+                    loop_gesture_consumed_ = true;
+                    record_ui_state.store(RecordUiState::kIdle,
+                                          std::memory_order_release);
+                }
+                else if(!recorder_active && now - chord_hold_started_ >= 2000)
+                {
+                    chord_action_done_ = true;
+                    play_gesture_consumed_ = true;
+                    loop_gesture_consumed_ = true;
+                    record_ui_state.store(RecordUiState::kIdle,
+                                          std::memory_order_release);
+                    if(preset_storage.NoSdCard())
+                        SetTransportFeedback(kFeedbackRecordRefused, 1000);
+                    else
+                    {
+                        countdown_started_ = now;
+                        record_ui_started.store(now,
+                                                std::memory_order_relaxed);
+                        record_ui_state.store(RecordUiState::kCountdown,
+                                              std::memory_order_release);
+                    }
+                }
+            }
+        }
+        else if(chord_hold_valid_)
+        {
+            /* Released before the action: swallow both buttons past
+             * 400 ms so a near-chord can never leak a LOOP latch. */
+            if(!chord_action_done_ && now - chord_hold_started_ >= 400)
+            {
+                play_gesture_consumed_ = true;
+                loop_gesture_consumed_ = true;
+            }
+            chord_hold_valid_ = false;
+            if(record_state == RecordUiState::kArmHold
+               || record_state == RecordUiState::kStopHold)
+                record_ui_state.store(RecordUiState::kIdle,
+                                      std::memory_order_release);
+        }
+
+        if(hw.PlayPressed() && !hw.LoopPressed() && play_hold_valid_
+           && !play_solo_cancelled_ && !play_gesture_consumed_
+           && now - play_hold_started_ >= 2000)
+        {
+            play_gesture_consumed_ = true;
+            playback_hold_started.store(play_hold_started_,
+                                        std::memory_order_relaxed);
+            BeginPlaybackEntry();
+            return true;
+        }
+    }
+
+    if(loop_released)
+    {
+        if(!loop_gesture_consumed_ && !chord_hold_valid_
+           && record_ui_state.load(std::memory_order_relaxed)
+                  == RecordUiState::kIdle)
+            play_modes.LoopPressed();
+        loop_hold_valid_ = false;
+        loop_gesture_consumed_ = false;
+    }
+    if(play_released)
+    {
+        play_hold_valid_ = false;
+        play_gesture_consumed_ = false;
+        play_solo_cancelled_ = false;
+    }
+    return false;
+}
+
 /** Read encoders/keys, update parameter state and the voices.
  *  Runs once per audio block (~0.5 ms), after hw.ProcessControls(). */
 void ApplyControls()
 {
+    if(HandleTransport())
+        return;
     const uint32_t now   = System::GetNow();
     const bool     shift = hw.ShiftHeld();
 
@@ -962,11 +1300,6 @@ void ApplyControls()
         }
     }
 
-    // LOOP toggles the Rimming note latch (transient; never saved and
-    // inert in the other modes).
-    if(hw.LoopClicked())
-        play_modes.LoopPressed();
-
     // Pad gate reconciliation: key-ups, latch toggles, LOOP-off, mode
     // exits and voice steals all close their gates through here.
     SyncPadGates();
@@ -1011,7 +1344,10 @@ void AudioCallback(AudioHandle::InputBuffer  in,
         = TicksToNorm(params.reverb_mix_ticks.load(std::memory_order_relaxed));
     // The routing is read once per block; the per-sample loop below
     // branches on this cached value (audio_routing.h).
-    const int routing = routing_;
+    const int routing = sd_player.ModeActive() ? bowls::kRoutingNormal
+                                              : routing_;
+    float bus_l[kBlockSize];
+    float bus_r[kBlockSize];
     for(size_t i = 0; i < size; ++i)
     {
         daisysp::fonepole(volume_smooth, volume_target, 0.001f);
@@ -1031,20 +1367,21 @@ void AudioCallback(AudioHandle::InputBuffer  in,
         float wet_l, wet_r;
         reverb.Process(send_lp2_l_, send_lp2_r_, &wet_l, &wet_r);
         const float dry   = 1.0f - mix_smooth;
-        const float gain  = volume_smooth * volume_smooth;
-        const float bus_l = mix_l[i] * dry + wet_l * mix_smooth;
-        const float bus_r = mix_r[i] * dry + wet_r * mix_smooth;
-        // Audio routing (audio_routing.h): Normal sends the bus x
-        // master gain to all four outputs (the v1 behavior,
-        // bit-exact); Send FX sends the dry bowl bus at fixed unity
-        // to the line out (the external-effects send - the volume
-        // knob does not change it) and the AUX IN return x master
-        // gain to the headphones. SoftClip stays at the codec
-        // boundary for every output.
+        bus_l[i] = mix_l[i] * dry + wet_l * mix_smooth;
+        bus_r[i] = mix_r[i] * dry + wet_r * mix_smooth;
+    }
+
+    sd_recorder.Capture(bus_l, bus_r, size);
+    sd_player.Render(bus_l, bus_r, size);
+
+    const float gain = volume_smooth * volume_smooth;
+    for(size_t i = 0; i < size; ++i)
+    {
+        // Playback is injected after reverb but before master gain.
         float hp_l, hp_r, line_l, line_r;
         bowls::RouteOutputs(routing,
-                            bus_l,
-                            bus_r,
+                            bus_l[i],
+                            bus_r[i],
                             in[2][i],
                             in[3][i],
                             gain,
@@ -1235,6 +1572,109 @@ void DrawOverlayBar(uint32_t now)
     }
 }
 
+bool DrawTransportKeybed(uint32_t now)
+{
+    const uint32_t feedback_until
+        = transport_feedback_until.load(std::memory_order_relaxed);
+    const int feedback = transport_feedback.load(std::memory_order_acquire);
+    if(static_cast<int32_t>(feedback_until - now) > 0)
+    {
+        if(feedback == kFeedbackRecordRefused)
+            for(int i = 0; i < 4; ++i)
+                chompi_leds::SetSmtLed(chompi_leds::kWhiteKeyLeds[i], 48, 0, 0);
+        else if(feedback == kFeedbackNoTakes
+                || feedback == kFeedbackPlayerFatal)
+            for(int i = 0; i < 15; ++i)
+                chompi_leds::SetSmtLed(chompi_leds::kWhiteKeyLeds[i], 48, 0, 0);
+        else if(feedback == kFeedbackInvalidTake)
+        {
+            const int slot = transport_feedback_slot.load(std::memory_order_relaxed);
+            if(slot >= 0 && slot < 15)
+                chompi_leds::SetSmtLed(chompi_leds::kWhiteKeyLeds[slot], 48, 0, 0);
+        }
+        return true;
+    }
+
+    const RecordUiState rec_state
+        = record_ui_state.load(std::memory_order_acquire);
+    if(rec_state == RecordUiState::kArmHold
+       || rec_state == RecordUiState::kStopHold)
+    {
+        /* Red fill: 2 s to arm, 1 s to stop. */
+        const uint32_t hold_ms
+            = rec_state == RecordUiState::kArmHold ? 2000u : 1000u;
+        const uint32_t started = record_ui_started.load(std::memory_order_relaxed);
+        const unsigned lit = static_cast<unsigned>(
+            (static_cast<uint64_t>(now - started) * 15u + hold_ms - 1u)
+            / hold_ms);
+        for(unsigned i = 0; i < lit && i < 15; ++i)
+            chompi_leds::SetSmtLed(chompi_leds::kWhiteKeyLeds[i], 40, 0, 0);
+        return true;
+    }
+    if(rec_state == RecordUiState::kCountdown)
+    {
+        const uint32_t elapsed = now - record_ui_started.load(std::memory_order_relaxed);
+        const unsigned red = elapsed / 1000u > 4 ? 4 : elapsed / 1000u;
+        for(unsigned i = 0; i < 4; ++i)
+            chompi_leds::SetSmtLed(chompi_leds::kWhiteKeyLeds[i],
+                                   i < red ? 40 : 30,
+                                   i < red ? 0 : 30,
+                                   i < red ? 0 : 30);
+        return true;
+    }
+
+    const PlaybackUiState playback_state
+        = playback_ui_state.load(std::memory_order_acquire);
+    if(playback_state == PlaybackUiState::kEntering
+       || playback_state == PlaybackUiState::kExiting)
+    {
+        const uint32_t started = playback_hold_started.load(std::memory_order_relaxed);
+        const unsigned lit = playback_state == PlaybackUiState::kEntering
+                                 ? (now / 120u) % 16u
+                                 : static_cast<unsigned>(
+                                       (static_cast<uint64_t>(now - started) * 15u
+                                        + 1999u) / 2000u);
+        for(unsigned i = 0; i < lit && i < 15; ++i)
+            chompi_leds::SetSmtLed(chompi_leds::kWhiteKeyLeds[i], 0, 0, 40);
+        return true;
+    }
+    /* PLAY-alone hold progress toward entering or exiting playback: a
+     * blue left-to-right fill over the 2 s hold, drawn in BOTH normal
+     * and playback modes. A chord (LOOP joins), a cancelled solo hold,
+     * or an already-completed hold never fills. */
+    if(hw.PlayPressed() && !hw.LoopPressed() && play_hold_valid_
+       && !play_gesture_consumed_ && !play_solo_cancelled_)
+    {
+        const unsigned lit = static_cast<unsigned>(
+            (static_cast<uint64_t>(now - play_hold_started_) * 15u + 1999u)
+            / 2000u);
+        for(unsigned i = 0; i < lit && i < 15; ++i)
+            chompi_leds::SetSmtLed(chompi_leds::kWhiteKeyLeds[i], 0, 0, 40);
+        return true;
+    }
+    if(playback_state == PlaybackUiState::kPlaying && sd_player.Ready())
+    {
+        const int selected = sd_player.SelectedSlot();
+        for(int slot = 0; slot < 15; ++slot)
+        {
+            if(sd_player.TakeAt(slot) == 0)
+                continue;
+            if(slot == selected)
+            {
+                const bool on = !sd_player.Playing() || (now / 250u) % 2u == 0;
+                if(on)
+                    chompi_leds::SetSmtLed(chompi_leds::kWhiteKeyLeds[slot],
+                                           0, 0, 48);
+            }
+            else
+                chompi_leds::SetSmtLed(chompi_leds::kWhiteKeyLeds[slot],
+                                       10, 10, 10);
+        }
+        return true;
+    }
+    return false;
+}
+
 void RenderLeds()
 {
     // Every frame starts dark: overlays are fully redrawn each pass so
@@ -1242,13 +1682,16 @@ void RenderLeds()
     for(unsigned led = 0; led < chompi_leds::kSmtLedCount; ++led)
         chompi_leds::SetSmtLed(led, 0, 0, 0);
 
-    DrawOverlayBar(System::GetNow());
+    const uint32_t now = System::GetNow();
+    const bool transport_keybed = DrawTransportKeybed(now);
+    if(!transport_keybed)
+        DrawOverlayBar(now);
 
     // While SHIFT is held, highlight the active mode's lower black
     // shortcut key (blue) and the active audio routing's selection
     // key (pink). Black keys never collide with the white-key
     // parameter bars, so this reads over either view.
-    if(hw.ShiftHeld())
+    if(hw.ShiftHeld() && !sd_player.ModeActive())
     {
         const int sk
             = bowls::kModeShortcutKey[ModeIdx(play_modes.Mode())];
@@ -1292,13 +1735,31 @@ void RenderLeds()
     const uint8_t rub = static_cast<uint8_t>(rub_display_ * 40.0f);
     chompi_leds::SetPthLed(chompi_leds::kPthWheelLeft, rub, rub, rub);
     chompi_leds::SetPthLed(chompi_leds::kPthWheelRight, rub, rub, rub);
-    // The LOOP LED glows yellow while the Rimming note latch is
-    // enabled - the exact same yellow as the latched keys.
-    const bool    latch_on = play_modes.LatchEnabled();
-    chompi_leds::SetPthLed(chompi_leds::kPthLoop,
-                           latch_on ? 40 : 0,
-                           latch_on ? 40 : 0,
-                           0);
+    const PlaybackUiState playback_state
+        = playback_ui_state.load(std::memory_order_acquire);
+    if(playback_state != PlaybackUiState::kNormal)
+    {
+        const bool play_led_on
+            = (playback_state == PlaybackUiState::kPlaying
+               && !sd_player.Playing())
+              || (now / 250u) % 2u == 0;
+        chompi_leds::SetPthLed(chompi_leds::kPthPlay,
+                               0, 0, play_led_on ? 40 : 0);
+        chompi_leds::SetPthLed(chompi_leds::kPthLoop,
+                               0, 0,
+                               playback_state == PlaybackUiState::kPlaying
+                                       && sd_player.Looping()
+                                   ? 40
+                                   : 0);
+    }
+    else
+    {
+        chompi_leds::SetPthLed(chompi_leds::kPthPlay, 0, 0, 0);
+        chompi_leds::SetPthLed(chompi_leds::kPthLoop,
+                               play_modes.LatchEnabled() ? 40 : 0,
+                               play_modes.LatchEnabled() ? 40 : 0,
+                               0);
+    }
     // The volume knob LED follows the page: master volume uses the
     // bar's green->amber->red gradient; the reverb page is pale ice.
     if(vol_page_ == kVolPageReverb)
@@ -1323,11 +1784,29 @@ void RenderLeds()
             chompi_leds::SetPthLed(chompi_leds::kPthVolume, 0, level, 0); // green
     }
 
-    // SD save-status flash: overrides the SHIFT LED briefly after a
-    // save completes (green) or fails (red).
-    if(System::GetNow() < sd_flash_until_)
+    // SD save feedback sits below live recorder status and SHIFT.
+    const int feedback = transport_feedback.load(std::memory_order_acquire);
+    if(!shift && now < sd_flash_until_)
         chompi_leds::SetPthLed(chompi_leds::kPthShift,
                                sd_flash_r_, sd_flash_g_, sd_flash_b_);
+    /* Recording (and its close-out) blinks the SHIFT LED red at 2 Hz
+     * until the take is fully written and the WAV header patched. */
+    if(!shift && (sd_recorder.IsRecording() || sd_recorder.IsBusy()))
+    {
+        const bool on = (now / 250u) % 2u == 0;
+        chompi_leds::SetPthLed(chompi_leds::kPthShift,
+                               on ? 40 : 0, 0, 0);
+    }
+    if(!shift && feedback == kFeedbackRecorderError
+       && static_cast<int32_t>(transport_feedback_until.load(
+                                   std::memory_order_relaxed) - now) > 0)
+    {
+        const bool on = (now / 100u) % 2u == 0;
+        chompi_leds::SetPthLed(chompi_leds::kPthShift,
+                               on ? 48 : 0, 0, 0);
+    }
+    if(shift)
+        chompi_leds::SetPthLed(chompi_leds::kPthShift, 40, 40, 40);
 
     chompi_leds::Flush();
 }
@@ -1473,6 +1952,15 @@ int main()
     params.overlay_until.store(System::GetNow() + kOverlayMs,
                                std::memory_order_relaxed);
 
+    // Prime the debouncers before audio starts so a transport key held
+    // through boot cannot appear as a fresh gesture.
+    for(int i = 0; i < 10; ++i)
+    {
+        hw.ProcessControls();
+        System::Delay(1);
+    }
+    transport_wait_for_release_ = hw.PlayPressed() || hw.LoopPressed();
+
     hw.StartAudio(AudioCallback);
 
     while(true)
@@ -1480,6 +1968,39 @@ int main()
         /* Staged, non-blocking SD-card work: one small FatFS step per
          * pass, at thread level only (never in the audio ISR). */
         preset_storage.Service();
+        sd_recorder.Service(preset_storage, System::GetNow());
+        if(playback_entry_pending.load(std::memory_order_acquire)
+           && !sd_recorder.IsBusy())
+        {
+            playback_entry_pending.store(false, std::memory_order_release);
+            sd_player.RequestEnter();
+        }
+        sd_player.Service(preset_storage);
+
+        if(sd_recorder.ConsumeErrorEvent())
+        {
+            hw.seed.PrintLine("SD: recording failed");
+            SetTransportFeedback(kFeedbackRecorderError, 2000);
+        }
+        int player_event_slot = -1;
+        const auto player_event = sd_player.ConsumeEvent(player_event_slot);
+        if(player_event == chompi::SdPlayer<kSdRingFrames>::kEventEmpty)
+        {
+            hw.seed.PrintLine("SD: no recordings found");
+            SetTransportFeedback(kFeedbackNoTakes, 1000);
+        }
+        else if(player_event
+                == chompi::SdPlayer<kSdRingFrames>::kEventInvalidTake)
+        {
+            SetTransportFeedback(kFeedbackInvalidTake, 500,
+                                 player_event_slot);
+        }
+        else if(player_event
+                == chompi::SdPlayer<kSdRingFrames>::kEventFatal)
+        {
+            hw.seed.PrintLine("SD: playback failed");
+            SetTransportFeedback(kFeedbackPlayerFatal, 2000);
+        }
 
         /* One serial diagnostic + SHIFT-LED flash per storage failure
          * /recovery/completion: a failed save is never treated as

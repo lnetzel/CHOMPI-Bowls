@@ -57,6 +57,7 @@ class PresetStorage
         written_seq_     = 0;
         failed_          = false;
         event_           = kStatusNone;
+        fs_leased_       = false;
 
         /* same SDMMC/FatFS init as chompi-tape/PhaseOff; with no card
          * inserted this configures the peripheral without touching a
@@ -143,6 +144,8 @@ class PresetStorage
             {
                 if(no_sd_card_)
                 {
+                    if(fs_leased_)
+                        return;
                     /* card (re-)inserted: re-mount; the next RequestSave
                      * writes the current RAM state */
                     f_mount(&fsi_.GetSDFileSystem(), fsi_.GetSDPath(), 1);
@@ -152,7 +155,7 @@ class PresetStorage
             }
         }
 
-        if(no_sd_card_ || !pending_)
+        if(no_sd_card_ || fs_leased_ || !pending_)
             return;
 
         switch(stage_)
@@ -262,6 +265,19 @@ class PresetStorage
      *  next change / card insertion. */
     bool Degraded() const { return failed_; }
 
+    /** Reserve the mounted volume for a recorder/player operation. The
+     *  lease is acquired and released only by the main-loop owner. */
+    bool TryAcquireFilesystem()
+    {
+        if(no_sd_card_ || fs_leased_ || Busy())
+            return false;
+        fs_leased_ = true;
+        return true;
+    }
+
+    void ReleaseFilesystem() { fs_leased_ = false; }
+    bool FilesystemLeased() const { return fs_leased_; }
+
     /** Consume the one-shot failure/recovery event (kStatusNone when
      *  nothing changed): the caller emits ONE serial diagnostic per
      *  transition, never per retry. */
@@ -326,6 +342,7 @@ class PresetStorage
                                       * DTCMRAM stack (IDMA, see above) */
 
     volatile bool no_sd_card_;
+    volatile bool fs_leased_;
     Stage         stage_;
     Stage         retry_stage_;
     int           retries_;

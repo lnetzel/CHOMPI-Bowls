@@ -1,8 +1,8 @@
 # CHOMPI Bowls - Physical Modelling of Tibetan Singing Bowls
 
-A small starting point for a new CHOMPI firmware. This is not a copy of TAPE: it contains only the BOOT_SRAM build setup, the STM32H750 memory layout, and a four-channel audio pass-through smoke test.
+A five-voice modal singing-bowl instrument for CHOMPI hardware, with strikes, sustained rimming pads, split play mode, stereo reverb, presets, and SD-card recording/playback.
 
-The example initializes the Daisy Seed and CHOMPI's external SAI codec, then routes each input channel to the matching output channel. It does not include instrument behavior, controls, LEDs, MIDI, SD-card support, presets, or battery management.
+The firmware uses the BOOT_SRAM build setup and STM32H750 memory layout. It does not include MIDI or battery management.
 
 ## Controls
 
@@ -22,14 +22,14 @@ ringing voices glow dim amber, and LOOP-latched notes glow yellow.
 | **Transport wheel** | - | Rim the current mode's wheel set (see Play modes): turn speed = loudness; **clockwise = friction texture, counter-clockwise = clean sustained tone**; the last direction sticks per key while the wheel is still. The wheel never starts a strike and never revives a stolen note | - | Wheel LEDs (LED6/LED7) follow the rub level |
 | **Volume knob** | Switch page | Page 1: master volume. Page 2: temple-room reverb dry/wet mix | - | LED10 follows the page (green->amber->red gradient / pale ice) |
 | **SHIFT** (KEY_26) | Hold + lower F#/G#/A# = play mode (below); hold + Black 6 (C#4) / Black 7 (D#4) = audio routing (below) | - | - | While held, the active mode's shortcut key glows blue and the active routing's selection key glows pink |
-| **LOOP** (KEY_28) | Toggle the Rimming note latch (Rimming mode only) | - | - | LOOP LED and latched keys glow the same yellow while the latch is enabled |
+| **PLAY** (KEY_27) | Tap in playback to pause/resume; hold alone for 2 s to enter or exit playback | - | - | Blue in playback; blinks while playing |
+| **LOOP** (KEY_28) | Tap to toggle the Rimming note latch (Rimming mode only); hold with PLAY for recording gestures | - | - | Yellow for the Rimming latch; blue while take looping is enabled |
 
 \* The selected bowl = the last played/selected key **in the current
 mode**. Pan, bowl volume, tuning, resonance character, brightness and
 decay are stored independently for each key in each mode (75 editable
 bowls in total); master volume, strike hardness, shimmer and reverb
-mix are global. PLAY (KEY_27) and the mode toggle (SW_TOG) are
-reserved.
+mix are global. The mode toggle (SW_TOG) is reserved.
 
 ### Play modes (keyboard)
 
@@ -60,6 +60,15 @@ note or moves the bowl editor target. With no SD card (or an
 incompatible old state file) the instrument boots factory settings in
 **Strikes**; the first successful save replaces the old file (old
 saved settings are not imported).
+
+### SD recording and playback
+
+- Hold **PLAY + LOOP** for 2 s to arm a recording. A 4 s countdown follows while performance continues; a fresh press of either key cancels it. Recording captures the stereo Bowl bus at -6 dB before master volume, including reverb.
+- While recording, hold **PLAY + LOOP** for 1 s to stop cleanly. The file is finalized after queued audio is written.
+- Takes are saved without overwriting as `BOWLS/RECORDINGS/Recording NN.wav` (numbered 01-999), 48 kHz stereo 16-bit PCM WAV. Preset saves and recording/playback file work are serialized.
+- Hold **PLAY** alone for 2 s to enter playback. This releases held pad gates, scans for the newest 15 takes, and temporarily selects Normal output routing. Hold PLAY alone for 2 s again to exit and restore the previous routing.
+- In playback, tap **PLAY** to pause/resume, tap **LOOP** to repeat the selected take, and press a populated white-key slot to select a take. The newest take is the leftmost slot; takes continue left to right. At the end, playback advances to the next take.
+- Recording arm fills the keybed red; the countdown turns its first four keys from white to red. Playback uses dim white for available takes and blue for the selection; the selection blinks while playing. SHIFT blinks red while recording and flashes rapidly after a recorder error. A missing card, empty library, invalid take, or player error is shown in red on the keybed.
 
 ### Audio routing (send-FX loop)
 

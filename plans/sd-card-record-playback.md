@@ -1,6 +1,11 @@
 # SD Card Recording and Playback
 
-Status: **planned**. Reference implementation: `C:\local dev\CHOMPI-Pipes\code\src\SdRecorder.h`, `SdPlayer.h`, and the corresponding control and LED handling in `chompi_main.cpp`.
+Status: **implemented and hardware-validated** (arm/countdown/stop,
+playback entry/selection/exit, and the hold animations below were confirmed
+on device). Host regression suites and the firmware build pass; SD-card
+removal mid-write and slow/full cards still warrant soak testing. Reference
+behavior: `C:\local dev\CHOMPI-Pipes\code\src\SdRecorder.h`, `SdPlayer.h`,
+and the corresponding control and LED handling in `chompi_main.cpp`.
 
 ## Problem and goal
 
@@ -26,7 +31,7 @@ Port the Pipes recorder/player state-machine design, not its hardware or storage
 
 Use the sibling's canonical 48 kHz, stereo, 16-bit PCM WAV header and -6 dB record level. Tap the final stereo Bowl bus before master gain so takes do not depend on the volume knob; inject playback after the Bowl reverb stage and before master gain, avoiding re-recording playback or applying the reverb twice. Temporarily use Normal output routing while playback is active and restore the user's routing on exit, matching Pipes' isolated playback behavior. Release live Bowl notes on entry and allow existing resonator/reverb tails to decay naturally.
 
-The recorder should create a new numbered take without overwriting existing takes (1..999), sync periodically, drain its tail and patch WAV sizes on close, and fail visibly on ring overflow, full card, or write error. The player should scan downward for the newest 15 takes, fill its SDRAM ring in bounded main-loop work, support pause/resume and current-take looping, skip stale/invalid files with a red slot flash, and advance through the take window at EOF. Use a single shared filesystem owner and ensure preset save, recorder, and player operations cannot run concurrently.
+The recorder should create a new numbered take without overwriting existing takes (1..999), sync periodically, drain its tail and patch WAV sizes on close, and fail visibly on ring overflow, full card, or write error. The player should enumerate the recordings directory once (bounded entries per pass; do NOT probe all 999 names with sequential `f_stat` calls - that cost several UI-visible seconds on hardware), keep the newest 15 takes, fill its SDRAM ring in bounded main-loop work, support pause/resume and current-take looping, skip stale/invalid files with a red slot flash, and advance through the take window at EOF. Use a single shared filesystem owner and ensure preset save, recorder, and player operations cannot run concurrently.
 
 Recommended directory: `BOWLS/RECORDINGS/`, with the sibling's `Recording NN.wav` naming and compatible WAV format. This keeps Bowls recordings separate from `PIPES/RECORDINGS/` while allowing WAV-level interoperability if files are moved. Confirm whether users instead want both firmwares to share one recording directory before implementation.
 
@@ -51,6 +56,50 @@ Recommended directory: `BOWLS/RECORDINGS/`, with the sibling's `Recording NN.wav
 5. Add the pre-master -6 dB record tap and post-reverb/pre-master playback injection. Release live notes on playback entry, preserve the saved routing and restore it on exit, and keep the player's audio path silent while paused/stopped/underflowing.
 6. Render the documented keybed and PLAY/LOOP/SHIFT LED states, including no-card, empty-window, skipped-file, and fatal-error feedback. Preserve Bowls' ordinary yellow LOOP latch indication outside playback and define status-vs-SHIFT/save-flash/CPU-meter priority.
 7. Update the control-map comments and README. Build the firmware, review SRAM/SRAM_EXEC/SDRAM headroom, then exercise the hardware checklist below.
+
+## Porting notes (learned on hardware, 2026-11-07)
+
+Apply these when reusing this design in another repo; each one cost a
+hardware debug round here.
+
+- **DSY_SDRAM_BSS / NOLOAD sections do not run C++ member initializers.**
+  An SPSC ring placed in SDRAM boots with garbage head/tail counters; the
+  player then streams random SDRAM as loud digital noise. Clear the ring
+  (tail = head) before first use, and clear it through a
+  consumer-acknowledged flush handshake (audio ISR clears, main loop waits
+  for the ack) before every take switch and before the first take open -
+  never reset the ring from the filesystem side while the callback may be
+  reading it. The record side may clear directly if the producer is
+  guaranteed idle (gate capture on a flag set only after the clear).
+- **A timed multi-button hold must produce exactly one action.** Track an
+  action-done flag and require full release of every involved button before
+  any new action. Otherwise a 1 s stop hold falls through to the 2 s arm
+  check on the same hold (stale timestamp) and immediately re-arms. Also
+  cancel any pending countdown/arm state when entering another mode.
+- **A hold that triggers a mode change must not leak into the new mode's
+  hold detector.** PLAY held through playback entry must not count toward
+  the exit hold: mark the button consumed at the trigger and re-arm only on
+  a fresh press.
+- **Draw the hold-progress fill during the hold itself**, not only in the
+  transitional state that follows it; the transitional states (scan/close)
+  can be near-instant and then the user sees no feedback at all.
+- **libDaisy's `sd_diskio.c` already does `SCB_CleanDCache_by_Addr` /
+  `SCB_InvalidateDCache_by_Addr` around SDMMC DMA** - do not add redundant
+  cache ops. Buffers still must live in SRAM members (never the DTCM stack)
+  and be `alignas(32)`.
+- **Enumerate, don't probe**: `f_opendir`/`f_readdir` (LFN is enabled,
+  `_USE_LFN=1`) bounded at ~16 entries per main-loop pass finds the newest
+  15 takes in a few passes.
+- **Serialize all filesystem users through one lease** on the storage owner
+  (`PresetStorage::TryAcquireFilesystem()` / `ReleaseFilesystem()`); the
+  lease also blocks card-remount on reinsertion while a file is open.
+- Take files are `BOWLS/RECORDINGS/Recording NN.wav` with at least two
+  digits (01..99, then 100..999); keep recorder naming and player parsing
+  in one shared helper.
+- The stop gesture gets its own 1 s red fill, and the SHIFT LED keeps
+  blinking until the recorder has drained, patched the WAV header, and
+  closed - the file-finalized moment is the only unambiguous "stopped"
+  signal.
 
 ## Risks and open questions
 
