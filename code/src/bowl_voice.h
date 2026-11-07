@@ -90,6 +90,8 @@ class BowlVoice
         profile_       = 0;
         decay_mult_    = 1.0f;
         shimmer_mult_  = 1.0f;
+        shimmer_target_mult_ = 1.0f;
+        shimmer_change_pending_ = false;
         brightness_    = 0.5f;
         fundamental_   = 220.0f;
         intensity_     = 0.0f;
@@ -223,13 +225,15 @@ class BowlVoice
         UpdateCoeffs();
     }
 
-    /** Live paired-mode detune multiplier (0..2); updates the voice. */
+    /** Paired-mode detune multiplier (0..2). Defer changes until the voice
+     *  is quiet or a new strike/rim selection recalculates its coefficients. */
     void SetShimmerMult(float mult)
     {
-        if(mult == shimmer_mult_)
+        if(mult == shimmer_target_mult_)
             return;
-        shimmer_mult_ = mult;
-        UpdateCoeffs();
+        shimmer_target_mult_ = mult;
+        shimmer_change_pending_ = true;
+        ApplyPendingShimmerIfQuiet();
     }
 
     /** Rim-rubbing level 0..1 and character (0 = clockwise friction
@@ -343,6 +347,7 @@ class BowlVoice
                             * (m > 0 ? kStrikeUpper : 1.0f);
         }
 
+        ApplyPendingShimmerAtNoteStart();
         UpdateCoeffs();
 
         // The brief initial touch: a felt mallet's tick is a soft low
@@ -424,12 +429,14 @@ class BowlVoice
         // from this voice's previous life ends here.
         pad_gate_ = false;
         pad_env_  = 0.0f;
+        ApplyPendingShimmerAtNoteStart();
         UpdateCoeffs();
     }
 
     /** Accumulate the voice into the stereo block. */
     void ProcessBlock(float* out_l, float* out_r, size_t n)
     {
+        ApplyPendingShimmerIfQuiet();
         // Idle gate: skip only when the ring is TRULY over. Gating on
         // the output envelope (IsActive) cut the voice during a beat
         // null with the tail still faintly audible; the null-immune
@@ -699,6 +706,24 @@ class BowlVoice
         return q * q * (3.0f - 2.0f * q);
     }
 
+    void ApplyPendingShimmerIfQuiet()
+    {
+        if(!shimmer_change_pending_ || IsActive() || HasTail()
+           || rub_level_ >= 0.001f || rub_smooth_ >= 0.001f)
+            return;
+        shimmer_mult_ = shimmer_target_mult_;
+        shimmer_change_pending_ = false;
+        UpdateCoeffs();
+    }
+
+    void ApplyPendingShimmerAtNoteStart()
+    {
+        if(!shimmer_change_pending_)
+            return;
+        shimmer_mult_ = shimmer_target_mult_;
+        shimmer_change_pending_ = false;
+    }
+
     /** Recompute every resonator coefficient + pan gain from the current
      *  fundamental, profile and live parameters. Called at strike time
      *  and on live decay/shimmer changes only - never per sample. */
@@ -728,8 +753,8 @@ class BowlVoice
         const float det = p.detune_hz[m] * det_scale * shimmer_mult_
                           * detune_jitter_ * wander_[m];
         const float t60 = p.t60_s[m] * decay_mult_;
-        const float ra  = SetResonator(res_[2 * m], f0, t60);
-        const float rb  = SetResonator(res_[2 * m + 1], f0 + det, t60);
+        const float ra = SetResonator(res_[2 * m], f0, t60);
+        const float rb = SetResonator(res_[2 * m + 1], f0 + det, t60);
         wander_applied_[m] = wander_[m];
 
         // Pair input gain: sin(w) equalizes the impulse-response
@@ -821,7 +846,7 @@ class BowlVoice
             {
                 // Steps are ~0.3% of the detune (<= ~0.15 Hz), so
                 // retuning the ringing pair is inaudible.
-                UpdatePairCoeffs(m, det_scale); // sets wander_applied_
+                UpdatePairCoeffs(m, det_scale);
             }
 
             // Clean-drive oscillators: the rotation recurrence drifts
@@ -863,8 +888,8 @@ class BowlVoice
         }
         const float rad   = 2.0f * kPi * freq / fs_;
         const float decay = expf(-6.907755f / (t60 * fs_));
-        r.c1              = 2.0f * decay * cosf(rad);
-        r.c2              = decay * decay;
+        r.c1 = 2.0f * decay * cosf(rad);
+        r.c2 = decay * decay;
         return decay;
     }
 
@@ -889,6 +914,8 @@ class BowlVoice
     int       profile_       = 0;
     float     decay_mult_    = 1.0f;
     float     shimmer_mult_  = 1.0f;
+    float     shimmer_target_mult_ = 1.0f;
+    bool      shimmer_change_pending_ = false;
     float     brightness_    = 0.5f;
     float     fundamental_   = 220.0f;
     float     intensity_     = 0.0f;

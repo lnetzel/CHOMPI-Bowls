@@ -494,6 +494,93 @@ void T6_LongSustained()
           "T6 30 s clean drive at max decay: stable", det);
 }
 
+void T7_ShimmerRetune()
+{
+    bowls::BowlVoice changed, reference;
+    for(bowls::BowlVoice* voice : {&changed, &reference})
+    {
+        voice->Init(kFs);
+        voice->SetProfile(0);
+        voice->SetBrightness(0.5f);
+        voice->SelectForRub(310.2f, 1.0f);
+        voice->SetRub(1.0f, 1.0f);
+    }
+    Render(changed, 1.0);
+    Render(reference, 1.0);
+
+    changed.SetShimmerMult(1.0625f);
+    std::vector<float> changed_audio, reference_audio;
+    const Stats changed_stats = Render(changed, 0.02, 0.0, &changed_audio);
+    const Stats reference_stats = Render(reference, 0.02, 0.0, &reference_audio);
+
+    double max_active_difference = 0.0;
+    for(size_t i = 0; i < changed_audio.size(); ++i)
+    {
+        const double difference
+            = std::fabs(static_cast<double>(changed_audio[i])
+                        - reference_audio[i]);
+        if(difference > max_active_difference)
+            max_active_difference = difference;
+    }
+
+    char detail[96];
+    std::snprintf(detail, sizeof(detail), "active output diff=%.8f",
+                  max_active_difference);
+    Check(changed_stats.finite && reference_stats.finite
+              && max_active_difference <= 1.0e-7,
+          "T7 active shimmer change is deferred", detail);
+
+    changed.SelectForRub(310.2f, 1.0f);
+    changed_audio.clear();
+    reference_audio.clear();
+    const Stats selected_stats = Render(changed, 0.02, 0.0, &changed_audio);
+    const Stats current_stats = Render(reference, 0.02, 0.0, &reference_audio);
+    double selected_difference = 0.0;
+    for(size_t i = 0; i < changed_audio.size(); ++i)
+    {
+        const double difference
+            = std::fabs(static_cast<double>(changed_audio[i])
+                        - reference_audio[i]);
+        if(difference > selected_difference)
+            selected_difference = difference;
+    }
+    std::snprintf(detail, sizeof(detail), "after selection diff=%.6f",
+                  selected_difference);
+    Check(selected_stats.finite && current_stats.finite
+              && selected_difference > 1.0e-4,
+          "T7b new Rimming selection commits shimmer", detail);
+
+    bowls::BowlVoice immediate, baseline;
+    immediate.Init(kFs);
+    baseline.Init(kFs);
+    immediate.SetShimmerMult(0.0f);
+    for(bowls::BowlVoice* voice : {&immediate, &baseline})
+    {
+        voice->SetProfile(0);
+        voice->SetBrightness(0.5f);
+        voice->SelectForRub(310.2f, 1.0f);
+        voice->SetRub(1.0f, 1.0f);
+    }
+    changed_audio.clear();
+    reference_audio.clear();
+    const Stats immediate_stats = Render(immediate, 1.0, 0.0, &changed_audio);
+    const Stats baseline_stats = Render(baseline, 1.0, 0.0, &reference_audio);
+    double active_difference = 0.0;
+    for(size_t i = 0; i < changed_audio.size(); ++i)
+    {
+        const double difference
+            = std::fabs(static_cast<double>(changed_audio[i])
+                        - reference_audio[i]);
+        if(difference > active_difference)
+            active_difference = difference;
+    }
+    std::snprintf(detail, sizeof(detail), "next-note output diff=%.6f",
+                  active_difference);
+    Check(immediate_stats.finite && baseline_stats.finite
+              && active_difference > 1.0e-4,
+          "T7b quiet voice uses new shimmer setting", detail);
+}
+
 void Cal()
 {
     const double text_rms  = SustainedRms(false);
@@ -525,6 +612,7 @@ int main(int argc, char** argv)
     T4_Reversals();
     T5_BoundedSweep();
     T6_LongSustained();
+    T7_ShimmerRetune();
     std::printf(g_failures == 0 ? "\nALL TESTS PASSED\n"
                                 : "\n%d TEST(S) FAILED\n",
                 g_failures);

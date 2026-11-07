@@ -467,8 +467,8 @@ int SectionStep(int& acc, int inc)
 int last_key_[bowls::kPlayModeCount] = {0, 0, 0};
 
 // Shimmer stays GLOBAL: one paired-mode detune for the whole
-// instrument, pushed to every voice live and at boot (it is not part
-// of the per-key excitation settings).
+// instrument. Changes are queued per voice until its ring and drive
+// are silent, avoiding mid-tail coefficient jumps.
 void ApplyShimmerToVoices()
 {
     const float shimmer_mult
