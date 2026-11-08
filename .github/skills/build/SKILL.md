@@ -31,6 +31,7 @@ Variants:
 - CPU-meter build (user passes `cpu-meter`): append `CPU_METER=1`. Otherwise, NEVER include the CPU meter in the build.
 - A build request runs only the firmware build and required memory report. Do not run tests by default.
 - If the user explicitly requests both a build and tests (for example, "build and test"), run the native test suite after the firmware build succeeds: `make -C /c/Dev/CHOMPI-BOWLS/code/tests test` from the MSYS2 UCRT64 shell. Report test results separately from the firmware build and memory usage.
+- **Budget: NEVER spend more than 10 AI credits on a build.** Run it once and get the numbers. If inline terminal output comes back empty, redirect the build output to a log file and read that file once it finishes. No polling, no status-check commands, no retries while the build is simply running.
 
 If `C:\msys64\usr\bin\bash.exe` does not exist, locate the MSYS2 install (check `C:\msys64`, or ask the user) and adjust.
 

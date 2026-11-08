@@ -580,15 +580,23 @@ void StrikeKey(PlayMode mode, int key)
 
 /** Rimming-mode pad start: allocate/select the voice, tune it without
  *  striking (SelectForRub reuses the phase-continuous clean modal
- *  excitation - no second resonator bank) and open the slow pad gate. */
+ *  excitation - no second resonator bank) and open the slow pad gate.
+ *  A STOLEN voice (different (mode,key) identity, still ringing) gets
+ *  the ghost fade: its leftover ring is NOT gated by the pad envelope
+ *  and would otherwise sound instantly at the new pitch, skipping the
+ *  slow attack. The identity check runs before the voice is retagged. */
 void StartPadKey(int key)
 {
     const PlayMode mode = PlayMode::kRimming;
     const int      v    = AllocVoice(mode, key);
+    const bool stolen
+        = (voices[v].Key() != key || voices[v].VoiceMode() != ModeIdx(mode))
+          && voices[v].IsActive();
     ApplyVoiceSettings(v, mode, key);
     voices[v].SetKey(key);
     voices[v].SetVoiceMode(ModeIdx(mode));
-    voices[v].SelectForRub(KeyFundamental(mode, key), 1.0f);
+    voices[v].SelectForRub(KeyFundamental(mode, key), 1.0f,
+                           stolen ? 0.001f : 1.0f);
     voices[v].SetPadGate(true);
     last_key_[ModeIdx(mode)] = key;
 }
@@ -1780,9 +1788,9 @@ void RenderLeds()
         chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 14, 0, 20);
     else
         chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 0, 20, 0);
-    chompi_leds::SetPthLed(chompi_leds::kPthEncoder2, 20, 11, 0); // strike
+    chompi_leds::SetPthLed(chompi_leds::kPthEncoder2, 20, 11, 0); // strike / brightness (shift turn)
     chompi_leds::SetPthLed(chompi_leds::kPthEncoder3, 0, 8, 20);  // decay
-    chompi_leds::SetPthLed(chompi_leds::kPthEncoder4, 14, 0, 20); // shimmer
+    chompi_leds::SetPthLed(chompi_leds::kPthEncoder4, 34, 0, 48); // shimmer
 #ifdef CPU_METER
     // Steal witness: encoder 4 LED goes white for ~300 ms when a strike
     // steals a still-ringing voice - correlate it with audible chokes.

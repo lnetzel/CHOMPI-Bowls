@@ -116,6 +116,8 @@ class BowlVoice
         char_step_     = 10.0f / sample_rate; // ~100 ms crossfade
         pad_gate_      = false;
         pad_env_       = 0.0f;
+        ring_fade_coef_ = 1.0f;
+        ring_fade_left_ = 0;
         // Pad envelope coefficients (one-pole, no trig per sample):
         // from silence the drive reaches 0.90 after exactly 10 s; after
         // note-off it falls to 0.10 of the note-off level after exactly
@@ -420,8 +422,16 @@ class BowlVoice
      *  fundamental and recomputes the resonator coefficients (which
      *  also retunes the register-relative rub lowpass) but starts no
      *  contact burst. A still-ringing voice keeps its energy and just
-     *  adopts the new tuning. */
-    void SelectForRub(float fundamental_hz, float detune_jitter)
+     *  adopts the new tuning - unless ring_damp_target < 1, which fades
+     *  the old ring to that fraction over ~100 ms (per-sample multiply,
+     *  the restrike_damp_ idiom - never a hard reset, so no click). A
+     *  pad stealing a still-ringing voice needs this fade: the pad
+     *  envelope gates only the pad DRIVE, not the resonator output, so
+     *  without it the old ring would sound instantly at the new pitch
+     *  and the slow pad attack would be bypassed. */
+    void SelectForRub(float fundamental_hz,
+                      float detune_jitter,
+                      float ring_damp_target = 1.0f)
     {
         fundamental_   = fundamental_hz;
         detune_jitter_ = detune_jitter;
@@ -429,6 +439,23 @@ class BowlVoice
         // from this voice's previous life ends here.
         pad_gate_ = false;
         pad_env_  = 0.0f;
+        if(ring_damp_target < 1.0f)
+        {
+            if(ring_damp_target < 1.0e-5f)
+                ring_damp_target = 1.0e-5f;
+            ring_fade_left_ = static_cast<int>(kGhostFadeS * fs_);
+            if(ring_fade_left_ < 1)
+                ring_fade_left_ = 1;
+            ring_fade_coef_
+                = powf(ring_damp_target,
+                       1.0f / static_cast<float>(ring_fade_left_));
+            // A leftover wheel slew must not keep exciting the retuned
+            // bowl through the fade; ApplyWheel re-establishes any real
+            // target the next block (blooming from silence as designed).
+            rub_smooth_ = 0.0f;
+            rub_lp_     = 0.0f;
+            rub_lp2_    = 0.0f;
+        }
         ApplyPendingShimmerAtNoteStart();
         UpdateCoeffs();
     }
@@ -609,6 +636,17 @@ class BowlVoice
                     b.y1 *= restrike_damp_;
                     b.y2 *= restrike_damp_;
                 }
+                if(ring_fade_left_ > 0)
+                {
+                    // Ghost fade after a pad steal: the old ring decays
+                    // to its damp target over ~100 ms instead of
+                    // stepping to silence (no click) or ringing straight
+                    // through the new pad's slow attack.
+                    a.y1 *= ring_fade_coef_;
+                    a.y2 *= ring_fade_coef_;
+                    b.y1 *= ring_fade_coef_;
+                    b.y2 *= ring_fade_coef_;
+                }
                 const float ya = x_rub + a.c1 * a.y1 - a.c2 * a.y2;
                 a.y2           = a.y1;
                 a.y1           = ya + x_strike;
@@ -633,6 +671,8 @@ class BowlVoice
             env += 0.001f * (mag - env);
             if(env < 0.0f)
                 env = 0.0f;
+            if(ring_fade_left_ > 0)
+                --ring_fade_left_;
         }
         envelope_   = env;
         rub_smooth_ = rub;
@@ -676,6 +716,13 @@ class BowlVoice
      *  below the strike loudness (listening calibration: 0.5 -> 0.25
      *  -> 0.125). */
     static constexpr float kPadDrive = 0.125f;
+
+    /** Ghost-fade time when a pad steals a still-ringing voice: the
+     *  old ring is damped to the steal target over this span - long
+     *  enough to be click-free against silence, short enough to read
+     *  as part of the note-on gesture (a stolen STRIKE damps over the
+     *  4-6 ms contact instead, masked there by the new burst). */
+    static constexpr float kGhostFadeS = 0.1f;
 
     /** Strike contact-tick gain: the felt-mallet thud is a small,
      *  dark articulation marker, subordinate to the bowl's bloom
@@ -926,6 +973,8 @@ class BowlVoice
     int       noise_len_     = 1;   // contact-tick sub-burst in samples
     float     pulse_gain_    = 0.0f; // contact-bump gain (per strike)
     float     restrike_damp_ = 1.0f; // per-sample contact damping (per strike)
+    float     ring_fade_coef_ = 1.0f; // per-sample ghost fade (pad steal)
+    int       ring_fade_left_ = 0;    // ghost-fade samples remaining
     float     exc_lp_coef_   = 0.2f; // contact-noise lowpass (per strike)
     float     exc_lp1_       = 0.0f; // contact-noise filter states
     float     exc_lp2_       = 0.0f;

@@ -18,6 +18,13 @@
 //       cleared (a stolen Rimming voice never keeps its pad)
 //   P8  a gated pad voice is Active from the first block (voice
 //       reservation while the slow attack is still inaudible)
+//   P9  a STOLEN voice's leftover ring is ghost-faded away (~-60 dB
+//       over 100 ms): no instant loud pad, the 10 s attack is intact
+//       and the pad blooms afterwards (the pad envelope gates only the
+//       pad DRIVE, not the resonator output - StartPadKey passes a
+//       damp target for stolen voices)
+//   P10 the steal transition is click-free (no sample-step)
+//   P11 a plain rim re-selection (no damp target) keeps the ring
 
 #include "bowl_voice.h"
 #include "bowl_scale.h"
@@ -248,6 +255,79 @@ int main()
         }
         v.ProcessBlock(l, r, kBlk);
         Check(v.IsActive(), "P8b still reserved after first block", "");
+    }
+
+    // P9: a stolen voice's leftover ring must not bypass the pad
+    // attack (the reported Rimming bug: 6th key steals the quietest
+    // voice and the new pad sometimes started instantly - the stolen
+    // ring is retuned but never gated by pad_env_).
+    {
+        bowls::BowlVoice v;
+        v.Init(kFs);
+        v.Strike(220.0f, 1.0f, 1.0f, 1.0f, 0.25f); // loud ring
+        Run(v, static_cast<long>(0.5 * kFs));
+        const Out before = Run(v, static_cast<long>(0.1 * kFs));
+        Check(before.peak > 0.02, "P9 pre-steal ring is loud", before.peak);
+        // The exact StartPadKey steal sequence: retune to a NEW pitch
+        // with the ghost fade armed, then open the pad gate.
+        v.SelectForRub(330.0f, 1.0f, 0.001f);
+        v.SetPadGate(true);
+        Run(v, static_cast<long>(0.5 * kFs)); // fade long finished
+        const Out settled = Run(v, static_cast<long>(0.1 * kFs));
+
+        // Control: the SAME steal WITHOUT the damp target (the old
+        // buggy behavior) keeps ringing at the retuned pitch. The
+        // engine is deterministic (fixed seed), so the two renders
+        // diverge only through the fade.
+        bowls::BowlVoice u;
+        u.Init(kFs);
+        u.Strike(220.0f, 1.0f, 1.0f, 1.0f, 0.25f);
+        Run(u, static_cast<long>(0.6 * kFs));
+        u.SelectForRub(330.0f, 1.0f); // no damp target
+        u.SetPadGate(true);
+        Run(u, static_cast<long>(0.5 * kFs));
+        const Out unfaded = Run(u, static_cast<long>(0.1 * kFs));
+
+        Check(settled.finite && settled.peak < 0.02
+                  && settled.peak < 0.25 * unfaded.peak,
+              "P9b ghost faded, no instant loud pad", settled.peak);
+        // The slow attack itself is untouched: 10.0 s of gate so far.
+        Run(v, static_cast<long>(9.4 * kFs));
+        const double env = v.PadEnvelope();
+        Check(std::fabs(env - 0.90) <= 0.005,
+              "P9c attack still 0.90 at 10 s", env);
+        const Out late = Run(v, static_cast<long>(0.5 * kFs));
+        Check(late.rms > 4.0 * settled.rms,
+              "P9d pad blooms after the fade", late.rms);
+    }
+
+    // P10: the steal transition itself is click-free - the ghost fade
+    // never steps the resonator states (a hard zero would tick).
+    {
+        bowls::BowlVoice v;
+        v.Init(kFs);
+        v.Strike(220.0f, 1.0f, 1.0f, 1.0f, 0.25f);
+        Run(v, static_cast<long>(0.5 * kFs));
+        const Out before = Run(v, static_cast<long>(0.1 * kFs));
+        v.SelectForRub(330.0f, 1.0f, 0.001f);
+        v.SetPadGate(true);
+        const Out during = Run(v, static_cast<long>(0.15 * kFs));
+        Check(during.finite && during.delta <= 1.5 * before.delta + 1.0e-3,
+              "P10 steal boundary click-free", during.delta);
+    }
+
+    // P11: default SelectForRub keeps the still-ringing state - the
+    // Split-mode rim-selection continuity is intentional and unchanged.
+    {
+        bowls::BowlVoice v;
+        v.Init(kFs);
+        v.Strike(220.0f, 1.0f, 1.0f, 1.0f, 0.25f);
+        Run(v, static_cast<long>(0.5 * kFs));
+        const Out before = Run(v, static_cast<long>(0.1 * kFs));
+        v.SelectForRub(330.0f, 1.0f); // no damp target: rim re-selection
+        const Out after = Run(v, static_cast<long>(0.2 * kFs));
+        Check(after.peak > 0.5 * before.peak,
+              "P11 plain rim select keeps the ring", after.peak);
     }
 
     std::printf("%s (%d failures)\n",
