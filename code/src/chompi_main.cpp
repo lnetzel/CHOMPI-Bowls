@@ -102,7 +102,9 @@
 // fixed unity (pre-master-gain) to the line out - an external-effects
 // send - and the AUX IN return x master gain to the headphones (the
 // volume knob is the return level). The return never leaves through
-// the line out, so a feedback loop is impossible.
+// the line out, so a feedback loop is impossible. The SD recorder
+// taps the performed signal pre-master-gain: the bowl bus in Normal,
+// the AUX IN return in Send FX.
 
 #include "chompi_hardware.h"
 #include "leds.h"
@@ -1428,7 +1430,17 @@ void AudioCallback(AudioHandle::InputBuffer  in,
         bus_r[i] = delay_r * dry + wet_r * mix_smooth;
     }
 
-    sd_recorder.Capture(bus_l, bus_r, size);
+    // SD record tap (SdRecorder applies the -6 dB record level):
+    // pre-master-gain in both routings, so the take level never
+    // depends on the volume knob. Normal records the stereo bowl bus
+    // (including reverb); Send FX records the AUX IN return - the
+    // processed signal the performer actually hears in the
+    // headphones. Playback is injected after this tap, so a take
+    // never re-records playback.
+    if(routing == bowls::kRoutingSendFx)
+        sd_recorder.Capture(in[2], in[3], size);
+    else
+        sd_recorder.Capture(bus_l, bus_r, size);
     sd_player.Render(bus_l, bus_r, size);
 
     const float gain = volume_smooth * volume_smooth;

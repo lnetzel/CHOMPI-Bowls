@@ -63,7 +63,7 @@ saved settings are not imported).
 
 ### SD recording and playback
 
-- Hold **PLAY + LOOP** for 2 s to arm a recording. A 4 s countdown follows while performance continues; a fresh press of either key cancels it. Recording captures the stereo Bowl bus at -6 dB before master volume, including reverb.
+- Hold **PLAY + LOOP** for 2 s to arm a recording. A 4 s countdown follows while performance continues; a fresh press of either key cancels it. Recording captures at -6 dB before master volume - always the signal you hear in the headphones: the stereo Bowl bus including reverb in Normal routing, or the AUX IN return from the external effects unit in Send FX routing.
 - While recording, hold **PLAY + LOOP** for 1 s to stop cleanly. The file is finalized after queued audio is written.
 - Takes are saved without overwriting as `BOWLS/RECORDINGS/Recording NN.wav` (numbered 01-999), 48 kHz stereo 16-bit PCM WAV. Preset saves and recording/playback file work are serialized.
 - Hold **PLAY** alone for 2 s to enter playback. This releases held pad gates, scans for the newest 15 takes, and temporarily selects Normal output routing. Hold PLAY alone for 2 s again to exit and restore the previous routing.
@@ -94,6 +94,8 @@ saved to the SD state.
   dry bowls.
 
 Patch: line out -> FX input, FX output (set 100% wet) -> AUX IN.
+SD recording in Send FX captures the AUX IN return, so a take records
+the processed sound you hear.
 While SHIFT is held, the active routing's selection key glows pink
 (Black 6 = Normal, Black 7 = Send FX), next to the blue mode-shortcut
 key; with SHIFT up the keyboard shows only the playing state.
