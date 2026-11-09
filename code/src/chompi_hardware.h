@@ -101,6 +101,20 @@ class ChompiHardware
         seed.Init(true);
         InitAudio();
 
+        // MP2722 USB-C power/data switch. CHOMPI-PIPES configures this
+        // path before USB MIDI can reach the host; without it the MCU's
+        // USB peripheral starts but the panel connector stays isolated.
+        I2CHandle::Config i2c_cfg;
+        i2c_cfg.mode              = I2CHandle::Config::Mode::I2C_MASTER;
+        i2c_cfg.periph            = I2CHandle::Config::Peripheral::I2C_1;
+        i2c_cfg.speed             = I2CHandle::Config::Speed::I2C_100KHZ;
+        i2c_cfg.address           = 0x3F;
+        i2c_cfg.pin_config.scl    = seed::D11;
+        i2c_cfg.pin_config.sda    = seed::D12;
+        i2c_.Init(i2c_cfg);
+
+        usb_sw_.Init(seed::D32, GPIO::Mode::OUTPUT, GPIO::Pull::NOPULL);
+
         // Button chain: 5x CD4021 (U5, U7, U8, U9, U10) on D7/D8/D9.
         ShiftRegister4021<5>::Config button_sr_cfg;
         button_sr_cfg.clk       = seed::D8;
@@ -127,6 +141,18 @@ class ChompiHardware
 
         // AUX input jack detection (pull-up on the board).
         jack_detect_.Init(seed::D21, GPIO::Mode::INPUT, GPIO::Pull::NOPULL);
+    }
+
+    /** Connect the panel USB-C port to the Seed's USB device peripheral.
+     *  Mirrors the known-working CHOMPI-PIPES MP2722 sequence. */
+    void ConfigureUsbDevicePath()
+    {
+        usb_sw_.Write(false);
+        System::Delay(1);
+        uint8_t command[2] = {0x0a, 0x24};
+        i2c_.TransmitBlocking(0x3F, command, sizeof(command), 200);
+        System::Delay(1);
+        usb_sw_.Write(true);
     }
 
     void StartAudio(AudioHandle::AudioCallback cb) { seed.StartAudio(cb); }
@@ -240,6 +266,8 @@ class ChompiHardware
     }
 
     SaiHandle           external_sai_handle_;
+    I2CHandle            i2c_;
+    GPIO                 usb_sw_;
     ShiftRegister4021<5> button_sr_;
     ShiftRegister4021<1> encoder_sr_;
     QuadratureEncoder    enc_[kEncoderCount];

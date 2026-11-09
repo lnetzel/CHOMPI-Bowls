@@ -1,0 +1,4 @@
+﻿midi_exists=True
+midi_len=160
+modes_exists=True
+modes_len=6037

@@ -130,6 +130,8 @@ class BowlVoice
         pan_r_target_  = 1.0f;
         gain_          = 1.0f;
         gain_target_   = 1.0f;
+        perf_gain_        = 1.0f;
+        perf_gain_target_ = 1.0f;
         key_           = -1;
         rng_           = 0x12345678u;
         for(int k = 0; k < kResonators; ++k)
@@ -290,6 +292,45 @@ class BowlVoice
         if(gain > 2.0f)
             gain = 2.0f;
         gain_target_ = gain;
+    }
+
+    /** MIDI performance gain 0..1 (note-on velocity for pads and rim
+     *  selections; 1 = the local keyboard's reference). Smoothed per
+     *  sample like the pan/bowl gains, so live CC-driven changes never
+     *  zipper. Multiplies the voice output independently of the saved
+     *  per-bowl volume - a transient control, never persisted. */
+    void SetPerfGain(float gain)
+    {
+        if(gain < 0.0f)
+            gain = 0.0f;
+        if(gain > 1.0f)
+            gain = 1.0f;
+        perf_gain_target_ = gain;
+    }
+
+    /** CC 120 panic: silence the voice WITHOUT a full Init (no
+     *  coefficient recomputation, no profile/tuning loss) - zero the
+     *  resonator states, the strike burst, the rub/pad excitation and
+     *  the envelopes, so the ring stops immediately. Cheap enough for
+     *  the audio ISR (32 floats + state); the caller fades the bus to
+     *  mask any residual click. A fresh Strike()/SelectForRub() fully
+     *  re-arms the voice. */
+    void PanicReset()
+    {
+        for(int k = 0; k < kResonators; ++k)
+            res_[k] = Resonator{};
+        envelope_       = 0.0f;
+        burst_pos_      = 0;
+        rub_level_      = 0.0f;
+        rub_smooth_     = 0.0f;
+        rub_lp_         = 0.0f;
+        rub_lp2_        = 0.0f;
+        pad_gate_       = false;
+        pad_env_        = 0.0f;
+        ring_fade_left_ = 0;
+        ring_fade_coef_ = 1.0f;
+        restrike_damp_  = 1.0f;
+        exc_lp1_ = exc_lp2_ = 0.0f;
     }
 
     /** Strike the bowl. strike_norm 0..1 = soft..hard; the jitters are
@@ -658,13 +699,14 @@ class BowlVoice
                 swirl_l_[m] += 0.004f * (swirl_l_t_[m] - swirl_l_[m]);
                 swirl_r_[m] += 0.004f * (swirl_r_t_[m] - swirl_r_[m]);
             }
-            // Voice pan + per-bowl volume (~10 ms slews: live edits are
-            // click-free).
+            // Voice pan + per-bowl volume + MIDI performance gain
+            // (~10 ms slews: live edits are click-free).
             pan_l_ += 0.002f * (pan_l_target_ - pan_l_);
             pan_r_ += 0.002f * (pan_r_target_ - pan_r_);
             gain_ += 0.002f * (gain_target_ - gain_);
-            out_l[i] += sum_l * pan_l_ * gain_;
-            out_r[i] += sum_r * pan_r_ * gain_;
+            perf_gain_ += 0.002f * (perf_gain_target_ - perf_gain_);
+            out_l[i] += sum_l * pan_l_ * gain_ * perf_gain_;
+            out_r[i] += sum_r * pan_r_ * gain_ * perf_gain_;
 
             // Leaky peak-ish envelope for voice stealing / idle detection.
             const float mag = sum_l >= 0.0f ? sum_l : -sum_l;
@@ -998,6 +1040,8 @@ class BowlVoice
     float     pan_r_target_  = 1.0f;
     float     gain_          = 1.0f;  // smoothed per-bowl volume trim
     float     gain_target_   = 1.0f;
+    float     perf_gain_     = 1.0f;  // smoothed MIDI performance gain
+    float     perf_gain_target_ = 1.0f;
     int       key_           = -1;
     int       voice_mode_    = -1; // originating play mode (identity)
     uint32_t  rng_           = 0x12345678u;

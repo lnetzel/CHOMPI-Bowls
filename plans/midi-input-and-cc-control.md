@@ -1,6 +1,9 @@
 # MIDI Input and CC Control (feature plan)
 
-Status: awaiting approval. Planning only; no firmware changes authorized yet.
+Status: implemented (2026-11-09). Firmware, host tests and midi.md are
+complete; the "Firmware and hardware acceptance" matrix below is NOT yet
+run on device - DIN/USB wiring, DAW interop and flood/overflow behavior
+still need physical validation.
 
 ## Problem and goal
 

@@ -119,6 +119,8 @@
 #include "SdPlayer.h"
 #include "StereoBbdDelay.h"
 #include "delay_parameters.h"
+#include "MidiCcMap.h"
+#include "MidiHandler.h"
 
 #include "Utility/dsp.h"
 #include "Effects/reverbsc.h"
@@ -132,6 +134,18 @@
 #endif
 
 using namespace daisy;
+
+/* USB MIDI uses the panel USB-C port (EXTERNAL). libDaisy's usbd_mode
+ * is a single GLOBAL read at descriptor time, so one USB device stack
+ * cannot present CDC (the USB-serial log) and MIDI at once - MIDI
+ * takes priority, so normal builds compile the serial diagnostics out
+ * (the LED diagnostics stay). CPU_METER diagnostic builds keep the
+ * serial log and skip USB MIDI instead (DIN MIDI still works there). */
+#ifdef CPU_METER
+#define BOWLS_LOG(...) hw.seed.PrintLine(__VA_ARGS__)
+#else
+#define BOWLS_LOG(...) ((void)0)
+#endif
 
 namespace
 {
@@ -288,6 +302,54 @@ volatile int  vol_page_      = kVolPageVolume;
 // preset, so a fresh boot always starts in Normal monitoring.
 volatile int routing_ = bowls::kRoutingDefault;
 
+// ---------------------------------------------------------------------------
+// MIDI input (plans/midi-input-and-cc-control.md; user docs: midi.md)
+// ---------------------------------------------------------------------------
+
+// DIN (UART) + USB MIDI device, fixed channel 1, receive-only. The
+// parsers/transports are serviced in the main loop; the audio callback
+// drains the normalized per-source queues with a bounded budget.
+bowls::BowlsMidi midi;
+
+#ifdef CPU_METER
+constexpr bool kUsbMidiEnable = false; // meter build: keep USB serial
+#else
+constexpr bool kUsbMidiEnable = true;
+#endif
+
+// Per-source transient MIDI performance state (never saved), indexed
+// by bowls::kDin / bowls::kUsb: the CC 1 held rimming level (0 until
+// first set), the CC 84 rim texture (false = friction, like the
+// wheel's clockwise), and the CC 81/82 edit-bank/key context (-1 =
+// follow the active mode).
+float    midi_rub_level_[bowls::kMidiTransportCount] = {0.0f, 0.0f};
+bool     midi_rub_clean_[bowls::kMidiTransportCount] = {false, false};
+uint32_t midi_rub_seq_[bowls::kMidiTransportCount]   = {0, 0};
+int      midi_edit_bank_[bowls::kMidiTransportCount] = {-1, -1};
+int      midi_edit_key_[bowls::kMidiTransportCount]  = {0, 0};
+
+// Wheel/MIDI rub arbitration recency (plan section 5): the wheel's
+// per-(mode,key) pumps and each MIDI source's CC 1/84 changes share
+// one monotonically increasing sequence; at equal levels the latest
+// control event's candidate (and its texture) wins.
+uint32_t rub_seq_   = 0;
+uint32_t wheel_seq_[bowls::kPlayModeCount][bowls::kKeyCount] = {};
+
+// CC 120 panic: a <= 5 ms bus fade masks the voice kill; the ~387 KB
+// reverb state clear is deferred to the main loop (reverb_reset_pending_)
+// and the mute lifts only after it completes - never a heavy reset in
+// the audio ISR, and never a stale tail after unmute.
+volatile bool panic_mute_           = false;
+volatile bool reverb_reset_pending_ = false;
+float         panic_gain_           = 1.0f;
+
+/** Queue/transport index -> claim source. */
+bowls::Source MidiSrcFromTransport(int src)
+{
+    return src == bowls::kDin ? bowls::Source::kMidiDin
+                              : bowls::Source::kMidiUsb;
+}
+
 // Encoder-1 pages (press cycles): bowl volume -> character -> tuning.
 constexpr int kEnc1PageVolume    = 0;
 constexpr int kEnc1PageCharacter = 1;
@@ -439,6 +501,101 @@ float TuneRatioTicks(int ticks)
     return powf(2.0f, static_cast<float>(ticks - 16) * (1.0f / 16.0f));
 }
 
+// ---------------------------------------------------------------------------
+// Shared parameter setters (local encoders AND MIDI CCs): absolute,
+// change-gated (an unchanged value never marks the preset dirty) and
+// overlay-free - the caller decides on LED feedback (MIDI CCs never
+// show the white-key bars; the encoder handlers call ShowOverlay).
+// ---------------------------------------------------------------------------
+
+/** Clamp-store a 0..32 tick cell; on an actual change mark dirty.
+ *  Returns true when the value changed. */
+bool StoreTicks(std::atomic<int>& cell, int value, uint32_t now)
+{
+    value = value < 0 ? 0 : (value > kTickCount ? kTickCount : value);
+    if(value == cell.load(std::memory_order_relaxed))
+        return false;
+    cell.store(value, std::memory_order_relaxed);
+    MarkDirty(now);
+    return true;
+}
+
+/** Clamp-store a 0..4 profile cell with change-gated dirty marking. */
+bool StoreProfile(std::atomic<int>& cell, int value, uint32_t now)
+{
+    value = value < 0 ? 0
+                      : (value >= bowls::kNumProfiles
+                             ? bowls::kNumProfiles - 1
+                             : value);
+    if(value == cell.load(std::memory_order_relaxed))
+        return false;
+    cell.store(value, std::memory_order_relaxed);
+    MarkDirty(now);
+    return true;
+}
+
+/** Live-update a parameter on the voice holding (mode, key), if any. */
+template <typename F>
+void ForVoiceIdentity(int m, int key, F apply)
+{
+    for(int v = 0; v < kVoiceCount; ++v)
+        if(voices[v].Key() == key && voices[v].VoiceMode() == m)
+            apply(v);
+}
+
+// Per-(mode,key) bank setters: pan/bowl-volume/brightness/decay ride
+// the ringing voice live; tuning and profile apply at the next
+// excitation (store only).
+void SetPanTicks(int m, int key, int ticks, uint32_t now)
+{
+    if(!StoreTicks(params.pan_ticks[m][key], ticks, now))
+        return;
+    const float pan_norm = PanNormTicks(
+        params.pan_ticks[m][key].load(std::memory_order_relaxed));
+    ForVoiceIdentity(m, key,
+                     [&](int v) { voices[v].SetPan(pan_norm); });
+}
+
+void SetBowlVolTicks(int m, int key, int ticks, uint32_t now)
+{
+    if(!StoreTicks(params.bowl_vol_ticks[m][key], ticks, now))
+        return;
+    const float gain = BowlGainTicks(
+        params.bowl_vol_ticks[m][key].load(std::memory_order_relaxed));
+    ForVoiceIdentity(m, key,
+                     [&](int v) { voices[v].SetBowlGain(gain); });
+}
+
+void SetBrightnessTicks(int m, int key, int ticks, uint32_t now)
+{
+    if(!StoreTicks(params.brightness_ticks[m][key], ticks, now))
+        return;
+    const float bnorm = TicksToNorm(
+        params.brightness_ticks[m][key].load(std::memory_order_relaxed));
+    ForVoiceIdentity(m, key,
+                     [&](int v) { voices[v].SetBrightness(bnorm); });
+}
+
+void SetDecayTicks(int m, int key, int ticks, uint32_t now)
+{
+    if(!StoreTicks(params.decay_ticks[m][key], ticks, now))
+        return;
+    const float mult = DecayMultTicks(
+        params.decay_ticks[m][key].load(std::memory_order_relaxed));
+    ForVoiceIdentity(m, key,
+                     [&](int v) { voices[v].SetDecayMult(mult); });
+}
+
+void SetTuneTicks(int m, int key, int ticks, uint32_t now)
+{
+    StoreTicks(params.tune_ticks[m][key], ticks, now);
+}
+
+void SetProfileTicks(int m, int key, int profile, uint32_t now)
+{
+    StoreProfile(params.profile_ticks[m][key], profile, now);
+}
+
 // The profile select needs TWO detent ticks per step: a single tick only
 // arms the accumulator, so a stray detent or an accidental brush can't
 // hop the sections (PhaseOff SectionStep pattern).
@@ -550,11 +707,17 @@ float KeyFundamental(PlayMode mode, int key)
                    std::memory_order_relaxed));
 }
 
-void StrikeKey(PlayMode mode, int key)
+void StrikeKey(PlayMode mode, int key, int velocity = 127,
+               bool edit_target = true)
 {
     const int   v      = AllocVoice(mode, key);
     const float snorm
         = TicksToNorm(params.strike_ticks.load(std::memory_order_relaxed));
+    // MIDI note-on velocity rides the strike's intensity (loudness)
+    // via the amplitude factor - the strike hardness (the panel/CC 78
+    // timbre control) stays independent. Velocity 127 = 1.0 = the
+    // local keyboard's reference sound.
+    const float vel_norm = static_cast<float>(velocity) * (1.0f / 127.0f);
     // No per-strike randomization: a well-played bowl is consistent.
     // Hit-to-hit variation still comes for free from the still-ringing
     // state each new strike lands on (and the slow detune wander).
@@ -568,7 +731,11 @@ void StrikeKey(PlayMode mode, int key)
     ApplyVoiceSettings(v, mode, key);
     voices[v].SetKey(key);
     voices[v].SetVoiceMode(ModeIdx(mode));
-    voices[v].Strike(KeyFundamental(mode, key), snorm, 1.0f, 1.0f,
+    // A strike takes the voice over: any pad/rim performance gain left
+    // over from the voice's previous life returns to unity (the strike
+    // velocity already shaped the excitation itself).
+    voices[v].SetPerfGain(1.0f);
+    voices[v].Strike(KeyFundamental(mode, key), snorm, vel_norm, 1.0f,
                      stolen ? 0.02f : 0.25f);
 #ifdef CPU_METER
     if(stolen)
@@ -576,8 +743,11 @@ void StrikeKey(PlayMode mode, int key)
 #endif
     // The mallet contact burst barely excites a real room: darken the
     // reverb send (it re-opens into the pure ring over ~180 ms).
-    send_dark_                = 1.0f;
-    last_key_[ModeIdx(mode)] = key;
+    send_dark_ = 1.0f;
+    // MIDI notes never move the LOCAL bowl-editor target (the CC 81/82
+    // edit context is kept per sender instead).
+    if(edit_target)
+        last_key_[ModeIdx(mode)] = key;
 }
 
 /** Rimming-mode pad start: allocate/select the voice, tune it without
@@ -587,7 +757,7 @@ void StrikeKey(PlayMode mode, int key)
  *  the ghost fade: its leftover ring is NOT gated by the pad envelope
  *  and would otherwise sound instantly at the new pitch, skipping the
  *  slow attack. The identity check runs before the voice is retagged. */
-void StartPadKey(int key)
+void StartPadKey(int key, int velocity = 127)
 {
     const PlayMode mode = PlayMode::kRimming;
     const int      v    = AllocVoice(mode, key);
@@ -599,6 +769,9 @@ void StartPadKey(int key)
     voices[v].SetVoiceMode(ModeIdx(mode));
     voices[v].SelectForRub(KeyFundamental(mode, key), 1.0f,
                            stolen ? 0.001f : 1.0f);
+    // Pad velocity: a smoothed performance gain, separate from the
+    // saved per-bowl volume (velocity 127 = 1.0 = local reference).
+    voices[v].SetPerfGain(static_cast<float>(velocity) * (1.0f / 127.0f));
     voices[v].SetPadGate(true);
     last_key_[ModeIdx(mode)] = key;
 }
@@ -625,7 +798,7 @@ void SyncPadGates()
 /** Split rim-zone key press: SELECT the bowl for wheel rimming - never
  *  strikes. The voice is (re)allocated and tuned now, so the wheel has
  *  something to sing into immediately. */
-void SelectRimKey(int key, bool make_edit_target)
+void SelectRimKey(int key, bool make_edit_target, int velocity = 127)
 {
     const PlayMode mode = PlayMode::kSplit;
     const int      v    = AllocVoice(mode, key);
@@ -635,6 +808,9 @@ void SelectRimKey(int key, bool make_edit_target)
     // Deterministic detune, like strikes: the same bowl always sings
     // with the same voice when selected.
     voices[v].SelectForRub(KeyFundamental(mode, key), 1.0f);
+    // Rim-selection velocity: the same smoothed performance gain as
+    // pads (never the saved bowl volume).
+    voices[v].SetPerfGain(static_cast<float>(velocity) * (1.0f / 127.0f));
     if(make_edit_target)
         last_key_[ModeIdx(mode)] = key;
 }
@@ -648,6 +824,20 @@ void EnsureRimVoice(int key)
     if(FindVoice(PlayMode::kSplit, key) >= 0)
         return;
     SelectRimKey(key, false);
+}
+
+/** Re-apply the performance gain of the voice holding (mode, key)
+ *  from the current claim ownership: the maximum note-on velocity
+ *  among the owners (shared pad/rim identities), retained unchanged
+ *  through the release when no owners remain. */
+void UpdatePerfGain(PlayMode mode, int key)
+{
+    const int best = play_modes.ClaimStrength(mode, key);
+    if(best <= 0)
+        return; // no owners: keep the release strength
+    const int v = FindVoice(mode, key);
+    if(v >= 0)
+        voices[v].SetPerfGain(static_cast<float>(best) * (1.0f / 127.0f));
 }
 
 // Wheel rimming: detents pump the PER-(MODE,KEY) rub level of the
@@ -669,24 +859,56 @@ bool wheel_clean_[bowls::kPlayModeCount][bowls::kKeyCount] = {};
 // What the wheel LEDs show (set in ApplyControls, read in RenderLeds).
 volatile float rub_display_ = 0.0f;
 
+/** The effective rub candidate for (mode, key) in the CURRENT mode:
+ *  the local wheel's decaying pumped level and each MIDI source's held
+ *  CC 1 level compete per note; the HIGHEST level wins (never the
+ *  sum, so mixed controllers cannot double the drive) and its texture
+ *  applies; ties go to the latest control event (plan section 5). */
+bowls::RubCandidate EffectiveRub(int vm, int key)
+{
+    bowls::RubCandidate best;
+    if(play_modes.WheelTargets(key))
+        best = bowls::ArbitrateRub(
+            best,
+            {wheel_level_[vm][key], wheel_clean_[vm][key],
+             wheel_seq_[vm][key]});
+    for(int s = 0; s < bowls::kMidiTransportCount; ++s)
+        if(midi_rub_level_[s] > 0.0f
+           && play_modes.MidiRubTargets(MidiSrcFromTransport(s), key))
+            best = bowls::ArbitrateRub(
+                best,
+                {midi_rub_level_[s], midi_rub_clean_[s],
+                 midi_rub_seq_[s]});
+    return best;
+}
+
 /** Push each voice's rub level + character for this block. Only voices
- *  whose (mode, key) is in the CURRENT mode's wheel set are driven;
- *  outgoing-mode voices get target 0 and their last wheel excitation
+ *  whose (mode, key) is in the CURRENT mode's wheel/MIDI rub sets are
+ *  driven; outgoing-mode voices get target 0 and their last excitation
  *  falls away with the existing smooth slew (their resonator state is
- *  never erased). */
+ *  never erased). A MIDI level is HELD (no idle decay) until its
+ *  source changes it or a cleanup clears it; the wheel level keeps its
+ *  ~0.35 s idle decay. Split rim voices with a nonzero candidate but
+ *  no voice (a strike chord stole it) silently reacquire, as today. */
 void ApplyWheel()
 {
     const int cur = ModeIdx(play_modes.Mode());
+    if(play_modes.Mode() == PlayMode::kSplit)
+        for(int key = 0; key <= bowls::kRimKeyLast; ++key)
+            if(EffectiveRub(cur, key).level > 0.001f
+               && FindVoice(PlayMode::kSplit, key) < 0)
+                EnsureRimVoice(key); // silent reacquisition
     for(int i = 0; i < kVoiceCount; ++i)
     {
         const int key = voices[i].Key();
         const int vm  = voices[i].VoiceMode();
         float     target = 0.0f;
         float     clean  = 0.0f;
-        if(key >= 0 && vm == cur && play_modes.WheelTargets(key))
+        if(key >= 0 && vm == cur)
         {
-            target = wheel_level_[vm][key];
-            clean  = wheel_clean_[vm][key] ? 1.0f : 0.0f;
+            const bowls::RubCandidate best = EffectiveRub(vm, key);
+            target = best.level;
+            clean  = best.clean ? 1.0f : 0.0f;
         }
         // Level AND character travel together: a Split rim voice
         // reacquired after a strike-steal picks up the note's last
@@ -723,7 +945,9 @@ void BeginPlaybackEntry()
     chord_hold_valid_ = false;
     if(sd_recorder.IsBusy())
         sd_recorder.RequestStop();
-    play_modes.Init(play_modes.Mode());
+    play_modes.Init(play_modes.Mode()); // releases ALL claims (incl. MIDI)
+    midi_rub_level_[bowls::kDin] = 0.0f;
+    midi_rub_level_[bowls::kUsb] = 0.0f;
     SyncPadGates();
     ApplyWheel();
 }
@@ -975,10 +1199,240 @@ bool HandleTransport()
     return false;
 }
 
+// ---------------------------------------------------------------------------
+// MIDI event application (audio-ISR safe: voices/params/claims only -
+// never HAL, USB, file access or blocking calls)
+// ---------------------------------------------------------------------------
+
+/** CC 120 All Sound Off: the global emergency panic. Clears every
+ *  performance claim, the LOOP latch, sustain, wheel/MIDI excitation
+ *  and the Split fallbacks; silences the bowl voices immediately
+ *  (cheap per-voice state clear, no full Init) and mutes the bowl bus
+ *  with a <= 5 ms fade. The reverb's ~387 KB tail is cleared in the
+ *  main loop (reverb_reset_pending_) before the mute lifts. Saved
+ *  parameters, the active mode and the routing are untouched; the AUX
+ *  return in Send FX is intentionally NOT silenced (it may be another
+ *  instrument). Fresh presses are required - nothing revives from a
+ *  still-held key. */
+void MidiPanic()
+{
+    play_modes.MidiPanic();
+    for(int m = 0; m < bowls::kPlayModeCount; ++m)
+        for(int k = 0; k < bowls::kKeyCount; ++k)
+            wheel_level_[m][k] = 0.0f;
+    midi_rub_level_[bowls::kDin] = 0.0f;
+    midi_rub_level_[bowls::kUsb] = 0.0f;
+    for(int v = 0; v < kVoiceCount; ++v)
+    {
+        voices[v].SetRub(0.0f, 0.0f);
+        voices[v].PanicReset();
+    }
+    rub_display_            = 0.0f;
+    panic_mute_             = true;
+    reverb_reset_pending_   = true;
+}
+
+/** The sender's per-bowl edit target (CC 81 bank / CC 82 key):
+ *  fixed bank or the active mode; never the local last_key_. */
+void MidiEditTarget(int src, int& mode_idx, int& key)
+{
+    mode_idx = midi_edit_bank_[src] < 0 ? ModeIdx(play_modes.Mode())
+                                        : midi_edit_bank_[src];
+    key      = midi_edit_key_[src];
+}
+
+void ApplyMidiNoteOn(int src, uint8_t note, uint8_t vel, uint32_t now)
+{
+    const int key = bowls::MidiCcMap::NoteToKey(note);
+    if(key < 0 || vel == 0)
+        return; // out-of-range / vel-0 are filtered or normalized earlier
+    // A valid positive-velocity Note On also selects this sender's
+    // edit key for subsequent per-bowl CCs (even with a fixed bank).
+    midi_edit_key_[src] = key;
+    const bowls::Source    s   = MidiSrcFromTransport(src);
+    const bowls::KeyAction act = play_modes.MidiNoteOn(s, key, vel);
+    switch(act.kind)
+    {
+        case bowls::KeyAction::kStrike:
+            StrikeKey(act.mode, act.key, vel, false);
+            break;
+        case bowls::KeyAction::kPadOn:
+            StartPadKey(act.key, vel);
+            UpdatePerfGain(PlayMode::kRimming, act.key);
+            break;
+        case bowls::KeyAction::kRimSelect:
+            SelectRimKey(act.key, false, vel);
+            UpdatePerfGain(PlayMode::kSplit, act.key);
+            break;
+        default:
+            // Repeated Note On (no stacked gate) / latch toggle-off:
+            // the velocity claim changed - refresh the shared strength.
+            UpdatePerfGain(act.mode, act.key);
+            break;
+    }
+    (void)now;
+}
+
+void ApplyMidiNoteOff(int src, uint8_t note)
+{
+    const int key = bowls::MidiCcMap::NoteToKey(note);
+    if(key < 0)
+        return;
+    const int origin
+        = play_modes.MidiNoteOff(MidiSrcFromTransport(src), key);
+    if(origin >= 0)
+        UpdatePerfGain(static_cast<PlayMode>(origin), key);
+}
+
+void ApplyMidiCc(int src, uint8_t cc, uint8_t val, uint32_t now)
+{
+    namespace ccmap           = bowls::MidiCcMap;
+    const bowls::Source s     = MidiSrcFromTransport(src);
+    int                 m, key;
+    switch(cc)
+    {
+        case ccmap::kCcRimLevel: // CC 1: held absolute rub level
+            midi_rub_level_[src] = ccmap::CcToLevel(val);
+            midi_rub_seq_[src]   = ++rub_seq_;
+            break;
+        case ccmap::kCcMasterVolume: // CC 7
+            StoreTicks(params.volume_ticks, ccmap::CcToTicks(val), now);
+            break;
+        case ccmap::kCcPan: // CC 10
+            MidiEditTarget(src, m, key);
+            SetPanTicks(m, key, ccmap::CcToTicks(val), now);
+            break;
+        case ccmap::kCcSustain: // CC 64: per-source Rimming hold pedal
+            play_modes.MidiSetSustain(s, ccmap::CcToSwitch(val));
+            break;
+        case ccmap::kCcProfile: // CC 70
+            MidiEditTarget(src, m, key);
+            SetProfileTicks(m, key, ccmap::CcToProfile(val), now);
+            break;
+        case ccmap::kCcBrightness: // CC 74
+            MidiEditTarget(src, m, key);
+            SetBrightnessTicks(m, key, ccmap::CcToTicks(val), now);
+            break;
+        case ccmap::kCcDecay: // CC 75
+            MidiEditTarget(src, m, key);
+            SetDecayTicks(m, key, ccmap::CcToTicks(val), now);
+            break;
+        case ccmap::kCcTune: // CC 76
+            MidiEditTarget(src, m, key);
+            SetTuneTicks(m, key, ccmap::CcToTicks(val), now);
+            break;
+        case ccmap::kCcBowlVolume: // CC 77
+            MidiEditTarget(src, m, key);
+            SetBowlVolTicks(m, key, ccmap::CcToTicks(val), now);
+            break;
+        case ccmap::kCcStrike: // CC 78
+            StoreTicks(params.strike_ticks, ccmap::CcToTicks(val), now);
+            break;
+        case ccmap::kCcShimmer: // CC 79
+            if(StoreTicks(params.shimmer_ticks, ccmap::CcToTicks(val),
+                          now))
+                ApplyShimmerToVoices();
+            break;
+        case ccmap::kCcMode: // CC 80: global play-mode selection
+            if(play_modes.SetMode(static_cast<PlayMode>(
+                   ccmap::CcToMode(val))))
+            {
+                // A mode change silences MIDI rubbing: a held CC 1
+                // level must not unexpectedly drive the new mode.
+                midi_rub_level_[bowls::kDin] = 0.0f;
+                midi_rub_level_[bowls::kUsb] = 0.0f;
+                MarkDirty(now); // the mode is saved
+            }
+            break;
+        case ccmap::kCcEditBank: // CC 81: 0/1/2 fixed, 127 follow
+        {
+            const int bank = ccmap::CcToEditBank(val);
+            if(bank == ccmap::kEditFollow)
+                midi_edit_bank_[src] = -1;
+            else if(bank != ccmap::kEditIgnore)
+                midi_edit_bank_[src] = bank;
+            break;
+        }
+        case ccmap::kCcEditKey: // CC 82: exact note 48-72 selects key
+        {
+            const int edit_key = ccmap::CcToEditKey(val);
+            if(edit_key >= 0)
+                midi_edit_key_[src] = edit_key;
+            break;
+        }
+        case ccmap::kCcLoop: // CC 83: idempotent LOOP latch setter
+            play_modes.SetLatchEnabled(ccmap::CcToSwitch(val));
+            break;
+        case ccmap::kCcRimTexture: // CC 84: friction / clean
+            midi_rub_clean_[src] = ccmap::CcToSwitch(val);
+            midi_rub_seq_[src]   = ++rub_seq_;
+            break;
+        case ccmap::kCcRouting: // CC 85: session-only routing
+            routing_ = ccmap::CcToSwitch(val) ? bowls::kRoutingSendFx
+                                              : bowls::kRoutingNormal;
+            break;
+        case ccmap::kCcReverbMix: // CC 91
+            StoreTicks(params.reverb_mix_ticks, ccmap::CcToTicks(val),
+                       now);
+            break;
+        case ccmap::kCcAllSoundOff: // CC 120: global panic
+            MidiPanic();
+            break;
+        case ccmap::kCcResetControllers: // CC 121: sender reset
+            play_modes.MidiResetControllers(s);
+            midi_rub_level_[src] = 0.0f;
+            midi_rub_clean_[src] = false;
+            midi_rub_seq_[src]   = ++rub_seq_;
+            midi_edit_bank_[src] = -1; // follow the active mode
+            midi_edit_key_[src]  = 0;
+            break;
+        case ccmap::kCcAllNotesOff: // CC 123: sender notes off
+            play_modes.MidiAllNotesOff(s);
+            midi_rub_level_[src] = 0.0f;
+            midi_rub_seq_[src]   = ++rub_seq_;
+            break;
+        default: break; // unreachable: the transport filters CCs
+    }
+}
+
+void ApplyMidiEvent(int src, bowls::BowlsMidiEvent e)
+{
+    const uint32_t now = System::GetNow();
+    if(e.type == bowls::BowlsMidiEvent::kNoteOn)
+        ApplyMidiNoteOn(src, e.data1, e.data2, now);
+    else if(e.type == bowls::BowlsMidiEvent::kNoteOff)
+        ApplyMidiNoteOff(src, e.data1);
+    else
+        ApplyMidiCc(src, e.data1, e.data2, now);
+}
+
+/** Bounded MIDI dispatch, once per audio block: at most four queued
+ *  items (events or source cleanups), fairly alternating DIN/USB so a
+ *  flooded transport cannot starve the other; order within each source
+ *  is preserved. A source cleanup (queue overflow or UART error,
+ *  latched by the transport layer) releases that source's claims and
+ *  rub level before any fresh batch is accepted - no stale queued
+ *  Note On survives it. */
+void DispatchMidi()
+{
+    midi.Router().Dispatch(
+        4,
+        [](int src, bowls::BowlsMidiEvent e) { ApplyMidiEvent(src, e); },
+        [](int src) {
+            play_modes.MidiAllNotesOff(MidiSrcFromTransport(src));
+            midi_rub_level_[src] = 0.0f;
+        });
+}
+
 /** Read encoders/keys, update parameter state and the voices.
  *  Runs once per audio block (~0.5 ms), after hw.ProcessControls(). */
 void ApplyControls()
 {
+    DispatchMidi();
+    // Pad gate reconciliation runs even while the playback transport UI
+    // owns this function (HandleTransport early-returns then): MIDI
+    // note-offs must never leave a stuck pad gate.
+    SyncPadGates();
     if(HandleTransport())
         return;
     const uint32_t now   = System::GetNow();
@@ -1027,48 +1481,22 @@ void ApplyControls()
             // that (mode, key) is re-panned live (smoothed inside the
             // voice) - a same-key voice from ANOTHER mode keeps its own
             // pan.
-            int pan
-                = params.pan_ticks[cur_mode][key].load(
-                      std::memory_order_relaxed)
-                  + enc1_inc;
-            pan = pan < 0 ? 0 : (pan > kTickCount ? kTickCount : pan);
-            if(pan
-               != params.pan_ticks[cur_mode][key].load(
-                   std::memory_order_relaxed))
-            {
-                params.pan_ticks[cur_mode][key].store(
-                    pan, std::memory_order_relaxed);
-                const float pan_norm = PanNormTicks(pan);
-                for(int v = 0; v < kVoiceCount; ++v)
-                    if(voices[v].Key() == key
-                       && voices[v].VoiceMode() == cur_mode)
-                        voices[v].SetPan(pan_norm);
-                MarkDirty(now);
-            }
+            SetPanTicks(cur_mode, key,
+                        params.pan_ticks[cur_mode][key].load(
+                            std::memory_order_relaxed)
+                            + enc1_inc,
+                        now);
             ShowOverlay(Overlay::Pan, now); // also shows at the end stops
         }
         else if(enc1_page_ == kEnc1PageVolume)
         {
             // Per-bowl volume: rides the ringing voice live (smoothed
             // inside the voice, like the pan gains).
-            int vol
-                = params.bowl_vol_ticks[cur_mode][key].load(
-                      std::memory_order_relaxed)
-                  + enc1_inc;
-            vol = vol < 0 ? 0 : (vol > kTickCount ? kTickCount : vol);
-            if(vol
-               != params.bowl_vol_ticks[cur_mode][key].load(
-                   std::memory_order_relaxed))
-            {
-                params.bowl_vol_ticks[cur_mode][key].store(
-                    vol, std::memory_order_relaxed);
-                const float gain = BowlGainTicks(vol);
-                for(int v = 0; v < kVoiceCount; ++v)
-                    if(voices[v].Key() == key
-                       && voices[v].VoiceMode() == cur_mode)
-                        voices[v].SetBowlGain(gain);
-                MarkDirty(now);
-            }
+            SetBowlVolTicks(cur_mode, key,
+                            params.bowl_vol_ticks[cur_mode][key].load(
+                                std::memory_order_relaxed)
+                                + enc1_inc,
+                            now);
             ShowOverlay(Overlay::BowlVolume, now); // also at the end stops
         }
         else if(enc1_page_ == kEnc1PageCharacter && !shift)
@@ -1078,22 +1506,11 @@ void ApplyControls()
             // section is visible while arming. Applies at the next
             // strike/selection, like tuning.
             const int step = SectionStep(profile_sel_acc, enc1_inc);
-            int       profile
-                = params.profile_ticks[cur_mode][key].load(
-                      std::memory_order_relaxed)
-                  + step;
-            profile = profile < 0 ? 0
-                                  : (profile >= bowls::kNumProfiles
-                                         ? bowls::kNumProfiles - 1
-                                         : profile);
-            if(profile
-               != params.profile_ticks[cur_mode][key].load(
-                   std::memory_order_relaxed))
-            {
-                params.profile_ticks[cur_mode][key].store(
-                    profile, std::memory_order_relaxed);
-                MarkDirty(now);
-            }
+            SetProfileTicks(cur_mode, key,
+                            params.profile_ticks[cur_mode][key].load(
+                                std::memory_order_relaxed)
+                                + step,
+                            now);
             ShowOverlay(Overlay::Character, now);
         }
         else if(enc1_page_ == kEnc1PageTune && !shift)
@@ -1101,19 +1518,11 @@ void ApplyControls()
             // Per-bowl tuning: applied at the next strike/selection
             // (physical character); only the bar shows while a bowl
             // rings.
-            int tune
-                = params.tune_ticks[cur_mode][key].load(
-                      std::memory_order_relaxed)
-                  + enc1_inc;
-            tune = tune < 0 ? 0 : (tune > kTickCount ? kTickCount : tune);
-            if(tune
-               != params.tune_ticks[cur_mode][key].load(
-                   std::memory_order_relaxed))
-            {
-                params.tune_ticks[cur_mode][key].store(
-                    tune, std::memory_order_relaxed);
-                MarkDirty(now);
-            }
+            SetTuneTicks(cur_mode, key,
+                         params.tune_ticks[cur_mode][key].load(
+                             std::memory_order_relaxed)
+                             + enc1_inc,
+                         now);
             ShowOverlay(Overlay::Tune, now); // also at the end stops
         }
     }
@@ -1129,25 +1538,11 @@ void ApplyControls()
         {
             const int cur_mode = ModeIdx(play_modes.Mode());
             const int key      = last_key_[cur_mode];
-            int       bright
-                = params.brightness_ticks[cur_mode][key].load(
-                      std::memory_order_relaxed)
-                  + strike_inc;
-            bright = bright < 0 ? 0
-                                : (bright > kTickCount ? kTickCount : bright);
-            if(bright
-               != params.brightness_ticks[cur_mode][key].load(
-                   std::memory_order_relaxed))
-            {
-                params.brightness_ticks[cur_mode][key].store(
-                    bright, std::memory_order_relaxed);
-                const float bnorm = TicksToNorm(bright);
-                for(int v = 0; v < kVoiceCount; ++v)
-                    if(voices[v].Key() == key
-                       && voices[v].VoiceMode() == cur_mode)
-                        voices[v].SetBrightness(bnorm);
-                MarkDirty(now);
-            }
+            SetBrightnessTicks(cur_mode, key,
+                               params.brightness_ticks[cur_mode][key].load(
+                                   std::memory_order_relaxed)
+                                   + strike_inc,
+                               now);
             ShowOverlay(Overlay::Brightness, now); // also at the end stops
         }
     }
@@ -1163,24 +1558,11 @@ void ApplyControls()
     {
         const int cur_mode = ModeIdx(play_modes.Mode());
         const int key      = last_key_[cur_mode];
-        int       decay
-            = params.decay_ticks[cur_mode][key].load(
-                  std::memory_order_relaxed)
-              + decay_inc;
-        decay = decay < 0 ? 0 : (decay > kTickCount ? kTickCount : decay);
-        if(decay
-           != params.decay_ticks[cur_mode][key].load(
-               std::memory_order_relaxed))
-        {
-            params.decay_ticks[cur_mode][key].store(
-                decay, std::memory_order_relaxed);
-            const float mult = DecayMultTicks(decay);
-            for(int v = 0; v < kVoiceCount; ++v)
-                if(voices[v].Key() == key
-                   && voices[v].VoiceMode() == cur_mode)
-                    voices[v].SetDecayMult(mult);
-            MarkDirty(now);
-        }
+        SetDecayTicks(cur_mode, key,
+                      params.decay_ticks[cur_mode][key].load(
+                          std::memory_order_relaxed)
+                          + decay_inc,
+                      now);
         ShowOverlay(Overlay::Decay, now); // also at the end stops
     }
 
@@ -1255,6 +1637,7 @@ void ApplyControls()
                     if(wheel_level_[cur_mode][key] > 1.0f)
                         wheel_level_[cur_mode][key] = 1.0f;
                     wheel_clean_[cur_mode][key] = clean;
+                    wheel_seq_[cur_mode][key]   = ++rub_seq_;
                     EnsureRimVoice(key);
                 }
             }
@@ -1265,6 +1648,7 @@ void ApplyControls()
                 if(wheel_level_[cur_mode][key] > 1.0f)
                     wheel_level_[cur_mode][key] = 1.0f;
                 wheel_clean_[cur_mode][key] = clean;
+                wheel_seq_[cur_mode][key]   = ++rub_seq_;
                 EnsureRimVoice(key);
             }
         }
@@ -1284,6 +1668,7 @@ void ApplyControls()
                 if(wheel_level_[cur_mode][key] > 1.0f)
                     wheel_level_[cur_mode][key] = 1.0f;
                 wheel_clean_[cur_mode][key] = clean;
+                wheel_seq_[cur_mode][key]   = ++rub_seq_;
             }
         }
         // No keyboard overlay here: the two wheel LEDs follow the rub
@@ -1295,13 +1680,16 @@ void ApplyControls()
             wheel_level_[m][k] *= 0.9990f;
     // The wheel LEDs follow the wheel set's loudest note: a freshly
     // selected, never-rimmed bowl reads dark until the wheel turns.
+    // With MIDI playing, the EFFECTIVE (arbitrated) rub level shows.
     {
         const int cur_mode = ModeIdx(play_modes.Mode());
         float     d        = 0.0f;
         for(int k = 0; k < bowls::kKeyCount; ++k)
-            if(play_modes.WheelTargets(k)
-               && wheel_level_[cur_mode][k] > d)
-                d = wheel_level_[cur_mode][k];
+        {
+            const float lvl = EffectiveRub(cur_mode, k).level;
+            if(lvl > d)
+                d = lvl;
+        }
         rub_display_ = d;
     }
     ApplyWheel();
@@ -1343,7 +1731,11 @@ void ApplyControls()
                     // outgoing voices keep their sound and reverb; only
                     // wheel control stops (ApplyWheel above) and
                     // latched-only pads release (SyncPadGates below).
-                    // The mode is persisted.
+                    // The mode is persisted. MIDI rubbing silences too:
+                    // a held CC 1 level must not unexpectedly drive the
+                    // newly selected mode.
+                    midi_rub_level_[bowls::kDin] = 0.0f;
+                    midi_rub_level_[bowls::kUsb] = 0.0f;
                     MarkDirty(now);
                     break;
                 default: break;
@@ -1403,12 +1795,22 @@ void AudioCallback(AudioHandle::InputBuffer  in,
     // branches on this cached value (audio_routing.h).
     const int routing = sd_player.ModeActive() ? bowls::kRoutingNormal
                                               : routing_;
+    // CC 120 panic handshake: while the main loop clears the reverb's
+    // SDRAM state, the reverb is not processed (no concurrent access)
+    // and the bowl bus stays muted by the fast panic fade.
+    const bool rev_reset = reverb_reset_pending_;
     float bus_l[kBlockSize];
     float bus_r[kBlockSize];
     for(size_t i = 0; i < size; ++i)
     {
         daisysp::fonepole(volume_smooth, volume_target, 0.001f);
         daisysp::fonepole(mix_smooth, mix_target, 0.001f);
+        // Panic mute: ~5 ms click-controlled fade of the internal bowl
+        // bus (voices + their reverb tail); the Send-FX AUX return is
+        // intentionally not silenced (audio_routing.h applies it after
+        // this gain).
+        panic_gain_
+            += 0.03f * ((panic_mute_ ? 0.0f : 1.0f) - panic_gain_);
         // Temple-room reverb on the stereo bowl bus, before the master
         // gain so the volume knob also controls the tail. The send is
         // lowpassed dark right after a strike (the mallet contact burst
@@ -1423,11 +1825,12 @@ void AudioCallback(AudioHandle::InputBuffer  in,
         daisysp::fonepole(send_lp_r_, delay_r, send_coef);
         daisysp::fonepole(send_lp2_l_, send_lp_l_, send_coef);
         daisysp::fonepole(send_lp2_r_, send_lp_r_, send_coef);
-        float wet_l, wet_r;
-        reverb.Process(send_lp2_l_, send_lp2_r_, &wet_l, &wet_r);
+        float wet_l = 0.0f, wet_r = 0.0f;
+        if(!rev_reset)
+            reverb.Process(send_lp2_l_, send_lp2_r_, &wet_l, &wet_r);
         const float dry   = 1.0f - mix_smooth;
-        bus_l[i] = delay_l * dry + wet_l * mix_smooth;
-        bus_r[i] = delay_r * dry + wet_r * mix_smooth;
+        bus_l[i] = (delay_l * dry + wet_l * mix_smooth) * panic_gain_;
+        bus_r[i] = (delay_r * dry + wet_r * mix_smooth) * panic_gain_;
     }
 
     // SD record tap (SdRecorder applies the -6 dB record level):
@@ -1630,13 +2033,16 @@ void DrawOverlayBar(uint32_t now)
     // machine, so its yellow indication disappears at the steal.)
     if(!overlay_active)
     {
+        // Held keys light white - physical keys AND MIDI-held notes
+        // (any source's claim) alike.
         for(unsigned key = 0; key < 25; ++key)
-            if(hw.KeyHeld(key))
+            if(hw.KeyHeld(key) || play_modes.AnyHeld(key))
                 chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key], 48, 48, 48);
         for(int v = 0; v < kVoiceCount; ++v)
         {
             const int key = voices[v].Key();
-            if(key >= 0 && voices[v].IsActive() && !hw.KeyHeld(key))
+            if(key >= 0 && voices[v].IsActive() && !hw.KeyHeld(key)
+               && !play_modes.AnyHeld(key))
                 chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key],
                                        14, 8, 2);
         }
@@ -1987,6 +2393,15 @@ void BootBlink(int count, uint8_t r, uint8_t g, uint8_t b)
 int main()
 {
     hw.Init();
+    // MIDI in: DIN (UART RX D13) + the panel USB-C device port,
+    // channel 1, receive-only (plans/midi-input-and-cc-control.md).
+    // Initialized first, right after the hardware - the same boot order
+    // as the known-good CHOMPI-PIPES firmware. USB MIDI owns the shared
+    // USB device-mode descriptor, so the USB serial diagnostics are
+    // compiled out of MIDI builds (BOWLS_LOG); CPU_METER builds keep
+    // the serial log and skip USB MIDI instead.
+    midi.Init(kUsbMidiEnable);
+    hw.ConfigureUsbDevicePath();
     bbd_delay.Init(kSampleRate, delay_buffer_l, delay_buffer_r);
     ApplyDelayTargets();
     chompi_leds::Init();
@@ -2019,18 +2434,18 @@ int main()
     // The same line goes to the USB serial log.
     if(preset_storage.NoSdCard())
     {
-        hw.seed.PrintLine("SD: no card at boot - saves inert");
+        BOWLS_LOG("SD: no card at boot - saves inert");
         BootBlink(3, 48, 0, 0);
     }
     else if(!preset_loaded)
     {
         const int load_fail = preset_storage.LoadFail();
-        hw.seed.PrintLine("SD: load failed, code %d", load_fail);
+        BOWLS_LOG("SD: load failed, code %d", load_fail);
         BootBlink(load_fail == 2 ? 2 : 3, 40, 24, 0);
     }
     else
     {
-        hw.seed.PrintLine("SD: saved state loaded");
+        BOWLS_LOG("SD: saved state loaded");
         BootBlink(1, 0, 40, 0);
     }
 
@@ -2053,6 +2468,24 @@ int main()
 
     while(true)
     {
+        /* MIDI transport service, thread level only: UART error
+         * recovery, USB listening and the parser drain into the fixed
+         * per-source event queues (the audio ISR just pops queues). */
+        midi.Service();
+
+        /* CC 120 deferred reverb clear: the panic fade has muted the
+         * bowl bus and the ISR skips reverb.Process while this runs,
+         * so the ~387 KB SDRAM state clear never races the renderer;
+         * the mute lifts only after the clear completes. */
+        if(reverb_reset_pending_)
+        {
+            reverb.Init(kSampleRate);
+            reverb.SetFeedback(0.82f);
+            reverb.SetLpFreq(4500.0f);
+            reverb_reset_pending_ = false;
+            panic_mute_           = false;
+        }
+
         /* Staged, non-blocking SD-card work: one small FatFS step per
          * pass, at thread level only (never in the audio ISR). */
         preset_storage.Service();
@@ -2067,14 +2500,14 @@ int main()
 
         if(sd_recorder.ConsumeErrorEvent())
         {
-            hw.seed.PrintLine("SD: recording failed");
+            BOWLS_LOG("SD: recording failed");
             SetTransportFeedback(kFeedbackRecorderError, 2000);
         }
         int player_event_slot = -1;
         const auto player_event = sd_player.ConsumeEvent(player_event_slot);
         if(player_event == chompi::SdPlayer<kSdRingFrames>::kEventEmpty)
         {
-            hw.seed.PrintLine("SD: no recordings found");
+            BOWLS_LOG("SD: no recordings found");
             SetTransportFeedback(kFeedbackNoTakes, 1000);
         }
         else if(player_event
@@ -2086,7 +2519,7 @@ int main()
         else if(player_event
                 == chompi::SdPlayer<kSdRingFrames>::kEventFatal)
         {
-            hw.seed.PrintLine("SD: playback failed");
+            BOWLS_LOG("SD: playback failed");
             SetTransportFeedback(kFeedbackPlayerFatal, 2000);
         }
 
@@ -2096,8 +2529,8 @@ int main()
         const auto storage_event = preset_storage.ConsumeStatusEvent();
         if(storage_event == chompi::PresetStorage::kStatusFailed)
         {
-            hw.seed.PrintLine("SD: save failed - state kept in RAM, "
-                              "retrying");
+            BOWLS_LOG("SD: save failed - state kept in RAM, "
+                      "retrying");
             sd_flash_r_     = 48;
             sd_flash_g_     = 0;
             sd_flash_b_     = 0;
@@ -2105,7 +2538,7 @@ int main()
         }
         else if(storage_event == chompi::PresetStorage::kStatusRecovered)
         {
-            hw.seed.PrintLine("SD: save recovered");
+            BOWLS_LOG("SD: save recovered");
             sd_flash_r_     = 0;
             sd_flash_g_     = 40;
             sd_flash_b_     = 0;
@@ -2113,7 +2546,7 @@ int main()
         }
         else if(storage_event == chompi::PresetStorage::kStatusSaved)
         {
-            hw.seed.PrintLine("SD: state saved");
+            BOWLS_LOG("SD: state saved");
             sd_flash_r_     = 0;
             sd_flash_g_     = 40;
             sd_flash_b_     = 0;
@@ -2128,7 +2561,7 @@ int main()
         const bool  sd_present     = !preset_storage.NoSdCard();
         if(sd_was_present && !sd_present)
         {
-            hw.seed.PrintLine("SD: card LOST at runtime");
+            BOWLS_LOG("SD: card LOST at runtime");
             sd_flash_r_     = 32;
             sd_flash_g_     = 0;
             sd_flash_b_     = 40;
@@ -2136,7 +2569,7 @@ int main()
         }
         else if(!sd_was_present && sd_present)
         {
-            hw.seed.PrintLine("SD: card detected");
+            BOWLS_LOG("SD: card detected");
         }
         sd_was_present = sd_present;
 
@@ -2150,8 +2583,8 @@ int main()
             /* Trigger diagnostic: white pulse = autosave fired; purple
              * 1 s instead when the card is (currently) seen as gone,
              * which silently blocks the write in Service(). */
-            hw.seed.PrintLine("SD: autosave fired, card %s",
-                              preset_storage.NoSdCard() ? "GONE" : "present");
+            BOWLS_LOG("SD: autosave fired, card %s",
+                      preset_storage.NoSdCard() ? "GONE" : "present");
             if(preset_storage.NoSdCard())
             {
                 sd_flash_r_     = 32;

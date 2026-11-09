@@ -1,0 +1,15 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Capture git diffs to files",
+			"type": "shell",
+			"command": "cd c:\\Dev\\CHOMPI-Bowls; git diff --stat > diff_check.txt 2>&1; git diff code/src/chompi_main.cpp > diff_main.txt 2>&1; git diff code/src/play_modes.h > diff_pm.txt 2>&1; git diff code/src/bowl_voice.h > diff_bv.txt 2>&1"
+		},
+		{
+			"label": "Build firmware (MIDI init order fix)",
+			"type": "shell",
+			"command": "C:/msys64/usr/bin/bash.exe -lc 'export PATH=\"/c/armgnu/10.3-2021.10/bin:$PATH\"; cd /c/Dev/CHOMPI-BOWLS/code/src && make -j4 DEBUG=0 OPT=-O3 > build/build_log.txt 2>&1; echo EXIT:$? >> build/build_log.txt; tail -6 build/build_log.txt'"
+		}
+	]
+}

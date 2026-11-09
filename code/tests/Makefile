@@ -50,6 +50,17 @@ modes-test: play_modes_test.exe pad_test.exe preset_test.exe
 routing-test: audio_routing_test.exe
 	./audio_routing_test.exe
 
+# MIDI input feature tests (plans/midi-input-and-cc-control.md): the
+# note/CC map and conversions, the fixed event queues + fair bounded
+# dispatch, and the source-aware claim/ownership state machine. Pure
+# headers (BOWLS_MIDI_HOST_TEST stops MidiHandler.h before the Daisy
+# transport), like play_modes.h.
+midi-test: midi_test.exe
+	./midi_test.exe
+
+midi_test.exe: midi_test.cpp ../src/MidiCcMap.h ../src/MidiHandler.h ../src/play_modes.h ../src/bowl_scale.h
+	$(CXX) $(CXXFLAGS) -o $@ midi_test.cpp
+
 # SD record/playback pure helpers: stereo ring, PCM/WAV format, and take order.
 sd-test: sd_audio_test.exe
 	./sd_audio_test.exe
@@ -88,6 +99,6 @@ baseline_gen.exe: baseline_gen.cpp .baseline/bowl_voice.h .baseline/bowl_profile
 	$(CXX) $(CXXFLAGS) -o $@ baseline_gen.cpp
 
 clean:
-	rm -f render_test.exe baseline_gen.exe strike_analyze.exe strike_test.exe play_modes_test.exe pad_test.exe preset_test.exe audio_routing_test.exe sd_audio_test.exe stereo_bbd_delay_test.exe core_json_host.o
+	rm -f render_test.exe baseline_gen.exe strike_analyze.exe strike_test.exe play_modes_test.exe pad_test.exe preset_test.exe audio_routing_test.exe sd_audio_test.exe stereo_bbd_delay_test.exe midi_test.exe core_json_host.o
 
-.PHONY: test cal analyze baseline modes-test strike-test routing-test sd-test delay-test clean
+.PHONY: test cal analyze baseline modes-test strike-test routing-test sd-test delay-test midi-test clean
