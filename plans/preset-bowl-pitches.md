@@ -4,6 +4,8 @@ Status: **planned**.
 Intended repository destination: `plans/preset-bowl-pitches.md`.
 Links below are relative to that destination.
 
+Important: Pause and warn if implementation uses more than 100 credits
+
 ## Problem and goal
 
 Base bowl frequencies are currently compiled into
