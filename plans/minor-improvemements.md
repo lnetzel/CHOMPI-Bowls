@@ -4,6 +4,8 @@ Status: **planned**.
 Intended repository destination: `plans/minor-improvemements.md`.
 Links below are relative to that destination.
 
+Important: Pause and warn if implementation uses more than 100 credits
+
 ## Problem and goal
 
 This plan contains three related performance improvements.
