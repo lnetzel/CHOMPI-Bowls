@@ -7,7 +7,9 @@ plugged into CHOMPI directly - USB requires a host (a computer, or a USB
 host adapter); use the keyboard's MIDI output or route it through the
 host.
 The USB device identifies itself to the host as **CHOMPI-BOWLS**.
-**Receive-only**: no notes, CCs, echo or soft thru are transmitted.
+MIDI IN receives notes and supported CCs. MIDI OUT sends local keyboard
+notes on both enabled transports; incoming messages are never echoed or
+soft-thru'd, and no CCs are transmitted.
 Messages on other channels, Program Change, pitch bend, aftertouch,
 NRPN/RPN (CC 98-101), bank select (CC 0/32), SysEx and MIDI
 clock/transport are ignored.
@@ -149,8 +151,20 @@ Notes:
 
 ## MIDI Out
 
-No MIDI messages are transmitted: no local note or CC output, no echo,
-no soft thru. (Receive-only first version.)
+The physical keyboard sends Note On (0x90) and Note Off (0x80) on fixed
+channel 1 over the DIN/UART output and USB MIDI device port. Key indices
+0-24 map to MIDI notes 48-72, respectively, in every play mode. Note On
+velocity is fixed at 127 because the keybed has no velocity sensor; a
+physical key release sends Note Off, including when the BOWLS Rimming
+LOOP latch keeps its internal pad sounding. SHIFT mode and routing
+shortcuts are not sent as notes.
+
+Only local physical key gestures are transmitted. MIDI received on DIN
+or USB is not forwarded, and panel parameter changes, CCs, mode changes,
+clock, and program changes are not transmitted. USB MIDI is disabled in
+CPU_METER diagnostic builds to retain USB serial logging; DIN output
+remains enabled. Firmware uses UART1 TX on D14 for DIN output; confirm
+that the target board routes this signal to its 5-pin MIDI OUT connector.
 
 ## Examples (all channel 1)
 

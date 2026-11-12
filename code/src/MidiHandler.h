@@ -1,7 +1,6 @@
 /** @file MidiHandler.h
- *  @brief MIDI input transport for CHOMPI-BOWLS: hardware MIDI in
- *  (DIN/UART) and USB MIDI device, fixed channel 1, receive-only
- *  (plans/midi-input-and-cc-control.md).
+ *  @brief MIDI transport for CHOMPI-BOWLS: DIN/UART and USB MIDI
+ *  input plus local-key note output (plans/midi-output-to-daw.md).
  *
  *  Two-layer design, per the plan's realtime rules:
  *    - The PURE layer (BowlsMidiEvent, MidiEventQueue, MidiRouter,
@@ -128,6 +127,189 @@ enum MidiTransport : int
     kMidiTransportCount = 2,
 };
 
+/** Local keyboard note event for MIDI output. */
+struct MidiOutEvent
+{
+    enum Type : uint8_t
+    {
+        kNoteOn = 0,
+        kNoteOff,
+    };
+    uint8_t type;
+    uint8_t note;
+    uint8_t velocity;
+};
+
+/** Fixed-capacity SPSC output queue: the audio callback produces and
+ *  the main loop consumes. Overflow requests destination-local cleanup
+ *  so active DAW notes can be released before fresh events. */
+template <int kCapacity>
+class MidiOutEventQueue
+{
+  public:
+    void Init()
+    {
+        head_ = 0;
+        tail_ = 0;
+        cleanup_requested_ = false;
+        generation_ = 0;
+        drops_ = 0;
+    }
+
+    bool Push(MidiOutEvent event)
+    {
+        if(cleanup_requested_)
+        {
+            ++drops_;
+            return false;
+        }
+        const int next = head_ + 1 == kCapacity ? 0 : head_ + 1;
+        if(next == tail_)
+        {
+            RequestCleanup();
+            ++drops_;
+            return false;
+        }
+        events_[head_] = event;
+        head_ = next;
+        return true;
+    }
+
+    bool HasEvent() const { return head_ != tail_; }
+    MidiOutEvent Peek() const { return events_[tail_]; }
+    void Pop() { tail_ = tail_ + 1 == kCapacity ? 0 : tail_ + 1; }
+    bool CleanupRequested() const { return cleanup_requested_; }
+    uint32_t Generation() const { return generation_; }
+
+    void RequestCleanup()
+    {
+        if(!cleanup_requested_)
+        {
+            cleanup_requested_ = true;
+            ++generation_;
+        }
+    }
+
+    void FinishCleanup()
+    {
+        tail_ = head_;
+        cleanup_requested_ = false;
+    }
+
+    uint32_t Drops() const { return drops_; }
+
+  private:
+    MidiOutEvent events_[kCapacity];
+    volatile int head_ = 0;
+    volatile int tail_ = 0;
+    volatile bool cleanup_requested_ = false;
+    volatile uint32_t generation_ = 0;
+    volatile uint32_t drops_ = 0;
+};
+
+/** Fans local keyboard events into independent DIN and USB queues. The
+ *  held-key bookkeeping belongs to the audio-side producer and resets
+ *  whenever a consumer requests destination cleanup. */
+class MidiOutRouter
+{
+  public:
+    static constexpr int kQueueCapacity = 64;
+
+    void Init(bool usb_enabled)
+    {
+        enabled_[kDin] = true;
+        enabled_[kUsb] = usb_enabled;
+        for(int dst = 0; dst < kMidiTransportCount; ++dst)
+        {
+            queues_[dst].Init();
+            generation_seen_[dst] = 0;
+            for(int key = 0; key < kNoteCount; ++key)
+                held_[dst][key] = false;
+        }
+    }
+
+    bool PushLocalNoteOn(int key, uint8_t velocity = 127)
+    {
+        if(!ValidKey(key))
+            return false;
+        bool queued = false;
+        for(int dst = 0; dst < kMidiTransportCount; ++dst)
+        {
+            SyncGeneration(dst);
+            if(!enabled_[dst])
+                continue;
+            const MidiOutEvent event = {
+                MidiOutEvent::kNoteOn,
+                static_cast<uint8_t>(MidiCcMap::kNoteBase + key), velocity};
+            if(queues_[dst].Push(event))
+            {
+                held_[dst][key] = true;
+                queued = true;
+            }
+            else
+                ClearHeld(dst);
+        }
+        return queued;
+    }
+
+    bool PushLocalNoteOff(int key)
+    {
+        if(!ValidKey(key))
+            return false;
+        bool queued = false;
+        for(int dst = 0; dst < kMidiTransportCount; ++dst)
+        {
+            SyncGeneration(dst);
+            if(!enabled_[dst] || !held_[dst][key])
+                continue;
+            const MidiOutEvent event = {
+                MidiOutEvent::kNoteOff,
+                static_cast<uint8_t>(MidiCcMap::kNoteBase + key), 0};
+            if(queues_[dst].Push(event))
+            {
+                held_[dst][key] = false;
+                queued = true;
+            }
+            else
+                ClearHeld(dst);
+        }
+        return queued;
+    }
+
+    MidiOutEventQueue<kQueueCapacity>& Queue(int dst) { return queues_[dst]; }
+    const MidiOutEventQueue<kQueueCapacity>& Queue(int dst) const
+    {
+        return queues_[dst];
+    }
+
+  private:
+    static constexpr int kNoteCount
+        = MidiCcMap::kNoteLast - MidiCcMap::kNoteBase + 1;
+
+    static bool ValidKey(int key) { return key >= 0 && key < kNoteCount; }
+
+    void ClearHeld(int dst)
+    {
+        for(int key = 0; key < kNoteCount; ++key)
+            held_[dst][key] = false;
+    }
+
+    void SyncGeneration(int dst)
+    {
+        const uint32_t generation = queues_[dst].Generation();
+        if(generation != generation_seen_[dst])
+        {
+            ClearHeld(dst);
+            generation_seen_[dst] = generation;
+        }
+    }
+
+    MidiOutEventQueue<kQueueCapacity> queues_[kMidiTransportCount];
+    bool enabled_[kMidiTransportCount] = {false, false};
+    bool held_[kMidiTransportCount][kNoteCount] = {};
+    uint32_t generation_seen_[kMidiTransportCount] = {};
+};
+
 /** Owns the two per-source queues and the fair, bounded dispatch the
  *  audio callback uses. Pure C++ (host-testable). */
 class MidiRouter
@@ -229,10 +411,9 @@ namespace bowls
 class BowlsMidi
 {
   public:
-    /** DIN/UART MIDI in (libDaisy default pins: USART1 RX = D13, TX =
-     *  D14 - TX is configured but never used, this feature is
-     *  receive-only) and the USB MIDI device on the EXTERNAL USB port
-     *  (the panel USB-C). `usb_enable` = false skips USB entirely (the
+    /** DIN/UART MIDI on USART1 (RX = D13, TX = D14) and the USB MIDI
+     *  device on the EXTERNAL USB port (the panel USB-C). `usb_enable`
+     *  = false skips USB entirely (the
      *  CPU_METER diagnostic build keeps USB serial logging instead -
      *  libDaisy's usbd_mode is a single global, so one USB device
      *  stack cannot present CDC logging and MIDI at the same time). */
@@ -240,6 +421,7 @@ class BowlsMidi
     {
         usb_enable_ = usb_enable;
         router_.Init();
+        out_router_.Init(usb_enable_);
 
         daisy::MidiUartHandler::Config uart_cfg; // defaults: USART_1, D13/D14
         uart_midi_.Init(uart_cfg);
@@ -258,12 +440,9 @@ class BowlsMidi
         }
     }
 
-    /** Main-loop service (NEVER the audio ISR): Pipes' UART recovery -
-     *  after any RX error HAL aborts the listen DMA and libDaisy never
-     *  restarts it, so stop+start recovers; a recovered (or errored)
-     *  stream can hold half-dropped notes, so the source's claims are
-     *  released via the queue cleanup path. Then both parsers drain
-     *  into the normalized per-source queues. */
+    /** Main-loop service (NEVER the audio ISR): recover UART receive
+     *  errors, drain both input parsers, and make bounded nonblocking
+     *  progress on independent MIDI output queues. */
     void Service()
     {
         if(uart_.CheckError() != 0)
@@ -279,14 +458,161 @@ class BowlsMidi
         DrainSource(kDin, uart_midi_);
         if(usb_enable_)
             DrainSource(kUsb, usb_midi_);
+        ServiceOutput(kDin);
+        if(usb_enable_)
+            ServiceOutput(kUsb);
     }
 
     MidiRouter&       Router() { return router_; }
+    MidiOutRouter&    OutRouter() { return out_router_; }
     /** Diagnostics: dropped-event counter per source (overflows and
      *  backlog discards), main-loop reads only. */
     uint32_t Drops(int src) const { return router_.Queue(src).Drops(); }
 
   private:
+    static void DinTxComplete(void* context, daisy::UartHandler::Result result)
+    {
+        BowlsMidi* self = static_cast<BowlsMidi*>(context);
+        self->din_tx_result_ = result;
+        self->din_tx_done_ = true;
+    }
+
+    void ServiceOutput(int dst)
+    {
+        MidiOutEventQueue<MidiOutRouter::kQueueCapacity>& queue
+            = out_router_.Queue(dst);
+        if(dst == kDin)
+        {
+            if(din_tx_pending_)
+            {
+                if(!din_tx_done_)
+                    return;
+                din_tx_pending_ = false;
+                din_tx_done_ = false;
+                if(din_tx_result_ != daisy::UartHandler::Result::OK)
+                {
+                    MarkOutputUncertain(kDin, din_tx_event_);
+                    queue.RequestCleanup();
+                }
+                else
+                {
+                    ApplyOutputEvent(kDin, din_tx_event_);
+                    if(!queue.CleanupRequested() && queue.HasEvent())
+                        queue.Pop();
+                }
+            }
+            if(queue.CleanupRequested())
+            {
+                if(StartDinCleanupNoteOff())
+                    return;
+                if(!HasActiveOutputNotes(kDin))
+                    queue.FinishCleanup();
+                return;
+            }
+            if(!queue.HasEvent())
+                return;
+            din_tx_event_ = queue.Peek();
+            if(StartDinEvent(din_tx_event_))
+                din_tx_pending_ = true;
+            else
+            {
+                MarkOutputUncertain(kDin, din_tx_event_);
+                queue.RequestCleanup();
+            }
+            return;
+        }
+
+        if(queue.CleanupRequested())
+        {
+            for(int key = 0; key < kNoteCount; ++key)
+            {
+                if(!active_notes_[kUsb][key])
+                    continue;
+                if(usb_midi_.SendNoteOff(MidiCcMap::kChannel,
+                                         MidiCcMap::kNoteBase + key, 0))
+                    active_notes_[kUsb][key] = false;
+                return;
+            }
+            queue.FinishCleanup();
+            return;
+        }
+        if(!queue.HasEvent())
+            return;
+        const MidiOutEvent event = queue.Peek();
+        const bool sent = event.type == MidiOutEvent::kNoteOn
+                              ? usb_midi_.SendNoteOn(MidiCcMap::kChannel,
+                                                     event.note,
+                                                     event.velocity)
+                              : usb_midi_.SendNoteOff(MidiCcMap::kChannel,
+                                                      event.note, 0);
+        if(sent)
+        {
+            ApplyOutputEvent(kUsb, event);
+            if(!queue.CleanupRequested())
+                queue.Pop();
+        }
+        else
+        {
+            MarkOutputUncertain(kUsb, event);
+            queue.RequestCleanup();
+        }
+    }
+
+    bool StartDinEvent(const MidiOutEvent& event)
+    {
+        din_tx_buffer_[0] = static_cast<uint8_t>(
+            (event.type == MidiOutEvent::kNoteOn ? 0x90 : 0x80)
+            | MidiCcMap::kChannel);
+        din_tx_buffer_[1] = event.note;
+        din_tx_buffer_[2] = event.velocity;
+        din_tx_done_ = false;
+        return uart_.DmaTransmit(din_tx_buffer_, sizeof(din_tx_buffer_),
+                                 nullptr, DinTxComplete, this)
+               == daisy::UartHandler::Result::OK;
+    }
+
+    bool StartDinCleanupNoteOff()
+    {
+        for(int key = 0; key < kNoteCount; ++key)
+        {
+            if(!active_notes_[kDin][key])
+                continue;
+            const MidiOutEvent event = {
+                MidiOutEvent::kNoteOff,
+                static_cast<uint8_t>(MidiCcMap::kNoteBase + key), 0};
+            if(StartDinEvent(event))
+            {
+                din_tx_event_ = event;
+                din_tx_pending_ = true;
+                return true;
+            }
+            return false;
+        }
+        return false;
+    }
+
+    bool HasActiveOutputNotes(int dst) const
+    {
+        for(int key = 0; key < kNoteCount; ++key)
+            if(active_notes_[dst][key])
+                return true;
+        return false;
+    }
+
+    void ApplyOutputEvent(int dst, const MidiOutEvent& event)
+    {
+        const int key = MidiCcMap::NoteToKey(event.note);
+        if(key >= 0)
+            active_notes_[dst][key] = event.type == MidiOutEvent::kNoteOn;
+    }
+
+    void MarkOutputUncertain(int dst, const MidiOutEvent& event)
+    {
+        const int key = MidiCcMap::NoteToKey(event.note);
+        if(key >= 0 && event.type == MidiOutEvent::kNoteOn)
+            active_notes_[dst][key] = true;
+    }
+
     /** Pop every parsed event from one libDaisy handler, filter to
      *  channel 1 and the supported messages, normalize (velocity-0
      *  Note On = Note Off) and enqueue. Parsing runs HERE (thread
@@ -334,11 +660,21 @@ class BowlsMidi
         }
     }
 
+    static constexpr int kNoteCount
+        = MidiCcMap::kNoteLast - MidiCcMap::kNoteBase + 1;
+
     MidiRouter             router_;
+    MidiOutRouter          out_router_;
     daisy::MidiUartHandler uart_midi_;
     daisy::MidiUsbHandler  usb_midi_;
     daisy::UartHandler     uart_;
     bool                   usb_enable_ = false;
+    bool                   active_notes_[kMidiTransportCount][kNoteCount] = {};
+    uint8_t                din_tx_buffer_[3] = {};
+    MidiOutEvent           din_tx_event_{};
+    volatile bool          din_tx_pending_ = false;
+    volatile bool          din_tx_done_ = false;
+    volatile daisy::UartHandler::Result din_tx_result_ = daisy::UartHandler::Result::OK;
 };
 
 } // namespace bowls

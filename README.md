@@ -1,6 +1,6 @@
 # CHOMPI Bowls - Physical Modelling of Tibetan Singing Bowls
 
-A five-voice modal singing-bowl instrument for CHOMPI hardware, with strikes, sustained rimming pads, split play mode, stereo reverb, presets, SD-card recording/playback, and MIDI input (DIN + USB).
+A five-voice modal singing-bowl instrument for CHOMPI hardware, with strikes, sustained rimming pads, split play mode, stereo reverb, presets, SD-card recording/playback, and MIDI input/output (DIN + USB).
 
 The firmware uses the BOOT_SRAM build setup and STM32H750 memory layout. It does not include battery management.
 
@@ -103,7 +103,7 @@ Switching is instantaneous, like flipping a hardware routing switch -
 a brief click is possible when switching mid-note. The routing combo
 is consumed before note handling: it never sounds a bowl.
 
-### MIDI input
+### MIDI input and output
 
 The instrument plays from an external keyboard, sequencer, DAW or MIDI
 controller over the hardware MIDI input (DIN) and the USB MIDI device
@@ -111,9 +111,11 @@ port (USB-C), simultaneously, on fixed channel 1 - with the same
 musical behavior as the local keyboard (all three play modes, velocity,
 sustain pedal, and MIDI rimming on CC 1). Every saved sound parameter
 has a CC, and a CC 81/82 selector scheme reaches each of the 75
-per-bowl slots without playing a note. MIDI is receive-only (no MIDI
-out/thru). The full note map, CC table, value conversions and examples
-live in [midi.md](midi.md).
+per-bowl slots without playing a note. The physical keybed also sends
+notes 48-72 at fixed velocity 127 to both MIDI outputs; incoming MIDI
+is never echoed, and no CCs are sent. USB MIDI output is disabled in
+CPU_METER diagnostic builds. The full note map, CC table, value
+conversions and examples live in [midi.md](midi.md).
 
 ## Bowls and profiles
 

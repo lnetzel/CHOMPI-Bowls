@@ -269,6 +269,98 @@ void TestFairDispatch()
           "T2f cleanup dispatches alongside the other source", "");
 }
 
+void TestMidiOutputQueues()
+{
+    bowls::MidiOutRouter output;
+    output.Init(true);
+    bool ok = output.PushLocalNoteOn(0)
+            && output.PushLocalNoteOff(0)
+            && output.PushLocalNoteOn(24)
+            && output.PushLocalNoteOff(24);
+
+    for(int dst = 0; dst < bowls::kMidiTransportCount; ++dst)
+    {
+       auto& queue = output.Queue(dst);
+       ok = ok && queue.HasEvent();
+       bowls::MidiOutEvent event = queue.Peek();
+       ok = ok && event.type == bowls::MidiOutEvent::kNoteOn
+           && event.note == 48 && event.velocity == 127;
+       queue.Pop();
+       event = queue.Peek();
+       ok = ok && event.type == bowls::MidiOutEvent::kNoteOff
+           && event.note == 48;
+       queue.Pop();
+       event = queue.Peek();
+       ok = ok && event.type == bowls::MidiOutEvent::kNoteOn
+           && event.note == 72 && event.velocity == 127;
+       queue.Pop();
+       event = queue.Peek();
+       ok = ok && event.type == bowls::MidiOutEvent::kNoteOff
+           && event.note == 72;
+       queue.Pop();
+       ok = ok && !queue.HasEvent();
+    }
+    ok = ok && !output.PushLocalNoteOn(-1)
+        && !output.PushLocalNoteOn(25)
+        && !output.PushLocalNoteOff(25);
+    Check(ok, "T2g local MIDI output fan-out, mapping and FIFO", "");
+
+    output.Init(false);
+    ok = output.PushLocalNoteOn(12)
+        && output.Queue(bowls::kDin).HasEvent()
+        && !output.Queue(bowls::kUsb).HasEvent();
+    Check(ok, "T2h USB-disabled output keeps DIN active", "");
+
+        output.Init(true);
+        PlayModes modes;
+        modes.Init(PlayMode::kStrikes);
+        KeyAction action = modes.KeyDown(8, true); // SHIFT + lower G#: Rimming
+        if(action.kind != KeyAction::kModeChanged
+          && modes.DownMode(Source::kLocal, 8) >= 0)
+           output.PushLocalNoteOn(8);
+        ok = action.kind == KeyAction::kModeChanged
+            && modes.DownMode(Source::kLocal, 8) < 0
+            && !output.Queue(bowls::kDin).HasEvent();
+        modes.KeyUp(8);
+
+        modes.SetLatchEnabled(true);
+        action = modes.KeyDown(7, false);
+        const bool was_note = modes.DownMode(Source::kLocal, 7) >= 0;
+        if(action.kind != KeyAction::kModeChanged && was_note)
+           output.PushLocalNoteOn(7);
+        ok = ok && action.kind == KeyAction::kPadOn && was_note
+            && modes.PadOn(7);
+        const bool release_note = modes.DownMode(Source::kLocal, 7) >= 0;
+        modes.KeyUp(7);
+        if(release_note)
+           output.PushLocalNoteOff(7);
+        ok = ok && modes.PadOn(7)
+            && output.Queue(bowls::kDin).Peek().type == bowls::MidiOutEvent::kNoteOn
+            && output.Queue(bowls::kDin).Peek().note == 55;
+        output.Queue(bowls::kDin).Pop();
+        ok = ok && output.Queue(bowls::kDin).Peek().type == bowls::MidiOutEvent::kNoteOff
+            && output.Queue(bowls::kDin).Peek().note == 55;
+        Check(ok, "T2i shortcuts excluded; latched pad still sends key release",
+            "");
+
+    output.Init(true);
+    for(int i = 0; i < bowls::MidiOutRouter::kQueueCapacity - 1; ++i)
+       output.PushLocalNoteOn(0);
+    ok = output.Queue(bowls::kDin).HasEvent()
+        && output.Queue(bowls::kUsb).HasEvent();
+    output.PushLocalNoteOn(1);
+    ok = ok && output.Queue(bowls::kDin).CleanupRequested()
+        && output.Queue(bowls::kUsb).CleanupRequested()
+        && !output.PushLocalNoteOff(0);
+    output.Queue(bowls::kDin).FinishCleanup();
+    output.Queue(bowls::kUsb).FinishCleanup();
+    ok = ok && !output.Queue(bowls::kDin).HasEvent()
+        && !output.Queue(bowls::kUsb).HasEvent()
+        && output.PushLocalNoteOn(1);
+    Check(ok, "T2j output overflow requests cleanup, drops backlog, recovers",
+        "");
+}
+
 // -- T3: source-aware ownership (PlayModes) -------------------------------
 
 void TestMultiSourcePads()
@@ -639,6 +731,7 @@ int main()
     TestQueueFifo();
     TestQueueOverflowCleanup();
     TestFairDispatch();
+    TestMidiOutputQueues();
     TestMultiSourcePads();
     TestCrossModeReplay();
     TestSustain();

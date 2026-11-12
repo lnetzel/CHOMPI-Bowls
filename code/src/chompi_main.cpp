@@ -306,9 +306,9 @@ volatile int routing_ = bowls::kRoutingDefault;
 // MIDI input (plans/midi-input-and-cc-control.md; user docs: midi.md)
 // ---------------------------------------------------------------------------
 
-// DIN (UART) + USB MIDI device, fixed channel 1, receive-only. The
-// parsers/transports are serviced in the main loop; the audio callback
-// drains the normalized per-source queues with a bounded budget.
+// DIN (UART) + USB MIDI device, fixed channel 1. Input parsers and output
+// transmitters are serviced in the main loop; the audio callback drains
+// bounded input queues and publishes local key notes to output queues.
 bowls::BowlsMidi midi;
 
 #ifdef CPU_METER
@@ -1715,6 +1715,9 @@ void ApplyControls()
                 continue;
             }
             const bowls::KeyAction act = play_modes.KeyDown(key, shift);
+            if(act.kind != bowls::KeyAction::kModeChanged
+               && play_modes.DownMode(bowls::Source::kLocal, key) >= 0)
+                midi.OutRouter().PushLocalNoteOn(key);
             switch(act.kind)
             {
                 case bowls::KeyAction::kStrike:
@@ -1745,7 +1748,11 @@ void ApplyControls()
         {
             // Releases reconcile through the state machine (PadOn) and
             // SyncPadGates below - no explicit action needed here.
+            const bool was_note =
+                play_modes.DownMode(bowls::Source::kLocal, key) >= 0;
             play_modes.KeyUp(key);
+            if(was_note)
+                midi.OutRouter().PushLocalNoteOff(key);
         }
     }
 
@@ -2393,8 +2400,8 @@ void BootBlink(int count, uint8_t r, uint8_t g, uint8_t b)
 int main()
 {
     hw.Init();
-    // MIDI in: DIN (UART RX D13) + the panel USB-C device port,
-    // channel 1, receive-only (plans/midi-input-and-cc-control.md).
+    // MIDI in/out: DIN (UART RX/TX D13/D14) + the panel USB-C device
+    // port, channel 1 (plans/midi-output-to-daw.md).
     // Initialized first, right after the hardware - the same boot order
     // as the known-good CHOMPI-PIPES firmware. USB MIDI owns the shared
     // USB device-mode descriptor, so the USB serial diagnostics are

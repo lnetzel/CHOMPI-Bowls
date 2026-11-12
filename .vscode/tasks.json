@@ -10,6 +10,33 @@
 			"label": "Build firmware (MIDI init order fix)",
 			"type": "shell",
 			"command": "C:/msys64/usr/bin/bash.exe -lc 'export PATH=\"/c/armgnu/10.3-2021.10/bin:$PATH\"; cd /c/Dev/CHOMPI-BOWLS/code/src && make -j4 DEBUG=0 OPT=-O3 > build/build_log.txt 2>&1; echo EXIT:$? >> build/build_log.txt; tail -6 build/build_log.txt'"
+		},
+		{
+			"label": "Focused MIDI host test",
+			"type": "shell",
+			"command": "C:/msys64/usr/bin/bash.exe -lc 'export PATH=\"/c/msys64/ucrt64/bin:$PATH\"; cd /c/Dev/CHOMPI-BOWLS/code/tests && make midi-test'",
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			]
+		},
+		{
+			"label": "Focused MIDI output host test",
+			"type": "shell",
+			"command": "C:/msys64/usr/bin/bash.exe -lc 'export PATH=\"/c/msys64/ucrt64/bin:$PATH\"; cd /c/Dev/CHOMPI-BOWLS/code/tests && make midi-test'",
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			]
+		},
+		{
+			"label": "MIDI OUT host regression suite",
+			"type": "shell",
+			"command": "C:/msys64/usr/bin/bash.exe -lc 'export PATH=\"/c/msys64/ucrt64/bin:$PATH\"; cd /c/Dev/CHOMPI-BOWLS/code/tests && make midi-test modes-test strike-test routing-test sd-test delay-test test'",
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			]
 		}
 	]
 }
