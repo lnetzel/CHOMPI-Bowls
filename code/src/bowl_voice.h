@@ -220,9 +220,13 @@ class BowlVoice
     /** Excitation-time parameter; applied at the next strike. */
     void SetBrightness(float brightness) { brightness_ = brightness; }
 
-    /** Live decay multiplier (0.25..2); updates the ringing voice. */
+    /** Live decay multiplier (0.25..3); updates the ringing voice. */
     void SetDecayMult(float mult)
     {
+        if(mult < 0.25f)
+            mult = 0.25f;
+        if(mult > 3.0f)
+            mult = 3.0f;
         if(mult == decay_mult_)
             return;
         decay_mult_ = mult;
@@ -343,9 +347,23 @@ class BowlVoice
                 float detune_jitter,
                 float damp_target = 0.25f)
     {
+        StrikeWithAmplitude(fundamental_hz, strike_norm,
+                            0.30f + 0.70f * strike_norm, amp_jitter,
+                            detune_jitter, damp_target);
+    }
+
+    /** Strike with independent timbral hardness and excitation amplitude.
+     *  The legacy Strike() entry point retains the local keyboard level curve. */
+    void StrikeWithAmplitude(float fundamental_hz,
+                             float strike_norm,
+                             float strike_amplitude,
+                             float amp_jitter,
+                             float detune_jitter,
+                             float damp_target = 0.25f)
+    {
         fundamental_     = fundamental_hz;
         detune_jitter_   = detune_jitter;
-        intensity_       = (0.30f + 0.70f * strike_norm) * amp_jitter;
+        intensity_       = strike_amplitude * amp_jitter;
         // A strike takes the voice over completely: a leftover pad
         // gate/envelope (a stolen Rimming voice) ends here. The old
         // ring itself is handled by the contact damping below.

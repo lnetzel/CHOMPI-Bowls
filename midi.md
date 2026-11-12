@@ -32,12 +32,12 @@ switches (64-127 = on) use their own conversions, documented per row.
 | Sustain pedal | CC 64 | 0-63 off, 64-127 on; per transport; defers this sender's Rimming pad releases only |
 | Resonance character | CC 70 | 0-25 = Temple, 26-51 = Deep, 52-76 = Bright, 77-102 = Wide, 103-127 = Thin; for the edit-selected bowl, applies at the next strike/pad/selection. Saved |
 | Bowl brightness | CC 74 | 0-32 positions, darkest - brightest, for the edit-selected bowl (live). Saved |
-| Bowl decay | CC 75 | 0-32 positions = 0.25x - 2x the profile decay, for the edit-selected bowl (live). Saved |
+| Bowl decay | CC 75 | 0-32 positions = 0.25x - 3x the profile decay, for the edit-selected bowl (live; tick 16 = about 0.87x). Deep profile maximum is about 45 s T60. Saved |
 | Bowl tuning | CC 76 | 0-32 positions = 1/2x - unison (16) - 2x, for the edit-selected bowl; applies at the next strike/pad/selection (no live retune). Saved |
 | Bowl volume | CC 77 | 0-32 positions (16 = unity, 32 = +6 dB), for the edit-selected bowl (live). Saved |
 | Strike hardness | CC 78 | 0-32 positions, soft - hard mallet (global; next strike). Saved |
 | Shimmer | CC 79 | 0-32 positions = 0x - 2x the profile paired-mode detune (global, live). Saved |
-| Active play mode | CC 80 | 0-42 = Strikes, 43-85 = Rimming, 86-127 = Split; the same cleanup as the local mode shortcut. Saved |
+| Active play mode | CC 80 | 0-42 = Strikes, 43-85 = Rimming, 86-127 = Split; Rimming-to-Strikes preserves LOOP, Rimming-to-Split clears it. Saved |
 | Parameter edit bank | CC 81 | Exact 0 = Strikes bank, 1 = Rimming, 2 = Split, 127 = follow the active mode; values 3-126 ignored. Selector only - never changes the mode or sounds a note |
 | Parameter edit key | CC 82 | Exact value = MIDI note number 48-72 selects key 0-24; all other values ignored. Selector only - never sounds a note |
 | Rimming LOOP latch | CC 83 | 0-63 = disabled, 64-127 = enabled (idempotent; inert outside Rimming) |
@@ -88,7 +88,9 @@ Notes:
 
 - Incoming messages on channels other than 1 are discarded.
 - Note behavior by mode: **Strikes** = a Note On strikes the bowl
-  (velocity sets the strike loudness; hardness stays on CC 78) and the
+  (velocity 1-127 maps linearly from softest to hardest timbre and keeps
+  the existing 1/127-1.0 loudness scaling; MIDI velocity overrides CC 78
+  for that strike, while CC 78 continues to control local strikes) and the
   Note Off ends its MIDI rubbing eligibility but never chokes the ring.
   **Rimming** = Note On opens a sustained pad (10 s attack/release);
   velocity sets a smoothed performance gain that never overwrites the
@@ -111,9 +113,11 @@ Notes:
   independent edit contexts; there is no cross-transport ordering
   guarantee and no echo acknowledging a selector.
 - The instrument has five shared voices across local, DIN and USB
-  playing; a sixth distinct note steals the quietest voice (a stolen
-  pad or strike never restarts by itself - Split rim bowls reacquire
-  silently, as with local play).
+  playing; a sixth distinct note steals the quietest eligible voice.
+  Latched Rimming voices are protected while Strikes is active, and a
+  strike is dropped if all five voices are protected. Other stolen pads
+  or strikes never restart by themselves; Split rim bowls reacquire
+  silently, as with local play.
 - CC 1 is a held absolute level per transport (initially 0), not a
   simulated wheel detent: it drives that sender's eligible notes in the
   current mode - its held Strikes notes, its held/sustained/latched
@@ -129,7 +133,8 @@ Notes:
   pad releases; pedal-up releases only its own deferrals. The pedal is
   ignored for Strikes and Split. LOOP enable captures the currently
   held sounding pads (any source); LOOP disable smoothly releases
-  latched-only notes.
+  latched-only notes. Rimming-to-Strikes preserves the latch and its
+  voices; returning to Rimming resumes it. Rimming-to-Split clears it.
 - CC 121 resets a sender's controllers but keeps its held notes;
   CC 123 releases a sender's notes (ignoring its pedal) without
   touching other sources, saved settings or the global LOOP state;

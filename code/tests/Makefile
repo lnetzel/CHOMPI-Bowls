@@ -27,7 +27,7 @@ strike_analyze.exe: strike_analyze.cpp ../src/bowl_voice.h ../src/bowl_profile.h
 strike-test: strike_test.exe
 	./strike_test.exe
 
-strike_test.exe: strike_test.cpp ../src/bowl_voice.h ../src/bowl_profile.h ../src/bowl_scale.h
+strike_test.exe: strike_test.cpp ../src/bowl_voice.h ../src/bowl_profile.h ../src/bowl_scale.h ../src/control_mappings.h
 	$(CXX) $(CXXFLAGS) -o $@ strike_test.cpp
 
 # Regenerate .baseline/baseline.raw from the PRE-CHANGE header snapshot
@@ -58,7 +58,7 @@ routing-test: audio_routing_test.exe
 midi-test: midi_test.exe
 	./midi_test.exe
 
-midi_test.exe: midi_test.cpp ../src/MidiCcMap.h ../src/MidiHandler.h ../src/play_modes.h ../src/bowl_scale.h
+midi_test.exe: midi_test.cpp ../src/MidiCcMap.h ../src/MidiHandler.h ../src/play_modes.h ../src/bowl_scale.h ../src/control_mappings.h
 	$(CXX) $(CXXFLAGS) -o $@ midi_test.cpp
 
 # SD record/playback pure helpers: stereo ring, PCM/WAV format, and take order.
@@ -78,7 +78,7 @@ stereo_bbd_delay_test.exe: stereo_bbd_delay_test.cpp ../src/StereoBbdDelay.h
 audio_routing_test.exe: audio_routing_test.cpp ../src/audio_routing.h ../src/bowl_scale.h
 	$(CXX) $(CXXFLAGS) -o $@ audio_routing_test.cpp
 
-play_modes_test.exe: play_modes_test.cpp ../src/play_modes.h ../src/bowl_scale.h
+play_modes_test.exe: play_modes_test.cpp ../src/play_modes.h ../src/bowl_scale.h ../src/voice_allocator.h
 	$(CXX) $(CXXFLAGS) -o $@ play_modes_test.cpp
 
 pad_test.exe: pad_test.cpp ../src/bowl_voice.h ../src/bowl_profile.h ../src/bowl_scale.h

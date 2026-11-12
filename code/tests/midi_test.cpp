@@ -21,6 +21,7 @@
 
 #include "MidiCcMap.h"
 #include "MidiHandler.h"
+#include "control_mappings.h"
 #include "play_modes.h"
 
 #include <cstdio>
@@ -87,6 +88,42 @@ void TestTickConversion()
         if(!reachable[t])
             ok = false;
     Check(ok, "T1c ticks: anchors, monotone, 33 reachable", "");
+}
+
+void TestStrikeVelocityMappings()
+{
+    bool ok = bowls::MidiVelocityToStrikeHardness(1) == 0.0f
+              && bowls::MidiVelocityToStrikeHardness(64) == 0.5f
+              && bowls::MidiVelocityToStrikeHardness(127) == 1.0f
+              && bowls::MidiVelocityToGain(1) == 1.0f / 127.0f
+              && bowls::MidiVelocityToGain(64) == 64.0f / 127.0f
+              && bowls::MidiVelocityToGain(127) == 1.0f;
+    float previous_hardness = -1.0f;
+    float previous_gain = -1.0f;
+    for(int velocity = 1; velocity <= 127; ++velocity)
+    {
+        const float hardness
+            = bowls::MidiVelocityToStrikeHardness(velocity);
+        const float gain = bowls::MidiVelocityToGain(velocity);
+        if(hardness <= previous_hardness || gain <= previous_gain)
+            ok = false;
+        previous_hardness = hardness;
+        previous_gain = gain;
+    }
+    const bowls::StrikeInputs midi_soft_global
+        = bowls::GetStrikeInputs(0.0f, 80, true);
+    const bowls::StrikeInputs midi_hard_global
+        = bowls::GetStrikeInputs(1.0f, 80, true);
+    const bowls::StrikeInputs local_soft
+        = bowls::GetStrikeInputs(0.0f, 127, false);
+    const bowls::StrikeInputs local_hard
+        = bowls::GetStrikeInputs(1.0f, 127, false);
+    ok = ok && midi_soft_global.hardness == midi_hard_global.hardness
+         && midi_soft_global.amplitude == midi_hard_global.amplitude
+         && local_soft.hardness == 0.0f && local_hard.hardness == 1.0f
+         && local_soft.amplitude == 0.3f && local_hard.amplitude == 1.0f;
+    Check(ok, "T1d MIDI velocity controls hardness/gain, independent of CC 78",
+          "local strikes retain global hardness response");
 }
 
 void TestSelectorConversions()
@@ -727,6 +764,7 @@ int main()
     std::printf("CHOMPI-BOWLS MIDI host tests\n");
     TestNoteMap();
     TestTickConversion();
+    TestStrikeVelocityMappings();
     TestSelectorConversions();
     TestQueueFifo();
     TestQueueOverflowCleanup();

@@ -6,8 +6,8 @@
 // Each strike excites eight paired resonant modes (16 resonators per
 // voice) with per-mode decay, paired-mode beating (shimmer) and a
 // finite-contact mallet excitation. The five voices are shared by all
-// modes; a sixth simultaneous note steals the quietest voice (a stolen
-// latched note is unlatched, never silently restarted). Switching modes
+// modes; a sixth simultaneous note steals the quietest unprotected voice
+// (preserved Rimming latches are protected in Strikes). Switching modes
 // never interrupts ringing voices or reverb tails: outgoing voices keep
 // their sound, and the wheel only drives notes started in the current
 // mode. All parameters autosave to BOWLS/state.json on the SD card and
@@ -85,6 +85,7 @@
 //                         combo is consumed - it never sounds a note
 //                         or moves the bowl editor target.
 //   LOOP (KEY_28)       : tap toggles the Rimming note latch (yellow);
+//                         retained in Strikes, cleared on entry to Split;
 //                         hold with PLAY for recording arm/stop; in
 //                         playback, tap toggles take looping (blue).
 //   PLAY (KEY_27)       : hold alone 2 s to enter/exit playback; tap
@@ -113,6 +114,8 @@
 #include "play_modes.h"
 #include "audio_routing.h"
 #include "bowl_voice.h"
+#include "control_mappings.h"
+#include "voice_allocator.h"
 #include "BowlsPreset.h"
 #include "PresetStorage.h"
 #include "SdRecorder.h"
@@ -475,7 +478,7 @@ void ShowOverlay(Overlay overlay, uint32_t now)
 // ticks -> DSP mappings
 float DecayMultTicks(int ticks)
 {
-    return 0.25f * powf(8.0f, TicksToNorm(ticks)); // 0.25x..2x
+    return bowls::DecayMultiplierFromTicks(ticks); // 0.25x..3x
 }
 
 float ShimmerMultTicks(int ticks)
@@ -655,22 +658,29 @@ int FindVoice(PlayMode mode, int key)
  *  still inaudible (BowlVoice::IsActive includes the pad gate). A steal
  *  is reported to the play-mode state machine, which clears the stolen
  *  note's latch (and only that note's). */
+bool IsProtectedRimmingVoice(int voice)
+{
+    const int key = voices[voice].Key();
+    return play_modes.Mode() == PlayMode::kStrikes
+           && voices[voice].VoiceMode() == ModeIdx(PlayMode::kRimming)
+           && key >= 0 && play_modes.Latched(key);
+}
+
 int AllocVoice(PlayMode mode, int key)
 {
     const int found = FindVoice(mode, key);
     if(found >= 0)
         return found;
     for(int i = 0; i < kVoiceCount; ++i)
-        if(!voices[i].IsActive())
+        if(!IsProtectedRimmingVoice(i) && !voices[i].IsActive())
             return i;
-    int   v        = 0;
-    float quietest = 1.0e30f;
-    for(int i = 0; i < kVoiceCount; ++i)
-        if(voices[i].Envelope() < quietest)
-        {
-            quietest = voices[i].Envelope();
-            v        = i;
-        }
+    const int v = bowls::QuietestUnprotectedVoice(
+        kVoiceCount,
+        [](int i) { return voices[i].IsActive(); },
+        [](int i) { return IsProtectedRimmingVoice(i); },
+        [](int i) { return voices[i].Envelope(); });
+    if(v < 0)
+        return -1;
     if(voices[v].IsActive() && voices[v].Key() >= 0)
         play_modes.OnVoiceStolen(
             static_cast<PlayMode>(voices[v].VoiceMode()),
@@ -708,16 +718,15 @@ float KeyFundamental(PlayMode mode, int key)
 }
 
 void StrikeKey(PlayMode mode, int key, int velocity = 127,
-               bool edit_target = true)
+               bool edit_target = true, bool midi_velocity = false)
 {
     const int   v      = AllocVoice(mode, key);
+    if(v < 0)
+        return;
     const float snorm
         = TicksToNorm(params.strike_ticks.load(std::memory_order_relaxed));
-    // MIDI note-on velocity rides the strike's intensity (loudness)
-    // via the amplitude factor - the strike hardness (the panel/CC 78
-    // timbre control) stays independent. Velocity 127 = 1.0 = the
-    // local keyboard's reference sound.
-    const float vel_norm = static_cast<float>(velocity) * (1.0f / 127.0f);
+    const bowls::StrikeInputs strike
+        = bowls::GetStrikeInputs(snorm, velocity, midi_velocity);
     // No per-strike randomization: a well-played bowl is consistent.
     // Hit-to-hit variation still comes for free from the still-ringing
     // state each new strike lands on (and the slow detune wander).
@@ -735,8 +744,9 @@ void StrikeKey(PlayMode mode, int key, int velocity = 127,
     // over from the voice's previous life returns to unity (the strike
     // velocity already shaped the excitation itself).
     voices[v].SetPerfGain(1.0f);
-    voices[v].Strike(KeyFundamental(mode, key), snorm, vel_norm, 1.0f,
-                     stolen ? 0.02f : 0.25f);
+    voices[v].StrikeWithAmplitude(KeyFundamental(mode, key), strike.hardness,
+                                  strike.amplitude, 1.0f, 1.0f,
+                                  stolen ? 0.02f : 0.25f);
 #ifdef CPU_METER
     if(stolen)
         g_steal_flash_until = System::GetNow() + 300;
@@ -761,6 +771,8 @@ void StartPadKey(int key, int velocity = 127)
 {
     const PlayMode mode = PlayMode::kRimming;
     const int      v    = AllocVoice(mode, key);
+    if(v < 0)
+        return;
     const bool stolen
         = (voices[v].Key() != key || voices[v].VoiceMode() != ModeIdx(mode))
           && voices[v].IsActive();
@@ -802,6 +814,8 @@ void SelectRimKey(int key, bool make_edit_target, int velocity = 127)
 {
     const PlayMode mode = PlayMode::kSplit;
     const int      v    = AllocVoice(mode, key);
+    if(v < 0)
+        return;
     ApplyVoiceSettings(v, mode, key);
     voices[v].SetKey(key);
     voices[v].SetVoiceMode(ModeIdx(mode));
@@ -1254,7 +1268,7 @@ void ApplyMidiNoteOn(int src, uint8_t note, uint8_t vel, uint32_t now)
     switch(act.kind)
     {
         case bowls::KeyAction::kStrike:
-            StrikeKey(act.mode, act.key, vel, false);
+            StrikeKey(act.mode, act.key, vel, false, true);
             break;
         case bowls::KeyAction::kPadOn:
             StartPadKey(act.key, vel);
@@ -2034,8 +2048,8 @@ void DrawOverlayBar(uint32_t now)
     }
 
     // Pressed keys light white, ringing voices glow dim amber on their
-    // key, and LOOP-latched Rimming notes glow yellow - but NOT while a
-    // temporary overlay bar is up, so the bars stay readable while a
+    // key, and LOOP-latched Rimming notes glow yellow in Rimming and
+    // Strikes - but NOT while a temporary overlay bar is up, so the bars stay readable while a
     // setting is edited. (A stolen note's latch is cleared by the state
     // machine, so its yellow indication disappears at the steal.)
     if(!overlay_active)
@@ -2053,7 +2067,8 @@ void DrawOverlayBar(uint32_t now)
                 chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key],
                                        14, 8, 2);
         }
-        if(play_modes.Mode() == PlayMode::kRimming)
+          if(play_modes.Mode() == PlayMode::kRimming
+              || play_modes.Mode() == PlayMode::kStrikes)
             for(int key = 0; key < bowls::kKeyCount; ++key)
                 if(play_modes.Latched(key) && !hw.KeyHeld(key))
                     // The same yellow as the LOOP LED.

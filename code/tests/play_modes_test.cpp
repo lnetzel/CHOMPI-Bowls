@@ -23,6 +23,7 @@
 //       wheel addressing after a mode switch
 
 #include "play_modes.h"
+#include "voice_allocator.h"
 
 #include <cstdio>
 
@@ -246,25 +247,42 @@ void TestModeExit()
     sm.KeyDown(4, false); // will stay held across the mode switch
     sm.LoopPressed();
     sm.KeyUp(1); // latched-only now
-    // Leave Rimming for Strikes.
+    // Leave Rimming for Strikes: latched notes persist; held notes keep
+    // their existing release-on-key-up behavior.
     KeyAction a = sm.KeyDown(6, true);
     Check(a.kind == KeyAction::kModeChanged
-              && sm.Mode() == PlayMode::kStrikes && !sm.LatchEnabled()
-              && !sm.Latched(1) && !sm.PadOn(1),
-          "M6a mode exit clears latch, releases latched-only", "");
+              && sm.Mode() == PlayMode::kStrikes && sm.LatchEnabled()
+              && sm.Latched(1) && sm.PadOn(1),
+          "M6a Rimming-to-Strikes preserves latched-only pads", "");
     Check(sm.PadOn(4), "M6b held pad persists across the mode switch", "");
     // Its key-up (in the NEW mode) still releases the Rimming note.
-    a = sm.KeyUp(4);
-    Check(a.kind == KeyAction::kNone && !sm.PadOn(4),
-          "M6c key-up after mode switch releases old-mode note", "");
+        a = sm.KeyUp(4);
+        Check(a.kind == KeyAction::kNone && sm.PadOn(4) && sm.Latched(4),
+            "M6c key-up preserves a captured latch across modes", "");
+        sm.KeyDown(8, true); // -> Rimming
+        Check(sm.Mode() == PlayMode::kRimming && sm.LatchEnabled()
+              && sm.Latched(1) && sm.PadOn(1),
+            "M6d returning to Rimming restores the preserved latch", "");
+        sm.LoopPressed();
+        Check(!sm.LatchEnabled() && !sm.Latched(1) && !sm.PadOn(1)
+                  && !sm.Latched(4) && !sm.PadOn(4),
+            "M6e preserved latch toggles off normally", "");
+        sm.LoopPressed();
+        sm.KeyDown(2, false);
+        sm.KeyUp(2);
+        sm.KeyDown(10, true); // -> Split: existing cleanup remains
+        Check(sm.Mode() == PlayMode::kSplit && !sm.LatchEnabled()
+              && !sm.Latched(2) && !sm.PadOn(2),
+            "M6f Rimming-to-Split clears latch and releases pad", "");
     // And a Strikes key held across a switch never becomes a pad.
+        sm.KeyDown(6, true); // -> Strikes
     sm.KeyDown(12, false); // strike in Strikes mode
     sm.KeyDown(8, true);   // -> Rimming
     Check(sm.Mode() == PlayMode::kRimming && !sm.PadOn(12)
               && !sm.WheelTargets(12),
-          "M6d held strike is not reinterpreted as a pad", "");
+            "M6g held strike is not reinterpreted as a pad", "");
     Check(sm.KeyUp(12).kind == KeyAction::kNone,
-          "M6e old-mode strike key-up stays inert", "");
+            "M6h old-mode strike key-up stays inert", "");
 }
 
 // -- M7: steals ----------------------------------------------------------------
@@ -300,6 +318,35 @@ void TestSteals()
     sm3.Init(PlayMode::kSplit);
     sm3.OnVoiceStolen(PlayMode::kSplit, 2);
     Check(true, "M7e non-Rimming steal is a no-op for latch", "");
+}
+
+void TestLatchedVoiceProtection()
+{
+    PlayModes sm;
+    sm.Init(PlayMode::kRimming);
+    sm.LoopPressed();
+    bool  active[5] = {true, true, true, true, true};
+    bool  protected_voice[5] = {};
+    float envelope[5] = {0.01f, 0.02f, 0.03f, 0.04f, 0.05f};
+    for(int key = 0; key < 5; ++key)
+    {
+        sm.KeyDown(key, false);
+        sm.KeyUp(key);
+        protected_voice[key] = sm.Latched(key);
+    }
+    sm.SetMode(PlayMode::kStrikes);
+    const auto select = [&]() {
+        return bowls::QuietestUnprotectedVoice(
+            5, [&](int i) { return active[i]; },
+            [&](int i) { return protected_voice[i]; },
+            [&](int i) { return envelope[i]; });
+    };
+    Check(sm.LatchEnabled() && select() == -1,
+          "M7f five preserved latches reject voice stealing", "");
+    protected_voice[0] = false;
+    protected_voice[1] = false;
+    Check(select() == 0,
+          "M7g allocator steals quietest unprotected voice only", "");
 }
 
 // -- M8: wheel sets ------------------------------------------------------------
@@ -374,6 +421,7 @@ int main()
     TestLatch();
     TestModeExit();
     TestSteals();
+    TestLatchedVoiceProtection();
     TestWheelSets();
     std::printf("%s (%d failures)\n",
                 g_failures == 0 ? "ALL PASS" : "FAILURES", g_failures);

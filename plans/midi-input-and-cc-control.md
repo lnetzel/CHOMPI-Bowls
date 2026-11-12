@@ -120,20 +120,20 @@ frequency by 0.5x through 2x. Profile changes the modal structure, not this map.
 - Incoming notes never inherit local SHIFT. MIDI 54/56/58 always play/select,
   even while SHIFT is held; mode selection is CC 80. Likewise MIDI 61/63 never
   invoke local audio-routing shortcuts.
-- Velocity 1-127 gives normalized performance strength `velocity / 127`.
-  For strikes, feed the existing Strike intensity argument; hardness remains
-  independently controlled by CC 78. For pads/rim selection, add a separate
-  smoothed performance-gain factor; never overwrite saved bowl volume. Local
-  keyboard strength remains 1.0, so velocity 127 matches its current behavior.
+- Velocity 1-127 gives normalized performance gain `velocity / 127`.
+  For strikes, map velocity linearly to hardness `(velocity - 1) / 126` and
+  use the normalized velocity as independent amplitude; MIDI hardness
+  overrides CC 78 for that strike. For pads/rim selection, keep the separate
+  smoothed performance-gain factor; never overwrite saved bowl volume.
 - Note On velocity 0 is Note Off; release velocity is ignored. Strikes may be
   retriggered without an intervening Note Off. Repeated pad Note Ons do not stack
   gates; with LOOP enabled they follow the existing on/off toggle semantics.
 - Five voices total across local, DIN and USB inputs; a sixth distinct active
   identity steals the quietest voice. No automatic revival of stolen held pads
   or strikes. Split may silently reacquire selected rim voices, as today.
-- A MIDI mode change is global and preserves ringing voices/reverb. Clear
-  latched-only outgoing pads as the local shortcut does; still-held pads release
-  against their original mode, not the newly selected mode.
+- A MIDI mode change is global and preserves ringing voices/reverb. Rimming to
+  Strikes preserves LOOP, latched claims and pad gates; Rimming to Split clears
+  them. Held notes continue to release against their original mode.
 
 ### 3. Complete CC map
 
@@ -153,7 +153,7 @@ This is Pipes' conversion. Values 0 / 32 / 64 / 95 / 127 select ticks
 | **64** | Sustain pedal | Per input source; 0-63 off, 64-127 on | Live; Rimming gates only | No |
 | **70** | Resonance character/profile | Selected bank/key; profile ranges listed below | Next strike, pad start or rim selection | Yes |
 | **74** | Bowl brightness | Selected bank/key; `t / 32`, darkest through brightest | Live on that identity | Yes |
-| **75** | Bowl decay | Selected bank/key; `0.25 * 8^(t / 32)`, 0.25x through 2x profile decay | Live on that identity | Yes |
+| **75** | Bowl decay | Selected bank/key; `0.25 * 12^(t / 32)`, 0.25x through 3x profile decay; tick 16 = 0.87x | Live on that identity | Yes |
 | **76** | Bowl tuning | Selected bank/key; `2^((t - 16) / 16)`, half through unison through double | Next strike, pad start or rim selection; no live retune | Yes |
 | **77** | Bowl volume | Selected bank/key; ticks 0-16: `(t / 16)^2`; 17-32: `1 + (t - 16) / 16` | Live, existing bowl-gain smoothing | Yes |
 | **78** | Strike hardness | Global; `t / 32`, soft through hard, same mallet control as encoder 2 | Next strike | Yes |

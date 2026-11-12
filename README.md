@@ -17,13 +17,13 @@ ringing voices glow dim amber, and LOOP-latched notes glow yellow.
 | **Encoder 1** - page 2 | Next page | Resonance character: bowl profile 1-5 (two detent ticks per step) | - | LED2 orange; five 3-key orange sections |
 | **Encoder 1** - page 3 | Next page (wraps to 1) | Per-bowl tuning of the selected bowl\* (16 = unison, 0 = 1/2x, 32 = 2x; next strike/selection) | - | LED2 violet; violet bar from white key 8 |
 | **Encoder 2** | - | Strike hardness (global; soft felt -> hard mallet) | Brightness of the selected bowl\* (high-mode content, live; also brightens rimming) | LED3 amber; amber bar / yellow-white bar |
-| **Encoder 3** | - | Decay of the selected bowl\*: ring time 0.25x .. 2x (live) | - | LED4 blue; blue bar |
+| **Encoder 3** | - | Decay of the selected bowl\*: 0.25x .. 3x profile decay (live; tick 16 = 0.87x) | - | LED4 blue; blue bar |
 | **Encoder 4** | - | Shimmer: paired-mode beating 0 .. 2x (16 = profile detune; live) | - | LED5 purple; centered purple bar |
 | **Transport wheel** | - | Rim the current mode's wheel set (see Play modes): turn speed = loudness; **clockwise = friction texture, counter-clockwise = clean sustained tone**; the last direction sticks per key while the wheel is still. The wheel never starts a strike and never revives a stolen note | - | Wheel LEDs (LED6/LED7) follow the rub level |
 | **Volume knob** | Switch page | Page 1: master volume. Page 2: delay mix/feedback. Page 3: temple-room reverb dry/wet mix | Page 2: delay time (40-500 ms) | LED10 follows the page (green->amber->red / yellow / pale ice) |
 | **SHIFT** (KEY_26) | Hold + lower F#/G#/A# = play mode (below); hold + Black 6 (C#4) / Black 7 (D#4) = audio routing (below) | - | - | While held, the active mode's shortcut key glows blue and the active routing's selection key glows pink |
 | **PLAY** (KEY_27) | Tap in playback to pause/resume; hold alone for 2 s to enter or exit playback | - | - | Blue in playback; blinks while playing |
-| **LOOP** (KEY_28) | Tap to toggle the Rimming note latch (Rimming mode only); hold with PLAY for recording gestures | - | - | Yellow for the Rimming latch; blue while take looping is enabled |
+| **LOOP** (KEY_28) | Tap to toggle the Rimming note latch (retained in Strikes, cleared on entry to Split); hold with PLAY for recording gestures | - | - | Yellow for the Rimming latch; blue while take looping is enabled |
 
 \* The selected bowl = the last played/selected key **in the current
 mode**. Pan, bowl volume, tuning, resonance character, brightness and
@@ -34,7 +34,9 @@ mix are global. The mode toggle (SW_TOG) is reserved.
 ### Play modes (keyboard)
 
 The instrument has **five shared voices**; a sixth simultaneous note
-steals the quietest voice (a stolen latched note is simply unlatched).
+steals the quietest unprotected voice. Rimming voices latched before
+switching to Strikes are protected; if all five voices are protected,
+incoming strikes are dropped rather than stealing a latch.
 Switching modes never interrupts ringing voices or the reverb: outgoing
 notes keep their sound, and the wheel only drives notes started in the
 current mode. Black keys are playable everywhere.
@@ -47,9 +49,10 @@ current mode. Black keys are playable everywhere.
   ring and the reverb can ring out longer. The wheel adds the
   direction-dependent rimming on top. **LOOP** toggles a note latch:
   enabling it captures the held sounding pads; a key press then toggles
-  that note on or off (key-up never releases a latched note); disabling
-  latch (or leaving Rimming) smoothly releases the latched-only notes.
-  The latch is never saved.
+  that note on or off (key-up never releases a latched note). Switching
+  to Strikes preserves the latch, pad gates and yellow key feedback;
+  returning to Rimming resumes them. Disabling the latch or switching
+  to Split smoothly releases latched-only notes. The latch is never saved.
 - **Split** (SHIFT + lower A#): the original layout - keys C3-B3 select
   one of the 12 bowls for wheel rimming (up to two held at once; never
   strike), keys C4-B4 strike the same 12 bowls, and key C5 strikes an

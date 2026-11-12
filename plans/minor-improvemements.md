@@ -1,6 +1,6 @@
 # Minor Improvements: MIDI Strike Velocity and Rimming Latch Across Modes
 
-Status: **planned**.
+Status: **implemented; hardware listening checks pending**.
 Intended repository destination: `plans/minor-improvemements.md`.
 Links below are relative to that destination.
 

@@ -18,7 +18,7 @@
 //       finite, bounded and free of gross discontinuities
 //   T5  bounded sweep: pitches x profiles x decay/brightness/shimmer
 //       extremes, clean drive at full rub level
-//   T6  30 s sustained clean drive at the longest decay: finite,
+//   T6  45 s sustained clean drive at the longest decay: finite,
 //       bounded, no growing oscillator error
 //
 // `./render_test.exe cal` only prints the numbers used to calibrate
@@ -457,7 +457,7 @@ void T5_BoundedSweep()
 void T6_LongSustained()
 {
     // Worst-case corner: lowest bowl, longest profile, max decay (mode
-    // 1 T60 = 30 s), max brightness. 30 s of sustained clean drive must
+    // 1 T60 = 45 s), max brightness. 45 s of sustained clean drive must
     // stay finite, stop growing (no oscillator/resonator runaway) and
     // remain near the friction path's own envelope at the same corner.
     double      pk[2] = {0.0, 0.0};
@@ -469,18 +469,18 @@ void T6_LongSustained()
         v.Init(kFs);
         v.SetProfile(1); // Deep: mode 1 T60 = 15 s
         v.SetBrightness(1.0f);
-        v.SetDecayMult(2.0f); // -> 30 s
+        v.SetDecayMult(3.0f); // -> 45 s
         v.SelectForRub(99.0f, 1.0f);
         v.SetRub(1.0f, mode == 1 ? 1.0f : 0.0f);
         std::vector<float> cap;
-        const Stats        s = Render(v, 30.0, 0.0, &cap);
+        const Stats        s = Render(v, 45.0, 0.0, &cap);
         if(!s.finite)
             finite = false;
         pk[mode] = s.peak;
         if(mode == 1)
         {
-            mid  = WindowRms(cap, 15.0, 20.0);
-            late = WindowRms(cap, 25.0, 30.0);
+            mid  = WindowRms(cap, 20.0, 25.0);
+            late = WindowRms(cap, 40.0, 45.0);
         }
     }
     const double db = 20.0 * std::log10(late / mid);
@@ -491,7 +491,7 @@ void T6_LongSustained()
                   "(%+.2f dB)",
                   pk[0], pk[1], mid, late, db);
     Check(finite && pk[1] <= 1.5 * pk[0] + 0.1 && std::fabs(db) <= 3.0,
-          "T6 30 s clean drive at max decay: stable", det);
+          "T6 45 s clean drive at max decay: stable", det);
 }
 
 void T7_ShimmerRetune()

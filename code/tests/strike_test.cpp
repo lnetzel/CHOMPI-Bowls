@@ -14,6 +14,7 @@
 
 #include "bowl_scale.h"
 #include "bowl_voice.h"
+#include "control_mappings.h"
 
 #include <cmath>
 #include <cstdio>
@@ -311,6 +312,99 @@ void S7_RegisterControlSweep()
           "S7 register/control sweep bounded", det);
 }
 
+double HighBandRms(const std::vector<float>& samples)
+{
+    double sum = 0.0;
+    for(size_t i = 1; i < samples.size(); ++i)
+    {
+        const double difference
+            = static_cast<double>(samples[i]) - samples[i - 1];
+        sum += difference * difference;
+    }
+    return std::sqrt(sum / static_cast<double>(samples.size() - 1));
+}
+
+void S8_IndependentHardnessAndAmplitude()
+{
+    std::vector<float> soft, hard, quiet, loud, legacy, explicit_local;
+    {
+        bowls::BowlVoice v;
+        FreshVoice(v);
+        v.StrikeWithAmplitude(465.0f, 0.0f, 0.6f, 1.0f, 1.0f);
+        Render(v, 0.25, &soft);
+    }
+    {
+        bowls::BowlVoice v;
+        FreshVoice(v);
+        v.StrikeWithAmplitude(465.0f, 1.0f, 0.6f, 1.0f, 1.0f);
+        Render(v, 0.25, &hard);
+    }
+    {
+        bowls::BowlVoice v;
+        FreshVoice(v);
+        v.StrikeWithAmplitude(465.0f, 0.5f, 0.3f, 1.0f, 1.0f);
+        Render(v, 0.25, &quiet);
+    }
+    {
+        bowls::BowlVoice v;
+        FreshVoice(v);
+        v.StrikeWithAmplitude(465.0f, 0.5f, 0.6f, 1.0f, 1.0f);
+        Render(v, 0.25, &loud);
+    }
+    {
+        bowls::BowlVoice v;
+        FreshVoice(v);
+        v.Strike(465.0f, 0.5f, 1.0f, 1.0f);
+        Render(v, 0.25, &legacy);
+    }
+    {
+        bowls::BowlVoice v;
+        FreshVoice(v);
+        v.StrikeWithAmplitude(465.0f, 0.5f, 0.65f, 1.0f, 1.0f);
+        Render(v, 0.25, &explicit_local);
+    }
+    const double amplitude_ratio
+        = WindowRms(loud, 0.02, 0.20) / WindowRms(quiet, 0.02, 0.20);
+    double local_difference = 0.0;
+    for(size_t i = 0; i < legacy.size(); ++i)
+        local_difference = std::max(
+            local_difference,
+            std::fabs(static_cast<double>(legacy[i] - explicit_local[i])));
+    const bool timbre_changed = HighBandRms(hard) > HighBandRms(soft);
+    char detail[128];
+    std::snprintf(detail, sizeof(detail),
+                  "high-band soft=%.5g hard=%.5g; gain ratio=%.3f; local diff=%g",
+                  HighBandRms(soft), HighBandRms(hard), amplitude_ratio,
+                  local_difference);
+    Check(timbre_changed && std::fabs(amplitude_ratio - 2.0) < 0.02
+              && local_difference == 0.0,
+          "S8 hardness timbre and amplitude independent; local curve unchanged",
+          detail);
+}
+
+void S9_MaximumDecay()
+{
+    const float min_mult = bowls::DecayMultiplierFromTicks(0);
+    const float mid_mult = bowls::DecayMultiplierFromTicks(16);
+    const float max_mult = bowls::DecayMultiplierFromTicks(32);
+    const float deep_t60 = bowls::GetBowlProfile(1).t60_s[0] * max_mult;
+    bowls::BowlVoice voice;
+    voice.Init(kFs);
+    voice.SetProfile(1);
+    voice.SetDecayMult(max_mult);
+    voice.StrikeWithAmplitude(99.0f, 0.7f, 0.7f, 1.0f, 1.0f);
+    const Stats stats = Render(voice, 1.0, nullptr);
+    char detail[128];
+    std::snprintf(detail, sizeof(detail), "decay %.3f/%.3f/%.3f; Deep T60=%.1f s; peak=%.3f",
+                  min_mult, mid_mult, max_mult, deep_t60, stats.peak);
+    Check(std::fabs(min_mult - 0.25f) < 1.0e-6f
+              && std::fabs(mid_mult - std::sqrt(0.75f)) < 1.0e-5f
+              && std::fabs(max_mult - 3.0f) < 1.0e-6f
+              && std::fabs(deep_t60 - 45.0f) < 1.0e-5f
+              && stats.finite && stats.peak <= 1.5,
+          "S9 3x decay endpoint remains finite and bounded", detail);
+}
+
 } // namespace
 
 int main()
@@ -322,6 +416,8 @@ int main()
     S5_StrikeToRimReuse();
     S6_AboveBandModes();
     S7_RegisterControlSweep();
+    S8_IndependentHardnessAndAmplitude();
+    S9_MaximumDecay();
     std::printf(g_failures == 0 ? "\nALL STRIKE TESTS PASSED\n"
                                 : "\n%d STRIKE TEST(S) FAILED\n",
                 g_failures);

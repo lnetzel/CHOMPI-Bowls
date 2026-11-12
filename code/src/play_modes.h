@@ -18,7 +18,7 @@
 // are source-aware too, so CC 123 cleans one sender without erasing
 // the others.
 //
-// Latch rules (Rimming only):
+// Latch rules (enabled in Rimming; preserved but inert in Strikes):
 //   - latch off: note-on opens the pad gate, note-off releases it
 //   - LOOP on captures the currently held, sounding pad notes (any
 //     source); a later note-on toggles that SOURCE's claim on
@@ -26,9 +26,10 @@
 //     stays held); note-off alone never releases a latched note
 //   - LOOP off clears all latch flags; latched-only notes enter the
 //     10 s release, held notes keep their gate to note-off
-//   - leaving Rimming performs the same cleanup and also clears
-//     deferred sustain claims; a stolen latched or held note is
-//     unlatched and never restarts by itself
+//   - Rimming -> Strikes preserves latch, gates and deferred claims;
+//     Rimming -> Split clears them, releasing latched-only notes
+//   - a stolen latched or held note is unlatched and never restarts
+//     by itself
 // Latch, held-key, sustain and pad state are transient - never
 // persisted.
 
@@ -127,7 +128,7 @@ class PlayModes
 
     // -- Rimming latch state ------------------------------------------
 
-    /** LOOP latch enabled (Rimming only; cleared when Rimming is left). */
+    /** LOOP latch enabled; preserved in Strikes, cleared when entering Split. */
     bool LatchEnabled() const { return latch_enabled_; }
 
     /** Key's pad note is latched on for ANY source (drives the
@@ -290,7 +291,7 @@ class PlayModes
             const PlayMode target  = ShortcutMode(key);
             if(target == mode_)
                 return a; // idempotent re-selection: consumed, no change
-            LeaveMode();
+            LeaveMode(target);
             mode_  = target;
             a.kind = KeyAction::kModeChanged;
             a.mode = mode_;
@@ -443,15 +444,14 @@ class PlayModes
 
     // -- explicit setters (MIDI CC 80 / CC 83) --------------------------
 
-    /** CC 80 mode change: the same cleanup as the local mode shortcut
-     *  (latched-only outgoing pads release; held pads keep their gate
-     *  until their own Note Off). Returns true when the mode changed
+    /** CC 80 mode change: Rimming -> Strikes preserves the latch;
+     *  Rimming -> Split clears it. Returns true when the mode changed
      *  (idempotent re-selection is a no-op). */
     bool SetMode(PlayMode target)
     {
         if(target == mode_)
             return false;
-        LeaveMode();
+        LeaveMode(target);
         mode_ = target;
         return true;
     }
@@ -696,13 +696,11 @@ class PlayModes
             }
     }
 
-    /** Leaving a mode: Rimming performs the latch cleanup (LOOP off,
-     *  latched-only notes release, deferred sustain claims clear;
-     *  actually held pads keep their gate until their own note-off -
-     *  they release against their ORIGINAL mode). */
-    void LeaveMode()
+    /** Leaving Rimming for Split clears the latch and deferred claims.
+     *  Strikes keeps them intact so the pads can resume on return. */
+    void LeaveMode(PlayMode target)
     {
-        if(mode_ != PlayMode::kRimming)
+        if(mode_ != PlayMode::kRimming || target == PlayMode::kStrikes)
             return;
         latch_enabled_ = false;
         for(int k = 0; k < kKeyCount; ++k)
