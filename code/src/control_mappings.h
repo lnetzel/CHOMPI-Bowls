@@ -31,6 +31,11 @@ inline float DecayMultiplierFromTicks(int ticks)
     return 0.25f * powf(12.0f, static_cast<float>(ticks) * (1.0f / 32.0f));
 }
 
+inline float TuneRatioFromTicks(int ticks)
+{
+    return powf(2.0f, static_cast<float>(ticks - 16) * (1.0f / 16.0f));
+}
+
 struct StrikeInputs
 {
     float hardness;

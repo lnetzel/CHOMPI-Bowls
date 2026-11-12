@@ -111,22 +111,57 @@ constexpr float kFullScaleHz[kKeyCount] = {
     1560.0f, // C5  - 390 x 4
 };
 
+struct PitchTables
+{
+    float strikes[kKeyCount];
+    float rimming[kKeyCount];
+    float split[13];
+
+    PitchTables()
+    {
+        for(int i = 0; i < kKeyCount; ++i)
+        {
+            strikes[i] = kFullScaleHz[i];
+            rimming[i] = kFullScaleHz[i];
+        }
+        for(int i = 0; i < kBowlCount; ++i)
+            split[i] = kBowlScaleHz[i];
+        split[12] = kSplitTopStrikeHz;
+    }
+};
+
+inline const PitchTables& FactoryPitchTables()
+{
+    static const PitchTables tables;
+    return tables;
+}
+
+inline float BaseFundamentalHz(PlayMode mode, int key,
+                               const PitchTables& tables)
+{
+    if(key < 0 || key >= kKeyCount)
+        return 0.0f;
+    if(mode == PlayMode::kStrikes)
+        return tables.strikes[key];
+    if(mode == PlayMode::kRimming)
+        return tables.rimming[key];
+    if(mode == PlayMode::kSplit)
+    {
+        if(key <= kRimKeyLast)
+            return tables.split[key];
+        if(key < kStrikeKeyLast)
+            return tables.split[key - kStrikeKeyFirst];
+        return tables.split[12];
+    }
+    return 0.0f;
+}
+
 /// Base (untuned) fundamental for a key in a mode; 0 for out-of-range
 /// keys. The per-key tuning control scales this complete modal
 /// structure at excitation time.
 inline float BaseFundamentalHz(PlayMode mode, int key)
 {
-    if(key < 0 || key >= kKeyCount)
-        return 0.0f;
-    if(mode == PlayMode::kSplit)
-    {
-        if(key <= kRimKeyLast)
-            return kBowlScaleHz[key];
-        if(key < kStrikeKeyLast)
-            return kBowlScaleHz[key - kStrikeKeyFirst];
-        return kSplitTopStrikeHz;
-    }
-    return kFullScaleHz[key];
+    return BaseFundamentalHz(mode, key, FactoryPitchTables());
 }
 
 // -- compile-time checks --------------------------------------------------

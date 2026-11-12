@@ -312,6 +312,31 @@ void S7_RegisterControlSweep()
           "S7 register/control sweep bounded", det);
 }
 
+void S8_CustomPitchRange()
+{
+    bool finite = true;
+    double worst_peak = 0.0;
+    const float bases[] = {40.0f, 10000.0f};
+    const float tunes[] = {0.5f, 1.0f, 2.0f};
+    for(int profile = 0; profile < bowls::kNumProfiles; ++profile)
+        for(float base : bases)
+            for(float tune : tunes)
+            {
+                bowls::BowlVoice voice;
+                FreshVoice(voice);
+                voice.SetProfile(profile);
+                voice.Strike(base * tune, 0.5f, 1.0f, 1.0f);
+                const Stats stats = Render(voice, 0.1, nullptr);
+                finite = finite && stats.finite;
+                if(stats.peak > worst_peak)
+                    worst_peak = stats.peak;
+            }
+    char detail[64];
+    std::snprintf(detail, sizeof(detail), "peak=%.3f", worst_peak);
+    Check(finite && worst_peak <= 1.5,
+          "S8 40-10000 Hz pitch range across profiles bounded", detail);
+}
+
 double HighBandRms(const std::vector<float>& samples)
 {
     double sum = 0.0;
@@ -416,6 +441,7 @@ int main()
     S5_StrikeToRimReuse();
     S6_AboveBandModes();
     S7_RegisterControlSweep();
+    S8_CustomPitchRange();
     S8_IndependentHardnessAndAmplitude();
     S9_MaximumDecay();
     std::printf(g_failures == 0 ? "\nALL STRIKE TESTS PASSED\n"

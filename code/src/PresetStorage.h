@@ -25,13 +25,12 @@ namespace chompi
 class PresetStorage
 {
   public:
-    /* v8 state (mode + six 75-entry banks + delay controls) serializes
-     * to ~1.5 KB worst case (under 2 KB with impossible 3-digit values)
-     * - well past one 512 B sector, so reads/writes go multi-sector;
-     * 2048 B covers the uint8 worst case incl. terminator. Buffers stay
+    /* v9 state includes six 75-entry banks and 63 three-decimal pitch
+     * values. The measured worst-case JSON, plus formatted offline input,
+     * fits this 4096-byte budget including the terminator. Buffers stay
      * members in SRAM (.bss): the SDMMC IDMA
      * cannot reach DTCMRAM stack. */
-    static constexpr size_t   kJsonSize    = 2048;
+    static constexpr size_t   kJsonSize    = 4096;
     static constexpr int      kMaxRetries  = 3;
     static constexpr uint32_t kBackoffMs   = 250;
 
@@ -40,7 +39,7 @@ class PresetStorage
     enum StatusEvent : uint8_t
     {
         kStatusNone = 0,
-        kStatusFailed,    // a write cycle exhausted its retries
+        kStatusFailed,    // a save cycle failed
         kStatusRecovered, // a write completed after a failure
         kStatusSaved      // a write completed (no prior failure)
     };
@@ -92,6 +91,12 @@ class PresetStorage
         if(f_open(&read_fil_, "BOWLS/state.json", FA_READ) != FR_OK)
         {
             load_fail_ = 2;
+            return false;
+        }
+        if(f_size(&read_fil_) >= kJsonSize)
+        {
+            f_close(&read_fil_);
+            load_fail_ = 4;
             return false;
         }
         UINT    br = 0;
@@ -171,6 +176,11 @@ class PresetStorage
                 else
                 {
                     pending_ = false;
+                    if(!failed_)
+                    {
+                        failed_ = true;
+                        event_ = kStatusFailed;
+                    }
                 }
                 break;
 

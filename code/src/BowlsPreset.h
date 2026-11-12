@@ -6,16 +6,18 @@
  *  shortly after the last change and loaded at boot, so the instrument
  *  remembers its state across power cycles (spec section 1).
  *
- *  Schema v8: additive stereo-delay controls atop v7. A valid v7 file
- *  migrates without changing existing values; the new delay fields get
- *  their defaults. v1-v6 files remain unsupported.
+ *  Schema v9: editable per-mode base-pitch tables atop v8. Legacy
+ *  schemas are rejected; a missing state file uses factory defaults.
  */
 #pragma once
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cerrno>
+#include <cmath>
 #include <cstring>
+#include "bowl_scale.h"
 #include "core_json.h"
 
 namespace chompi
@@ -28,8 +30,8 @@ struct BowlsPreset
      * v6: play modes - mode field + per-mode/per-key banks of 25 slots
      * (3 modes x 25 keys = 75), profile becomes per-bowl per-mode;
     * v7: brightness and decay move from globals to per-mode/per-key
-    * banks (six banks of 75); v8: delay mix and time positions. */
-    static constexpr int kVersion = 8;
+    * banks (six banks of 75); v8: delay mix and time; v9: base pitches. */
+    static constexpr int kVersion = 9;
 
     /* field ranges (mirror the tick counts in chompi_main.cpp) */
     static constexpr int kMaxTicks   = 32; /* 0..32 tick parameters */
@@ -57,6 +59,8 @@ struct BowlsPreset
     static constexpr int kDefaultDelayTime  = 15; /* 256 ms */
     static constexpr int kDefaultBowlVol    = 16; /* unity gain (0 dB) */
     static constexpr int kDefaultTune       = 16; /* unison (ratio 1) */
+    static constexpr float kMinPitchHz = 40.0f;
+    static constexpr float kMaxPitchHz = 10000.0f;
 
     uint8_t mode;       /**< 0..2 active play mode */
     uint8_t volume;     /**< 0..32 master volume ticks */
@@ -72,9 +76,11 @@ struct BowlsPreset
     uint8_t profile[kBankSlots]; /**< per-key bowl profile 0..4 */
     uint8_t bright[kBankSlots];  /**< per-key brightness 0..32 */
     uint8_t decay[kBankSlots];   /**< per-key decay 0..32 */
+    bowls::PitchTables pitch_hz; /**< base pitch for each mode/key */
 
     void SetDefaults()
     {
+        pitch_hz = bowls::FactoryPitchTables();
         mode       = kDefaultMode;
         volume     = kDefaultVolume;
         strike     = kDefaultStrike;
@@ -112,6 +118,30 @@ inline size_t AppendArray(char *         buf,
     {
         n = snprintf(buf + off, size - off, "%s%u", w == 0 ? "" : ",",
                      (unsigned)values[w]);
+        if(n < 0 || static_cast<size_t>(n) >= size - off)
+            return 0;
+        off += static_cast<size_t>(n);
+    }
+    n = snprintf(buf + off, size - off, "]");
+    if(n < 0 || static_cast<size_t>(n) >= size - off)
+        return 0;
+    return off + static_cast<size_t>(n);
+}
+
+inline size_t AppendFloatValues(char *buf, size_t size, size_t off,
+                                const float *values, int count)
+{
+    int n = snprintf(buf + off, size - off, "[");
+    if(n < 0 || static_cast<size_t>(n) >= size - off)
+        return 0;
+    off += static_cast<size_t>(n);
+    for(int i = 0; i < count; ++i)
+    {
+        if(!std::isfinite(values[i]) || values[i] < BowlsPreset::kMinPitchHz
+           || values[i] > BowlsPreset::kMaxPitchHz)
+            return 0;
+        n = snprintf(buf + off, size - off, "%s%.3f", i == 0 ? "" : ",",
+                     static_cast<double>(values[i]));
         if(n < 0 || static_cast<size_t>(n) >= size - off)
             return 0;
         off += static_cast<size_t>(n);
@@ -162,39 +192,80 @@ inline size_t Serialize(const BowlsPreset &p, char *buf, size_t size)
                           BowlsPreset::kBankSlots);
     if(off == 0)
         return 0;
-    n = snprintf(buf + off, size - off, "}");
+    n = snprintf(buf + off, size - off, ",\"pitch_hz\":{\"strikes\":");
+    if(n < 0 || static_cast<size_t>(n) >= size - off)
+        return 0;
+    off += static_cast<size_t>(n);
+    off = AppendFloatValues(buf, size, off, p.pitch_hz.strikes,
+                            bowls::kKeyCount);
+    if(off == 0)
+        return 0;
+    n = snprintf(buf + off, size - off, ",\"rimming\":");
+    if(n < 0 || static_cast<size_t>(n) >= size - off)
+        return 0;
+    off += static_cast<size_t>(n);
+    off = AppendFloatValues(buf, size, off, p.pitch_hz.rimming,
+                            bowls::kKeyCount);
+    if(off == 0)
+        return 0;
+    n = snprintf(buf + off, size - off, ",\"split\":");
+    if(n < 0 || static_cast<size_t>(n) >= size - off)
+        return 0;
+    off += static_cast<size_t>(n);
+    off = AppendFloatValues(buf, size, off, p.pitch_hz.split, 13);
+    if(off == 0)
+        return 0;
+    n = snprintf(buf + off, size - off, "}}");
     if(n < 0 || static_cast<size_t>(n) >= size - off)
         return 0;
     return off + static_cast<size_t>(n);
 }
 
-/** Read one integer value for `query`, clamped to [lo, hi]. Missing
- *  keys and non-numeric values yield `fallback`. The buffer is non-const
- *  because coreJSON's JSON_Search takes a char* (it never writes). */
-inline int QueryInt(char *      buf,
-                    size_t      len,
-                    const char *query,
-                    int         fallback,
-                    int         lo,
-                    int         hi)
+inline void SkipWhitespace(const char *buf, size_t len, size_t &index)
 {
-    char * value     = nullptr;
-    size_t value_len = 0;
-    if(JSON_Search(buf, len, query, strlen(query), &value, &value_len)
-       != JSONSuccess)
-        return fallback;
-    /* the value is not null-terminated: copy it out for strtol */
-    char tmp[12];
-    if(value_len >= sizeof(tmp))
-        return fallback;
-    memcpy(tmp, value, value_len);
-    tmp[value_len] = '\0';
-    const long v = strtol(tmp, nullptr, 10);
-    if(v < lo)
-        return lo;
-    if(v > hi)
-        return hi;
-    return static_cast<int>(v);
+    while(index < len && (buf[index] == ' ' || buf[index] == '\t'
+                          || buf[index] == '\n' || buf[index] == '\r'))
+        ++index;
+}
+
+inline bool NumberTokenEnd(const char *buf, size_t len, size_t start,
+                           size_t &end)
+{
+    size_t i = start;
+    if(i < len && buf[i] == '-')
+        ++i;
+    if(i >= len)
+        return false;
+    if(buf[i] == '0')
+        ++i;
+    else if(buf[i] >= '1' && buf[i] <= '9')
+    {
+        do { ++i; } while(i < len && buf[i] >= '0' && buf[i] <= '9');
+    }
+    else
+        return false;
+    if(i < len && buf[i] == '.')
+    {
+        ++i;
+        const size_t fraction_start = i;
+        while(i < len && buf[i] >= '0' && buf[i] <= '9')
+            ++i;
+        if(i == fraction_start)
+            return false;
+    }
+    if(i < len && (buf[i] == 'e' || buf[i] == 'E'))
+    {
+        ++i;
+        if(i < len && (buf[i] == '+' || buf[i] == '-'))
+            ++i;
+        const size_t exponent_start = i;
+        while(i < len && buf[i] >= '0' && buf[i] <= '9')
+            ++i;
+        if(i == exponent_start)
+            return false;
+    }
+    end = i;
+    return true;
 }
 
 /** Read a present integer scalar, rejecting missing or non-integer JSON
@@ -204,16 +275,24 @@ inline bool QueryIntPresent(char *buf, size_t len, const char *query,
 {
     char *value = nullptr;
     size_t value_len = 0;
-    if(JSON_Search(buf, len, query, strlen(query), &value, &value_len)
+    JSONTypes_t type = JSONInvalid;
+    if(JSON_SearchT(buf, len, query, strlen(query), &value, &value_len, &type)
            != JSONSuccess
-       || value_len == 0 || value_len >= 12)
+       || type != JSONNumber || value_len == 0 || value_len >= 24)
         return false;
-    char tmp[12];
+    size_t token_end = 0;
+    if(!NumberTokenEnd(value, value_len, 0, token_end) || token_end != value_len
+       || memchr(value, '.', value_len) != nullptr
+       || memchr(value, 'e', value_len) != nullptr
+       || memchr(value, 'E', value_len) != nullptr)
+        return false;
+    char tmp[24];
     memcpy(tmp, value, value_len);
     tmp[value_len] = '\0';
     char *end = nullptr;
+    errno = 0;
     const long parsed = strtol(tmp, &end, 10);
-    if(end == tmp || *end != '\0')
+    if(errno == ERANGE || end == tmp || *end != '\0')
         return false;
     if(parsed < lo)
         result = lo;
@@ -230,96 +309,163 @@ inline bool QueryIntPresent(char *buf, size_t len, const char *query,
  *  whole document rather than partially applying corrupt state. The
  *  buffer is non-const because coreJSON's JSON_Search takes a char*
  *  (it never writes). */
-inline bool QueryArrayStrict(char *     buf,
-                             size_t     len,
-                             const char *name,
-                             uint8_t *  dest,
-                             int        count,
-                             int        max_value)
+inline bool QueryArrayStrict(char *buf, size_t len, const char *name,
+                             uint8_t *dest, int count, int max_value)
 {
-    char * value     = nullptr;
+    char *value = nullptr;
     size_t value_len = 0;
-    if(JSON_Search(buf, len, name, strlen(name), &value, &value_len)
+    JSONTypes_t type = JSONInvalid;
+    if(JSON_SearchT(buf, len, name, strlen(name), &value, &value_len, &type)
            != JSONSuccess
-       || value_len < 2 || value[0] != '[')
+       || type != JSONArray || value_len < 2 || value[0] != '[')
         return false;
     size_t i = 1;
     for(int w = 0; w < count; ++w)
     {
-        if(i >= value_len)
-            return false; /* short array */
-        char *     end = nullptr;
-        const long v   = strtol(value + i, &end, 10);
-        if(end == value + i)
-            return false; /* no number here: corrupt */
+        SkipWhitespace(value, value_len, i);
+        size_t end = 0;
+        if(!NumberTokenEnd(value, value_len, i, end)
+           || memchr(value + i, '.', end - i) != nullptr
+           || memchr(value + i, 'e', end - i) != nullptr
+           || memchr(value + i, 'E', end - i) != nullptr
+           || end - i >= 24)
+            return false;
+        char tmp[24];
+        const size_t token_len = end - i;
+        memcpy(tmp, value + i, token_len);
+        tmp[token_len] = '\0';
+        errno = 0;
+        char *parsed_end = nullptr;
+        const long parsed = strtol(tmp, &parsed_end, 10);
+        if(errno == ERANGE || parsed_end == tmp || *parsed_end != '\0')
+            return false;
         dest[w] = static_cast<uint8_t>(
-            v < 0 ? 0 : (v > max_value ? max_value : v));
-        i = static_cast<size_t>(end - value);
-        while(i < value_len && (value[i] == ',' || value[i] == ' '))
+            parsed < 0 ? 0 : (parsed > max_value ? max_value : parsed));
+        i = end;
+        SkipWhitespace(value, value_len, i);
+        if(w + 1 < count)
+        {
+            if(i >= value_len || value[i] != ',')
+                return false;
             ++i;
+        }
     }
-    return true;
+    SkipWhitespace(value, value_len, i);
+    return i + 1 == value_len && value[i] == ']';
 }
 
-/** Parse a state document. Only the exact current schema version is
- *  accepted. v7 is migrated additively; v1-v6 and newer files are
- *  rejected. Corrupt, truncated or
- *  partially valid documents are rejected whole, never partially
- *  applied. */
+inline bool QueryPitchArrayStrict(char *buf, size_t len, const char *query,
+                                  float *dest, int count)
+{
+    char *value = nullptr;
+    size_t value_len = 0;
+    JSONTypes_t type = JSONInvalid;
+    if(JSON_SearchT(buf, len, query, strlen(query), &value, &value_len, &type)
+           != JSONSuccess
+       || type != JSONArray || value_len < 2 || value[0] != '[')
+        return false;
+    size_t i = 1;
+    for(int w = 0; w < count; ++w)
+    {
+        SkipWhitespace(value, value_len, i);
+        const size_t start = i;
+        size_t end = 0;
+        if(!NumberTokenEnd(value, value_len, start, end) || end - start >= 32)
+            return false;
+        char tmp[32];
+        const size_t token_len = end - start;
+        memcpy(tmp, value + start, token_len);
+        tmp[token_len] = '\0';
+        errno = 0;
+        char *parsed_end = nullptr;
+        const double parsed = strtod(tmp, &parsed_end);
+        if(errno == ERANGE || parsed_end == tmp || *parsed_end != '\0'
+           || !std::isfinite(parsed) || parsed < BowlsPreset::kMinPitchHz
+           || parsed > BowlsPreset::kMaxPitchHz)
+            return false;
+        dest[w] = static_cast<float>(parsed);
+        if(!std::isfinite(dest[w]))
+            return false;
+        i = end;
+        SkipWhitespace(value, value_len, i);
+        if(w + 1 < count)
+        {
+            if(i >= value_len || value[i] != ',')
+                return false;
+            ++i;
+        }
+    }
+    SkipWhitespace(value, value_len, i);
+    return i + 1 == value_len && value[i] == ']';
+}
+
+/** Parse a complete current-schema state document. Legacy, malformed,
+ *  truncated and partially valid documents are rejected without
+ *  changing the destination. */
 inline bool Parse(char *buf, size_t len, BowlsPreset &p)
 {
     if(JSON_Validate(buf, len) != JSONSuccess)
         return false;
-    const int version = QueryInt(buf, len, "version", 0, 0, 100);
-    if(version != BowlsPreset::kVersion && version != 7)
-        return false; /* old or newer firmware: do not misread it */
+    int version = 0;
+    if(!QueryIntPresent(buf, len, "version", 0, 100, version)
+       || version != BowlsPreset::kVersion)
+        return false;
 
-    /* parse into a scratch copy first: nothing is applied unless the
-     * whole document validates */
     BowlsPreset tmp;
     tmp.SetDefaults();
-    const int mode = QueryInt(buf, len, "mode", -1, -1, 100);
-    if(mode < 0 || mode >= BowlsPreset::kModeCount)
-        return false; /* invalid mode: reject, do not clamp */
+    int mode = -1;
+    int volume = 0;
+    int strike = 0;
+    int shimmer = 0;
+    int reverb_mix = 0;
+    int delay_mix = 0;
+    int delay_time = 0;
+    if(!QueryIntPresent(buf, len, "mode", -100, 100, mode)
+       || mode < 0 || mode >= BowlsPreset::kModeCount
+       || !QueryIntPresent(buf, len, "volume", 0, BowlsPreset::kMaxTicks,
+                           volume)
+       || !QueryIntPresent(buf, len, "strike", 0, BowlsPreset::kMaxTicks,
+                           strike)
+       || !QueryIntPresent(buf, len, "shimmer", 0, BowlsPreset::kMaxTicks,
+                           shimmer)
+       || !QueryIntPresent(buf, len, "reverb_mix", 0,
+                           BowlsPreset::kMaxTicks, reverb_mix)
+       || !QueryIntPresent(buf, len, "delay_mix", 0,
+                           BowlsPreset::kMaxTicks, delay_mix)
+       || !QueryIntPresent(buf, len, "delay_time", 0,
+                           BowlsPreset::kMaxTicks, delay_time))
+        return false;
     tmp.mode = static_cast<uint8_t>(mode);
-    tmp.volume = QueryInt(buf, len, "volume", BowlsPreset::kDefaultVolume,
-                          0, BowlsPreset::kMaxTicks);
-    tmp.strike = QueryInt(buf, len, "strike", BowlsPreset::kDefaultStrike,
-                          0, BowlsPreset::kMaxTicks);
-    tmp.shimmer = QueryInt(buf, len, "shimmer",
-                           BowlsPreset::kDefaultShimmer, 0,
-                           BowlsPreset::kMaxTicks);
-    tmp.reverb_mix = QueryInt(buf, len, "reverb_mix",
-                              BowlsPreset::kDefaultReverbMix, 0,
-                              BowlsPreset::kMaxTicks);
-    if(version == BowlsPreset::kVersion)
-    {
-        int delay_mix = BowlsPreset::kDefaultDelayMix;
-        int delay_time = BowlsPreset::kDefaultDelayTime;
-          if(!QueryIntPresent(buf, len, "delay_mix", 0,
-                            BowlsPreset::kMaxTicks, delay_mix)
-              || !QueryIntPresent(buf, len, "delay_time", 0,
-                               BowlsPreset::kMaxTicks, delay_time))
-            return false;
-        tmp.delay_mix = static_cast<uint8_t>(delay_mix);
-        tmp.delay_time = static_cast<uint8_t>(delay_time);
-    }
+    tmp.volume = static_cast<uint8_t>(volume);
+    tmp.strike = static_cast<uint8_t>(strike);
+    tmp.shimmer = static_cast<uint8_t>(shimmer);
+    tmp.reverb_mix = static_cast<uint8_t>(reverb_mix);
+    tmp.delay_mix = static_cast<uint8_t>(delay_mix);
+    tmp.delay_time = static_cast<uint8_t>(delay_time);
 
-    /* per-mode/per-key banks: all six arrays must hold exactly
-     * kBankSlots values, or the document is corrupt */
-    if(!QueryArrayStrict(buf, len, "pan", tmp.pan,
-                         BowlsPreset::kBankSlots, BowlsPreset::kMaxTicks)
+    if(!QueryArrayStrict(buf, len, "pan", tmp.pan, BowlsPreset::kBankSlots,
+                         BowlsPreset::kMaxTicks)
        || !QueryArrayStrict(buf, len, "bvol", tmp.bvol,
-                            BowlsPreset::kBankSlots, BowlsPreset::kMaxTicks)
+                            BowlsPreset::kBankSlots,
+                            BowlsPreset::kMaxTicks)
        || !QueryArrayStrict(buf, len, "tune", tmp.tune,
-                            BowlsPreset::kBankSlots, BowlsPreset::kMaxTicks)
+                            BowlsPreset::kBankSlots,
+                            BowlsPreset::kMaxTicks)
        || !QueryArrayStrict(buf, len, "profile", tmp.profile,
                             BowlsPreset::kBankSlots,
                             BowlsPreset::kMaxProfile)
        || !QueryArrayStrict(buf, len, "bright", tmp.bright,
-                            BowlsPreset::kBankSlots, BowlsPreset::kMaxTicks)
+                            BowlsPreset::kBankSlots,
+                            BowlsPreset::kMaxTicks)
        || !QueryArrayStrict(buf, len, "decay", tmp.decay,
-                            BowlsPreset::kBankSlots, BowlsPreset::kMaxTicks))
+                            BowlsPreset::kBankSlots,
+                            BowlsPreset::kMaxTicks)
+       || !QueryPitchArrayStrict(buf, len, "pitch_hz.strikes",
+                                 tmp.pitch_hz.strikes, bowls::kKeyCount)
+       || !QueryPitchArrayStrict(buf, len, "pitch_hz.rimming",
+                                 tmp.pitch_hz.rimming, bowls::kKeyCount)
+       || !QueryPitchArrayStrict(buf, len, "pitch_hz.split",
+                                 tmp.pitch_hz.split, 13))
         return false;
     p = tmp;
     return true;

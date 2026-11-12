@@ -61,8 +61,52 @@ current mode. Black keys are playable everywhere.
 A mode shortcut consumes its key through release - it never sounds a
 note or moves the bowl editor target. With no SD card (or an
 incompatible old state file) the instrument boots factory settings in
-**Strikes**; the first successful save replaces the old file (old
-saved settings are not imported).
+**Strikes**; v7/v8 and other legacy state files are rejected. The next
+ordinary control change triggers autosave and may replace the old file;
+legacy settings are not imported.
+
+## Offline base-pitch editing
+
+Base pitches for Strikes, Rimming, and Split are stored in the `pitch_hz`
+object in `BOWLS/state.json`. There is no on-device pitch editor or MIDI
+CC for these base values. Existing per-key tuning remains independent:
+the played fundamental is the saved base frequency multiplied by the
+existing 0.5x-2x tuning control (tick 16 is unison). Base values must be
+40-10,000 Hz; saves round to three decimal places.
+
+To create and edit the file, boot with the SD card inserted and let the
+first ordinary control change autosave the factory state. Wait for the
+save-complete indication, power the instrument off, remove the card, and
+edit `BOWLS/state.json` on a computer. Keep the v9 fields and all array
+lengths intact; edit only the pitch numbers if no other settings should
+change. Safely eject the card before reinserting it, then reboot. Changes
+are read only at boot. Never edit the card while the instrument is on:
+a later autosave can overwrite the offline edit. Back up the file first.
+There is no automatic boot write. A missing file leaves factory state in
+RAM until the next ordinary control change requests its first save.
+
+`strikes` and `rimming` each contain 25 frequencies, indexed by key from
+C3 (index 0) through C5 (index 24). `split` contains 13 frequencies:
+indices 0-11 are shared by rim keys 0-11 and strike keys 12-23; index 12
+is strike key 24 (C5). Only the Split base pitch is shared by each pair;
+their relative tuning and all other per-key settings remain independent.
+Keys in order are:
+
+| Index | Key | Index | Key | Index | Key |
+|---:|---|---:|---|---:|---|
+| 0 | C3 | 9 | A3 | 18 | F#4 |
+| 1 | C#3 | 10 | A#3 | 19 | G4 |
+| 2 | D3 | 11 | B3 | 20 | G#4 |
+| 3 | D#3 | 12 | C4 | 21 | A4 |
+| 4 | E3 | 13 | C#4 | 22 | A#4 |
+| 5 | F3 | 14 | D4 | 23 | B4 |
+| 6 | F#3 | 15 | D#4 | 24 | C5 |
+| 7 | G3 | 16 | E4 |  |  |
+| 8 | G#3 | 17 | F4 |  |  |
+
+The engine accepts duplicate pitches and any key ordering. Frequencies
+outside 40-10,000 Hz, missing tables, wrong array lengths, and legacy
+schemas are rejected as a whole; factory defaults are used for that boot.
 
 ### SD recording and playback
 
@@ -75,7 +119,7 @@ saved settings are not imported).
 
 ### Stereo delay
 
-The volume knob cycles **Master -> Delay -> Reverb**. On the Delay page, turning the encoder moves a combined control: the first half raises the wet mix from 0 to 50% at 35% feedback; the second half holds mix at 50% and raises feedback to a bounded 120%, entering self-oscillation above 100%. Hold SHIFT and turn to change delay time from 40 to 500 ms; changes glide smoothly without clearing echoes. The delay runs at 0% mix so history survives later mix changes and preset loads. Delay positions are saved in `BOWLS/state.json`; existing v7 presets keep their settings and receive the dry, 256 ms delay defaults.
+The volume knob cycles **Master -> Delay -> Reverb**. On the Delay page, turning the encoder moves a combined control: the first half raises the wet mix from 0 to 50% at 35% feedback; the second half holds mix at 50% and raises feedback to a bounded 120%, entering self-oscillation above 100%. Hold SHIFT and turn to change delay time from 40 to 500 ms; changes glide smoothly without clearing echoes. The delay runs at 0% mix so history survives later mix changes and preset loads. Delay positions are saved in `BOWLS/state.json`; schema v9 is required and legacy v7/v8 presets are rejected.
 
 ### Audio routing (send-FX loop)
 

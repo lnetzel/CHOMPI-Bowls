@@ -241,6 +241,7 @@ struct Params
 {
     Params()
     {
+        pitch_hz = bowls::FactoryPitchTables();
         for(int m = 0; m < bowls::kPlayModeCount; ++m)
             for(int w = 0; w < bowls::kKeyCount; ++w)
             {
@@ -278,6 +279,7 @@ struct Params
     std::atomic<int>      profile_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
     std::atomic<int>      brightness_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
     std::atomic<int>      decay_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
+    bowls::PitchTables    pitch_hz;
 
     // Volume knob page 2: temple-room reverb dry/wet mix.
     std::atomic<int>      reverb_mix_ticks{
@@ -498,12 +500,6 @@ float BowlGainTicks(int ticks)
     return 1.0f + static_cast<float>(ticks - 16) * (1.0f / 16.0f);
 }
 
-// Per-bowl tuning ratio: 2^((t-16)/16) - 16 = unison, 0 = 1/2x, 32 = 2x.
-float TuneRatioTicks(int ticks)
-{
-    return powf(2.0f, static_cast<float>(ticks - 16) * (1.0f / 16.0f));
-}
-
 // ---------------------------------------------------------------------------
 // Shared parameter setters (local encoders AND MIDI CCs): absolute,
 // change-gated (an unchanged value never marks the preset dirty) and
@@ -711,8 +707,8 @@ void ApplyVoiceSettings(int v, PlayMode mode, int key)
  *  the key's tuning (which scales the complete modal structure). */
 float KeyFundamental(PlayMode mode, int key)
 {
-    return bowls::BaseFundamentalHz(mode, key)
-           * TuneRatioTicks(
+    return bowls::BaseFundamentalHz(mode, key, params.pitch_hz)
+           * bowls::TuneRatioFromTicks(
                params.tune_ticks[ModeIdx(mode)][key].load(
                    std::memory_order_relaxed));
 }
@@ -2325,6 +2321,7 @@ void RenderLeds()
 chompi::BowlsPreset SnapshotParams()
 {
     chompi::BowlsPreset p;
+    p.pitch_hz = params.pitch_hz;
     p.mode = static_cast<uint8_t>(ModeIdx(play_modes.Mode()));
     p.volume = static_cast<uint8_t>(
         params.volume_ticks.load(std::memory_order_relaxed));
@@ -2367,6 +2364,7 @@ void ApplyPreset(const chompi::BowlsPreset& p)
     // no voices exist yet, so nothing can be interrupted; latch and
     // performance state stay at their transient defaults).
     play_modes.Init(static_cast<PlayMode>(p.mode));
+    params.pitch_hz = p.pitch_hz;
     params.volume_ticks.store(p.volume, std::memory_order_relaxed);
     params.strike_ticks.store(p.strike, std::memory_order_relaxed);
     params.shimmer_ticks.store(p.shimmer, std::memory_order_relaxed);

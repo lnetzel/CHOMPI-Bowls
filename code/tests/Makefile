@@ -38,7 +38,7 @@ baseline: baseline_gen.exe
 
 # Play-modes feature tests (plans/improve-play-modes.md): the
 # hardware-independent mode/key/latch state machine, the clean-pad
-# envelope DSP, and the v6 preset schema (needs coreJSON, compiled as
+# envelope DSP, and the v9 preset schema (needs coreJSON, compiled as
 # C99 like the firmware does).
 modes-test: play_modes_test.exe pad_test.exe preset_test.exe
 	./play_modes_test.exe
@@ -78,7 +78,7 @@ stereo_bbd_delay_test.exe: stereo_bbd_delay_test.cpp ../src/StereoBbdDelay.h
 audio_routing_test.exe: audio_routing_test.cpp ../src/audio_routing.h ../src/bowl_scale.h
 	$(CXX) $(CXXFLAGS) -o $@ audio_routing_test.cpp
 
-play_modes_test.exe: play_modes_test.cpp ../src/play_modes.h ../src/bowl_scale.h ../src/voice_allocator.h
+play_modes_test.exe: play_modes_test.cpp ../src/play_modes.h ../src/bowl_scale.h ../src/voice_allocator.h ../src/control_mappings.h
 	$(CXX) $(CXXFLAGS) -o $@ play_modes_test.cpp
 
 pad_test.exe: pad_test.cpp ../src/bowl_voice.h ../src/bowl_profile.h ../src/bowl_scale.h
@@ -86,7 +86,7 @@ pad_test.exe: pad_test.cpp ../src/bowl_voice.h ../src/bowl_profile.h ../src/bowl
 
 COREJSON_DIR = ../libs/coreJSON/source
 
-preset_test.exe: preset_test.cpp ../src/BowlsPreset.h core_json_host.o
+preset_test.exe: preset_test.cpp ../src/BowlsPreset.h ../src/bowl_scale.h core_json_host.o
 	$(CXX) $(CXXFLAGS) -I$(COREJSON_DIR)/include -o $@ preset_test.cpp core_json_host.o
 
 core_json_host.o: $(COREJSON_DIR)/core_json.c

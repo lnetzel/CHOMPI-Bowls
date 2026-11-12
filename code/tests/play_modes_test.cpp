@@ -24,6 +24,7 @@
 
 #include "play_modes.h"
 #include "voice_allocator.h"
+#include "control_mappings.h"
 
 #include <cstdio>
 
@@ -85,17 +86,42 @@ void TestMappings()
     }
     Check(ok, "M1b full modes: 25 distinct ascending", "");
 
+    bowls::PitchTables custom = bowls::FactoryPitchTables();
+    custom.strikes[3] = 321.25f;
+    custom.rimming[3] = 654.5f;
+    custom.split[4] = 777.75f;
+    Check(FloatEq(bowls::BaseFundamentalHz(PlayMode::kStrikes, 3, custom),
+                  321.25f)
+              && FloatEq(bowls::BaseFundamentalHz(PlayMode::kRimming, 3,
+                                                   custom),
+                         654.5f)
+              && FloatEq(bowls::BaseFundamentalHz(PlayMode::kSplit, 4,
+                                                   custom),
+                         777.75f)
+              && FloatEq(bowls::BaseFundamentalHz(PlayMode::kSplit, 16,
+                                                   custom),
+                         777.75f),
+          "M1c custom tables preserve mode and Split pairing", "");
+        Check(std::fabs(bowls::TuneRatioFromTicks(0) - 0.5f) < 0.00001f
+            && std::fabs(bowls::TuneRatioFromTicks(8) - 0.7071068f)
+                < 0.00001f
+            && std::fabs(bowls::TuneRatioFromTicks(16) - 1.0f) < 0.00001f
+            && std::fabs(bowls::TuneRatioFromTicks(24) - 1.4142136f)
+                < 0.00001f
+            && std::fabs(bowls::TuneRatioFromTicks(32) - 2.0f) < 0.00001f,
+           "M1d relative tuning ratio remains 0.5x to 2x", "");
+
     Check(bowls::kModeShortcutKey[0] == 6 && bowls::kModeShortcutKey[1] == 8
               && bowls::kModeShortcutKey[2] == 10,
-          "M1c shortcuts are lower F#/G#/A# (6/8/10)", "");
+           "M1e shortcuts are lower F#/G#/A# (6/8/10)", "");
     Check(PlayModes::IsModeShortcut(6) && PlayModes::IsModeShortcut(8)
               && PlayModes::IsModeShortcut(10)
               && !PlayModes::IsModeShortcut(7),
-          "M1d IsModeShortcut", "");
+          "M1f IsModeShortcut", "");
     Check(PlayModes::ShortcutMode(6) == PlayMode::kStrikes
               && PlayModes::ShortcutMode(8) == PlayMode::kRimming
               && PlayModes::ShortcutMode(10) == PlayMode::kSplit,
-          "M1e ShortcutMode", "");
+          "M1g ShortcutMode", "");
 }
 
 // -- M2: shortcut consumption ----------------------------------------------

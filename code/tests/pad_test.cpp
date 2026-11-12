@@ -177,6 +177,26 @@ int main()
                 ok = false;
         }
         Check(ok, "P4c pad register sweep bounded", "");
+
+        bool range_ok = true;
+        const float bases[] = {40.0f, 10000.0f};
+        const float tunes[] = {0.5f, 1.0f, 2.0f};
+        for(int profile = 0; profile < bowls::kNumProfiles; ++profile)
+            for(float base : bases)
+                for(float tune : tunes)
+                {
+                    bowls::BowlVoice endpoint;
+                    endpoint.Init(kFs);
+                    endpoint.SetProfile(profile);
+                    endpoint.SelectForRub(base * tune, 1.0f);
+                    endpoint.SetPadGate(true);
+                    const Out output = Run(endpoint,
+                                           static_cast<long>(0.1 * kFs));
+                    if(!output.finite || output.peak > 2.0)
+                        range_ok = false;
+                }
+        Check(range_ok,
+              "P4d 40-10000 Hz pad range across profiles bounded", "");
     }
 
     // P5: pad + full wheel drive - the bounded mix can never exceed
