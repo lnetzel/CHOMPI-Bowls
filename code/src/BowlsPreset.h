@@ -47,17 +47,17 @@ struct BowlsPreset
 
     /* boot defaults (mirror Params in chompi_main.cpp) */
     static constexpr int kDefaultMode       = kModeStrikes;
-    static constexpr int kDefaultVolume     = 16;
+    static constexpr int kDefaultVolume     = 8;
     static constexpr int kDefaultStrike     = 16;
     static constexpr int kDefaultBrightness = 16;
     static constexpr int kDefaultDecay      = 16;
     static constexpr int kDefaultShimmer    = 8;
     static constexpr int kDefaultProfile    = 0;
     static constexpr int kDefaultPan        = 16; /* centre */
-    static constexpr int kDefaultReverbMix  = 8;  /* subtle temple room */
+    static constexpr int kDefaultReverbMix  = 0;  /* subtle temple room */
     static constexpr int kDefaultDelayMix   = 0;  /* dry, 35% feedback */
-    static constexpr int kDefaultDelayTime  = 15; /* 256 ms */
-    static constexpr int kDefaultBowlVol    = 16; /* unity gain (0 dB) */
+    static constexpr int kDefaultDelayTime  = 0; /* 256 ms */
+    static constexpr int kDefaultBowlVol    = 8; /* unity gain (0 dB) */
     static constexpr int kDefaultTune       = 16; /* unison (ratio 1) */
     static constexpr float kMinPitchHz = 40.0f;
     static constexpr float kMaxPitchHz = 10000.0f;
