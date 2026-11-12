@@ -52,11 +52,14 @@ switches (64-127 = on) use their own conversions, documented per row.
 
 The active play mode decides what a note does; in Split it also decides
 the bowl frequency. Note names assume C4 = MIDI 60 (some DAWs label
-octaves differently). Frequencies are the untuned bowl fundamentals -
-each bowl's saved tuning (CC 76) scales them 0.5x-2x, and the resonance
-character (CC 70) changes the modal structure, not this map.
+octaves differently). Frequencies below are the factory untuned
+fundamentals; the offline v9 `pitch_hz` tables can change a key's base
+frequency without changing its MIDI note. Each key's saved tuning (CC 76)
+then scales that base 0.5x-2x, and resonance character (CC 70) changes the
+modal structure. Base pitches have no MIDI CC; see the offline editing
+procedure and complete key/index mapping in [README.md](README.md#offline-base-pitch-editing).
 
-| MIDI note | Name | Key | Strikes / Rimming | Split action | Split base Hz |
+| MIDI note | Name | Key | Factory Strikes / Rimming Hz | Split action | Factory Split Hz |
 |---|---|---|---|---|---|
 | 48 | C3 | 0 | 99.0 Hz | Select rim bowl 1 | 99.0 |
 | 49 | C#3 | 1 | 112.7 Hz | Select rim bowl 2 | 146.0 |
