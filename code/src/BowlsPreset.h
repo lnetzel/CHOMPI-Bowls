@@ -1,13 +1,9 @@
 /** @file BowlsPreset.h
- *  @brief SD-card state model for CHOMPI-BOWLS: one versioned JSON file
- *  (BOWLS/state.json), host-testable (no Daisy dependencies).
+ *  @brief SD-card preset model for CHOMPI-BOWLS: 15 versioned JSON slots,
+ *  host-testable (no Daisy dependencies).
  *
- *  All panel parameters live in a single document that is autosaved
- *  shortly after the last change and loaded at boot, so the instrument
- *  remembers its state across power cycles (spec section 1).
- *
- *  Schema v9: editable per-mode base-pitch tables atop v8. Legacy
- *  schemas are rejected; a missing state file uses the embedded template.
+ *  Schema v9 stores all persistent panel parameters, including editable
+ *  per-mode base-pitch tables. Legacy schemas are rejected.
  */
 #pragma once
 #include <cstdint>
@@ -100,6 +96,109 @@ struct BowlsPreset
     }
 };
 
+/** RAM cache for the 15 white-key preset slots. Performance edits do not
+ *  mutate this bank; only explicit save/copy/erase operations dirty slots. */
+class BowlsPresetBank
+{
+  public:
+    static constexpr int kNumSlots = 15;
+
+    void Init()
+    {
+        dirty_mask_ = 0;
+        for(int slot = 0; slot < kNumSlots; ++slot)
+        {
+            slots_[slot].SetDefaults();
+            valid_[slot] = false;
+            revision_[slot] = 0;
+        }
+    }
+
+    bool IsValid(int slot) const
+    {
+        return slot >= 0 && slot < kNumSlots && valid_[slot];
+    }
+
+    const BowlsPreset &Get(int slot) const { return slots_[slot]; }
+
+    void Save(int slot, const BowlsPreset &preset)
+    {
+        if(slot < 0 || slot >= kNumSlots)
+            return;
+        slots_[slot] = preset;
+        valid_[slot] = true;
+        MarkDirty(slot);
+    }
+
+    bool Copy(int source, int destination)
+    {
+        if(source < 0 || source >= kNumSlots || destination < 0
+           || destination >= kNumSlots || source == destination
+           || !valid_[source])
+            return false;
+        slots_[destination] = slots_[source];
+        valid_[destination] = true;
+        MarkDirty(destination);
+        return true;
+    }
+
+    bool Erase(int slot)
+    {
+        if(slot < 0 || slot >= kNumSlots || !valid_[slot])
+            return false;
+        valid_[slot] = false;
+        MarkDirty(slot);
+        return true;
+    }
+
+    void LoadSlot(int slot, const BowlsPreset &preset)
+    {
+        if(slot < 0 || slot >= kNumSlots)
+            return;
+        slots_[slot] = preset;
+        valid_[slot] = true;
+    }
+
+    int NextDirtySlot() const
+    {
+        for(int slot = 0; slot < kNumSlots; ++slot)
+            if(IsDirty(slot))
+                return slot;
+        return -1;
+    }
+
+    bool IsDirty(int slot) const
+    {
+        return slot >= 0 && slot < kNumSlots
+               && (dirty_mask_ & Bit(slot)) != 0;
+    }
+
+    uint32_t Revision(int slot) const
+    {
+        return slot >= 0 && slot < kNumSlots ? revision_[slot] : 0;
+    }
+
+    void ClearDirtyIfRevision(int slot, uint32_t revision)
+    {
+        if(slot >= 0 && slot < kNumSlots && revision_[slot] == revision)
+            dirty_mask_ &= ~Bit(slot);
+    }
+
+  private:
+    static constexpr uint32_t Bit(int slot) { return 1u << slot; }
+
+    void MarkDirty(int slot)
+    {
+        dirty_mask_ |= Bit(slot);
+        ++revision_[slot];
+    }
+
+    BowlsPreset slots_[kNumSlots];
+    bool        valid_[kNumSlots];
+    uint32_t    dirty_mask_;
+    uint32_t    revision_[kNumSlots];
+};
+
 /** Append one `,"name":[v0,..,vN-1]` array at `off` (a scalar field
  *  always precedes the arrays, hence the leading comma). Returns the
  *  new offset, or 0 when the buffer is too small. */
@@ -140,13 +239,50 @@ inline size_t AppendFloatValues(char *buf, size_t size, size_t off,
         if(!std::isfinite(values[i]) || values[i] < BowlsPreset::kMinPitchHz
            || values[i] > BowlsPreset::kMaxPitchHz)
             return 0;
-        n = snprintf(buf + off, size - off, "%s%.3f", i == 0 ? "" : ",",
-                     static_cast<double>(values[i]));
+        const uint32_t milli_hz = static_cast<uint32_t>(
+            std::lround(static_cast<double>(values[i]) * 1000.0));
+        n = snprintf(buf + off, size - off, "%s%u.%03u",
+                     i == 0 ? "" : ",",
+                     static_cast<unsigned>(milli_hz / 1000u),
+                     static_cast<unsigned>(milli_hz % 1000u));
         if(n < 0 || static_cast<size_t>(n) >= size - off)
             return 0;
         off += static_cast<size_t>(n);
     }
     n = snprintf(buf + off, size - off, "]");
+    if(n < 0 || static_cast<size_t>(n) >= size - off)
+        return 0;
+    return off + static_cast<size_t>(n);
+}
+
+inline size_t AppendPitchObject(char *buf, size_t size, size_t off,
+                                const BowlsPreset &preset)
+{
+    int n = snprintf(buf + off, size - off,
+                     ",\"pitch_hz\":{\"strikes\":");
+    if(n < 0 || static_cast<size_t>(n) >= size - off)
+        return 0;
+    off += static_cast<size_t>(n);
+    off = AppendFloatValues(buf, size, off, preset.pitch_hz.strikes,
+                            bowls::kKeyCount);
+    if(off == 0)
+        return 0;
+    n = snprintf(buf + off, size - off, ",\"rimming\":");
+    if(n < 0 || static_cast<size_t>(n) >= size - off)
+        return 0;
+    off += static_cast<size_t>(n);
+    off = AppendFloatValues(buf, size, off, preset.pitch_hz.rimming,
+                            bowls::kKeyCount);
+    if(off == 0)
+        return 0;
+    n = snprintf(buf + off, size - off, ",\"split\":");
+    if(n < 0 || static_cast<size_t>(n) >= size - off)
+        return 0;
+    off += static_cast<size_t>(n);
+    off = AppendFloatValues(buf, size, off, preset.pitch_hz.split, 13);
+    if(off == 0)
+        return 0;
+    n = snprintf(buf + off, size - off, "}}");
     if(n < 0 || static_cast<size_t>(n) >= size - off)
         return 0;
     return off + static_cast<size_t>(n);
@@ -192,33 +328,7 @@ inline size_t Serialize(const BowlsPreset &p, char *buf, size_t size)
                           BowlsPreset::kBankSlots);
     if(off == 0)
         return 0;
-    n = snprintf(buf + off, size - off, ",\"pitch_hz\":{\"strikes\":");
-    if(n < 0 || static_cast<size_t>(n) >= size - off)
-        return 0;
-    off += static_cast<size_t>(n);
-    off = AppendFloatValues(buf, size, off, p.pitch_hz.strikes,
-                            bowls::kKeyCount);
-    if(off == 0)
-        return 0;
-    n = snprintf(buf + off, size - off, ",\"rimming\":");
-    if(n < 0 || static_cast<size_t>(n) >= size - off)
-        return 0;
-    off += static_cast<size_t>(n);
-    off = AppendFloatValues(buf, size, off, p.pitch_hz.rimming,
-                            bowls::kKeyCount);
-    if(off == 0)
-        return 0;
-    n = snprintf(buf + off, size - off, ",\"split\":");
-    if(n < 0 || static_cast<size_t>(n) >= size - off)
-        return 0;
-    off += static_cast<size_t>(n);
-    off = AppendFloatValues(buf, size, off, p.pitch_hz.split, 13);
-    if(off == 0)
-        return 0;
-    n = snprintf(buf + off, size - off, "}}");
-    if(n < 0 || static_cast<size_t>(n) >= size - off)
-        return 0;
-    return off + static_cast<size_t>(n);
+    return AppendPitchObject(buf, size, off, p);
 }
 
 inline void SkipWhitespace(const char *buf, size_t len, size_t &index)
@@ -431,114 +541,7 @@ inline bool QueryPitchArrayStrict(char *buf, size_t len, const char *query,
     return i + 1 == value_len && value[i] == ']';
 }
 
-inline char *FindText(char *buf, size_t start, size_t end, const char *text)
-{
-    const size_t text_len = strlen(text);
-    if(text_len == 0 || end > strlen(buf) || start > end
-       || text_len > end - start)
-        return nullptr;
-    for(size_t i = start; i + text_len <= end; ++i)
-        if(memcmp(buf + i, text, text_len) == 0)
-            return buf + i;
-    return nullptr;
-}
-
-inline bool FillEmptyPitchArray(char *buf, size_t &len, size_t capacity,
-                                size_t object_start, size_t &object_end,
-                                const char *name,
-                                const float *defaults, int count,
-                                bool &changed)
-{
-    char marker[24];
-    const int marker_len = snprintf(marker, sizeof(marker), "\"%s\"", name);
-    if(marker_len < 0 || static_cast<size_t>(marker_len) >= sizeof(marker))
-        return false;
-    char *key = FindText(buf, object_start, object_end, marker);
-    if(key == nullptr)
-        return false;
-
-    size_t i = static_cast<size_t>(key - buf) + static_cast<size_t>(marker_len);
-    SkipWhitespace(buf, object_end, i);
-    if(i >= object_end || buf[i++] != ':')
-        return false;
-    SkipWhitespace(buf, object_end, i);
-    if(i >= object_end || buf[i++] != '[')
-        return false;
-
-    for(int n = 0; n < count; ++n)
-    {
-        SkipWhitespace(buf, object_end, i);
-        if(i >= object_end)
-            return false;
-
-        if(buf[i] == ',' || buf[i] == ']')
-        {
-            char value[24];
-            const int value_len
-                = snprintf(value, sizeof(value), "%.3f",
-                           static_cast<double>(defaults[n]));
-            if(value_len <= 0
-               || static_cast<size_t>(value_len) >= sizeof(value)
-               || len + static_cast<size_t>(value_len) >= capacity)
-                return false;
-            memmove(buf + i + value_len, buf + i, len - i + 1);
-            memcpy(buf + i, value, static_cast<size_t>(value_len));
-            len += static_cast<size_t>(value_len);
-            object_end += static_cast<size_t>(value_len);
-            i += static_cast<size_t>(value_len);
-            changed = true;
-        }
-        else
-        {
-            size_t value_end = 0;
-            if(!NumberTokenEnd(buf, object_end, i, value_end))
-                return false;
-            i = value_end;
-        }
-
-        SkipWhitespace(buf, object_end, i);
-        const char expected = n + 1 < count ? ',' : ']';
-        if(i >= object_end || buf[i++] != expected)
-            return false;
-    }
-    return true;
-}
-
-inline bool FillEmptyPitchValues(char *buf, size_t &len, size_t capacity,
-                                 bool &changed)
-{
-    changed = false;
-    if(len >= capacity || buf[len] != '\0')
-        return false;
-
-    char *key = FindText(buf, 0, len, "\"pitch_hz\"");
-    if(key == nullptr)
-        return false;
-    size_t i = static_cast<size_t>(key - buf) + strlen("\"pitch_hz\"");
-    SkipWhitespace(buf, len, i);
-    if(i >= len || buf[i++] != ':')
-        return false;
-    SkipWhitespace(buf, len, i);
-    if(i >= len || buf[i++] != '{')
-        return false;
-    const size_t object_start = i;
-    char *object_close = FindText(buf, object_start, len, "}");
-    if(object_close == nullptr)
-        return false;
-    size_t object_end = static_cast<size_t>(object_close - buf);
-
-    const bowls::PitchTables &defaults = bowls::FactoryPitchTables();
-    return FillEmptyPitchArray(buf, len, capacity, object_start, object_end,
-                               "strikes", defaults.strikes, bowls::kKeyCount,
-                               changed)
-           && FillEmptyPitchArray(buf, len, capacity, object_start, object_end,
-                                  "rimming", defaults.rimming,
-                                  bowls::kKeyCount, changed)
-           && FillEmptyPitchArray(buf, len, capacity, object_start, object_end,
-                                  "split", defaults.split, 13, changed);
-}
-
-/** Parse a complete current-schema state document. Legacy, malformed,
+/** Parse a complete current-schema preset document. Legacy, malformed,
  *  truncated and partially valid documents are rejected without
  *  changing the destination. */
 inline bool Parse(char *buf, size_t len, BowlsPreset &p)
@@ -610,19 +613,37 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
     return true;
 }
 
-inline bool ParseWithPitchRecovery(char *buf, size_t &len, size_t capacity,
-                                   BowlsPreset &p, bool &recovered)
+/** Recover slots written by firmware without newlib-nano float printf
+ *  support. Their non-pitch fields are intact, but pitch values were NULs. */
+inline bool ParseWithPitchFallback(char *buf, size_t len, size_t capacity,
+                                   const BowlsPreset &fallback,
+                                   BowlsPreset &p)
 {
-    recovered = false;
     if(Parse(buf, len, p))
         return true;
-
-    bool changed = false;
-    if(!FillEmptyPitchValues(buf, len, capacity, changed) || !changed
-       || !Parse(buf, len, p))
+    if(buf == nullptr || len >= capacity)
         return false;
-    recovered = true;
-    return true;
+
+    static const char kPitchMarker[] = ",\"pitch_hz\":{";
+    char *pitch_object = std::strstr(buf, kPitchMarker);
+    if(pitch_object == nullptr)
+        return false;
+    const size_t pitch_offset = static_cast<size_t>(pitch_object - buf);
+    bool has_nul_in_pitch = false;
+    for(size_t i = 0; i < pitch_offset; ++i)
+        if(buf[i] == '\0')
+            return false;
+    for(size_t i = pitch_offset; i < len; ++i)
+        has_nul_in_pitch |= buf[i] == '\0';
+    if(!has_nul_in_pitch)
+        return false;
+
+    const size_t repaired_len
+        = AppendPitchObject(buf, capacity, pitch_offset, fallback);
+    if(repaired_len == 0 || repaired_len >= capacity)
+        return false;
+    buf[repaired_len] = '\0';
+    return Parse(buf, repaired_len, p);
 }
 
 } // namespace chompi

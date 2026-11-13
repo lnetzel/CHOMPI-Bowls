@@ -10,9 +10,8 @@
 // (preserved Rimming latches are protected in Strikes). Switching modes
 // never interrupts ringing voices or reverb tails: outgoing voices keep
 // their sound, and the wheel only drives notes started in the current
-// mode. All parameters autosave to BOWLS/state.json on the SD card and
-// are restored at boot (the mode included; the LOOP latch and all
-// performance state are never saved).
+// mode. Persistent parameters are stored only in explicitly saved presets;
+// the LOOP latch and all other performance state remain transient.
 //
 //   Play modes            : SHIFT + lower F# (key 6) = STRIKES - all 25
 //                         keys strike distinct ascending bowls; the
@@ -84,6 +83,9 @@
 //                         Send FX routing (audio_routing.h); the
 //                         combo is consumed - it never sounds a note
 //                         or moves the bowl editor target.
+//                         SHIFT + White Key 1-15 loads that preset;
+//                         SHIFT + Black F#4/G#4/A#4 enters erase/copy/save
+//                         selection, confirmed with a fresh SHIFT press.
 //   LOOP (KEY_28)       : tap toggles the Rimming note latch (yellow);
 //                         retained in Strikes, cleared on entry to Split;
 //                         hold with PLAY for recording arm/stop; in
@@ -157,6 +159,7 @@ constexpr int   kBlockSize  = 24;
 constexpr size_t kSdRingFrames = 1u << 18;
 
 chompi::ChompiHardware hw;
+chompi::BowlsPresetBank preset_bank;
 chompi::PresetStorage  preset_storage;
 chompi::sd_audio::StereoRing<kSdRingFrames> DSY_SDRAM_BSS record_ring;
 chompi::sd_audio::StereoRing<kSdRingFrames> DSY_SDRAM_BSS playback_ring;
@@ -361,10 +364,22 @@ constexpr int kEnc1PageCharacter = 1;
 constexpr int kEnc1PageTune      = 2;
 volatile int  enc1_page_         = kEnc1PageVolume;
 
-// Autosave: a parameter change re-arms a 1 s debounce; the main loop
-// writes BOWLS/state.json once the panel has been quiet for 1 s.
-volatile bool     params_dirty      = false;
-volatile uint32_t params_changed_at = 0;
+enum PresetUiMode : int
+{
+    kPresetNone = 0,
+    kPresetSaveSel,
+    kPresetSaving,
+    kPresetEraseSel,
+    kPresetErasing,
+    kPresetCopySrc,
+    kPresetCopyDest,
+    kPresetCopying
+};
+volatile int      preset_mode_ = kPresetNone;
+volatile int      preset_sel_slot_ = -1;
+volatile int      preset_copy_src_ = -1;
+volatile int      preset_current_ = -1;
+volatile uint32_t preset_anim_t_ = 0;
 
 // SD save-status flash on the SHIFT LED (persistence diagnostic): a
 // short green pulse = a save completed; 1 s red = a save failed.
@@ -426,11 +441,10 @@ bool transport_wait_for_release_ = true;
 constexpr int kWhiteKeyIndices[15] = {
     0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21, 23, 24};
 
-void MarkDirty(uint32_t now)
-{
-    params_dirty      = true;
-    params_changed_at = now;
-}
+chompi::BowlsPreset SnapshotParams();
+void ApplyPreset(const chompi::BowlsPreset &p, bool boot);
+void PresetShiftConfirm();
+bool PresetKeyEvent(int key, bool down, bool shift);
 
 float TicksToNorm(int ticks)
 {
@@ -467,7 +481,6 @@ void BumpTicks(std::atomic<int>& ticks, int inc, Overlay overlay, uint32_t now)
                              std::memory_order_relaxed);
         params.overlay_until.store(now + kOverlayMs,
                                    std::memory_order_relaxed);
-        MarkDirty(now);
     }
 }
 
@@ -501,26 +514,22 @@ float BowlGainTicks(int ticks)
 }
 
 // ---------------------------------------------------------------------------
-// Shared parameter setters (local encoders AND MIDI CCs): absolute,
-// change-gated (an unchanged value never marks the preset dirty) and
-// overlay-free - the caller decides on LED feedback (MIDI CCs never
-// show the white-key bars; the encoder handlers call ShowOverlay).
+// Shared parameter setters (local encoders AND MIDI CCs): absolute and
+// change-gated. Persistence occurs only through explicit preset operations.
 // ---------------------------------------------------------------------------
 
-/** Clamp-store a 0..32 tick cell; on an actual change mark dirty.
- *  Returns true when the value changed. */
-bool StoreTicks(std::atomic<int>& cell, int value, uint32_t now)
+/** Clamp-store a 0..32 tick cell. Returns true when the value changed. */
+bool StoreTicks(std::atomic<int>& cell, int value, uint32_t)
 {
     value = value < 0 ? 0 : (value > kTickCount ? kTickCount : value);
     if(value == cell.load(std::memory_order_relaxed))
         return false;
     cell.store(value, std::memory_order_relaxed);
-    MarkDirty(now);
     return true;
 }
 
-/** Clamp-store a 0..4 profile cell with change-gated dirty marking. */
-bool StoreProfile(std::atomic<int>& cell, int value, uint32_t now)
+/** Clamp-store a 0..4 profile cell. */
+bool StoreProfile(std::atomic<int>& cell, int value, uint32_t)
 {
     value = value < 0 ? 0
                       : (value >= bowls::kNumProfiles
@@ -529,7 +538,6 @@ bool StoreProfile(std::atomic<int>& cell, int value, uint32_t now)
     if(value == cell.load(std::memory_order_relaxed))
         return false;
     cell.store(value, std::memory_order_relaxed);
-    MarkDirty(now);
     return true;
 }
 
@@ -1181,6 +1189,7 @@ bool HandleTransport()
 
         if(hw.PlayPressed() && !hw.LoopPressed() && play_hold_valid_
            && !play_solo_cancelled_ && !play_gesture_consumed_
+           && preset_mode_ == kPresetNone
            && now - play_hold_started_ >= 2000)
         {
             play_gesture_consumed_ = true;
@@ -1351,7 +1360,6 @@ void ApplyMidiCc(int src, uint8_t cc, uint8_t val, uint32_t now)
                 // level must not unexpectedly drive the new mode.
                 midi_rub_level_[bowls::kDin] = 0.0f;
                 midi_rub_level_[bowls::kUsb] = 0.0f;
-                MarkDirty(now); // the mode is saved
             }
             break;
         case ccmap::kCcEditBank: // CC 81: 0/1/2 fixed, 127 follow
@@ -1447,6 +1455,10 @@ void ApplyControls()
         return;
     const uint32_t now   = System::GetNow();
     const bool     shift = hw.ShiftHeld();
+    static bool prev_shift_held = false;
+    if(shift && !prev_shift_held)
+        PresetShiftConfirm();
+    prev_shift_held = shift;
 
     // Volume knob press: page 1 = master, page 2 = delay, page 3 = reverb.
     // The newly active page's bar shows as confirmation.
@@ -1704,7 +1716,9 @@ void ApplyControls()
     }
     ApplyWheel();
 
-    // Route every key through the play-mode state machine: SHIFT +
+    // Preset gestures are intercepted before routing and play-mode
+    // handling, so white keys select slots only in the matching context.
+    // Route every remaining key through the play-mode state machine: SHIFT +
     // Black 6/Black 7 are consumed as the audio-routing selection
     // first; SHIFT + lower F#/G#/A# are consumed as mode shortcuts
     // through release; every other key press/release is interpreted
@@ -1714,6 +1728,8 @@ void ApplyControls()
     {
         if(hw.KeyRising(key))
         {
+            if(PresetKeyEvent(key, true, shift))
+                continue;
             // SHIFT + Black 6 (C#4, key 13) / Black 7 (D#4, key 15):
             // audio routing selection (audio_routing.h). Consumed
             // before the play-mode state machine, so the combo never
@@ -1744,18 +1760,19 @@ void ApplyControls()
                     // outgoing voices keep their sound and reverb; only
                     // wheel control stops (ApplyWheel above) and
                     // latched-only pads release (SyncPadGates below).
-                    // The mode is persisted. MIDI rubbing silences too:
+                    // MIDI rubbing silences too:
                     // a held CC 1 level must not unexpectedly drive the
                     // newly selected mode.
                     midi_rub_level_[bowls::kDin] = 0.0f;
                     midi_rub_level_[bowls::kUsb] = 0.0f;
-                    MarkDirty(now);
                     break;
                 default: break;
             }
         }
         else if(hw.KeyFalling(key))
         {
+            if(PresetKeyEvent(key, false, shift))
+                continue;
             // Releases reconcile through the state machine (PadOn) and
             // SyncPadGates below - no explicit action needed here.
             const bool was_note =
@@ -2073,6 +2090,69 @@ void DrawOverlayBar(uint32_t now)
     }
 }
 
+bool DrawPresetKeybed(uint32_t now)
+{
+    const int mode = preset_mode_;
+    if(mode == kPresetNone)
+        return false;
+
+    for(unsigned led = 0; led < chompi_leds::kSmtLedCount; ++led)
+        chompi_leds::SetSmtLed(led, 0, 0, 0);
+
+    const bool pre_blink = (now / 250u) % 2u == 0;
+    const bool animation = mode == kPresetSaving || mode == kPresetCopying
+                           || mode == kPresetErasing;
+    const bool save_like = mode == kPresetSaveSel || mode == kPresetCopyDest;
+    for(int slot = 0; slot < 15; ++slot)
+    {
+        uint8_t red = 0, green = 0, blue = 0;
+        const bool filled = preset_bank.IsValid(slot);
+        if(animation)
+        {
+            if(filled)
+            {
+                red = 26;
+                blue = 48;
+            }
+        }
+        else if(mode == kPresetCopyDest && slot == preset_copy_src_)
+            green = 48;
+        else if(slot == preset_sel_slot_)
+        {
+            if(mode == kPresetEraseSel)
+                red = 48;
+            else
+                blue = 48;
+        }
+        else if(filled && slot == preset_current_)
+        {
+            if(save_like || pre_blink)
+                red = green = blue = 48;
+        }
+        else if(preset_storage.IsIncompatibleSlot(slot) && pre_blink)
+            red = 48;
+        else if(filled)
+        {
+            if(save_like)
+            {
+                red = 26;
+                blue = 48;
+            }
+            else if(pre_blink)
+            {
+                red = 10;
+                blue = 19;
+            }
+        }
+        else if(save_like && pre_blink)
+            red = green = blue = 19;
+
+        chompi_leds::SetSmtLed(
+            chompi_leds::kWhiteKeyLeds[slot], red, green, blue);
+    }
+    return true;
+}
+
 bool DrawTransportKeybed(uint32_t now)
 {
     const uint32_t feedback_until
@@ -2144,7 +2224,8 @@ bool DrawTransportKeybed(uint32_t now)
      * and playback modes. A chord (LOOP joins), a cancelled solo hold,
      * or an already-completed hold never fills. */
     if(hw.PlayPressed() && !hw.LoopPressed() && play_hold_valid_
-       && !play_gesture_consumed_ && !play_solo_cancelled_)
+       && !play_gesture_consumed_ && !play_solo_cancelled_
+       && preset_mode_ == kPresetNone)
     {
         const unsigned lit = static_cast<unsigned>(
             (static_cast<uint64_t>(now - play_hold_started_) * 15u + 1999u)
@@ -2185,7 +2266,7 @@ void RenderLeds()
 
     const uint32_t now = System::GetNow();
     const bool transport_keybed = DrawTransportKeybed(now);
-    if(!transport_keybed)
+    if(!transport_keybed && !DrawPresetKeybed(now))
         DrawOverlayBar(now);
 
     // While SHIFT is held, highlight the active mode's lower black
@@ -2202,6 +2283,62 @@ void RenderLeds()
             static_cast<uint8_t>(48.0f * bowls::kRoutingColorR),
             static_cast<uint8_t>(48.0f * bowls::kRoutingColorG),
             static_cast<uint8_t>(48.0f * bowls::kRoutingColorB));
+
+        if(preset_mode_ == kPresetNone
+           && playback_ui_state.load(std::memory_order_acquire)
+                  == PlaybackUiState::kNormal)
+        {
+            // SHIFT advertises loadable slots above other keybed overlays.
+            for(int slot = 0; slot < 15; ++slot)
+                chompi_leds::SetSmtLed(chompi_leds::kWhiteKeyLeds[slot],
+                                       0, 0, 0);
+            if(preset_storage.NoSdCard())
+            {
+                for(int slot = 0; slot < 15; ++slot)
+                    chompi_leds::SetSmtLed(
+                        chompi_leds::kWhiteKeyLeds[slot], 48, 0, 0);
+            }
+            else
+            {
+                for(int slot = 0; slot < 15; ++slot)
+                    if(preset_bank.IsValid(slot))
+                        chompi_leds::SetSmtLed(
+                            chompi_leds::kWhiteKeyLeds[slot],
+                            48, 48, 48);
+            }
+        }
+    }
+
+    const PlaybackUiState preset_playback_state
+        = playback_ui_state.load(std::memory_order_acquire);
+    if(preset_playback_state == PlaybackUiState::kNormal
+       && (hw.ShiftHeld() || preset_mode_ != kPresetNone))
+    {
+        uint8_t erase_led = 0, copy_led = 0, save_led = 0;
+        if(!preset_storage.NoSdCard())
+        {
+            switch(preset_mode_)
+            {
+                case kPresetNone:
+                    erase_led = copy_led = save_led = 48;
+                    break;
+                case kPresetEraseSel:
+                case kPresetErasing:
+                    erase_led = 48;
+                    break;
+                case kPresetCopySrc:
+                case kPresetCopyDest:
+                case kPresetCopying:
+                    copy_led = 48;
+                    break;
+                default:
+                    save_led = 48;
+                    break;
+            }
+        }
+        chompi_leds::SetSmtLed(7, erase_led, 0, 0);
+        chompi_leds::SetSmtLed(8, 0, copy_led, 0);
+        chompi_leds::SetSmtLed(9, 0, 0, save_led);
     }
 
     // Panel LEDs (PTH chain).
@@ -2308,6 +2445,27 @@ void RenderLeds()
         chompi_leds::SetPthLed(chompi_leds::kPthShift,
                                on ? 48 : 0, 0, 0);
     }
+    if(!shift && preset_mode_ != kPresetNone)
+    {
+        const bool animation = preset_mode_ == kPresetSaving
+                               || preset_mode_ == kPresetCopying
+                               || preset_mode_ == kPresetErasing;
+        if(animation)
+        {
+            const uint8_t level = (now / 250u) % 2u == 0 ? 48 : 0;
+            chompi_leds::SetPthLed(chompi_leds::kPthShift,
+                                   level, level, level);
+        }
+        else if(preset_sel_slot_ >= 0
+                && (preset_mode_ == kPresetSaveSel
+                    || preset_mode_ == kPresetEraseSel
+                    || preset_mode_ == kPresetCopyDest))
+        {
+            const uint8_t level = (now / 250u) % 2u == 0 ? 48 : 0;
+            chompi_leds::SetPthLed(chompi_leds::kPthShift,
+                                   level, 0, 0);
+        }
+    }
     if(shift)
         chompi_leds::SetPthLed(chompi_leds::kPthShift, 40, 40, 40);
 
@@ -2358,12 +2516,16 @@ chompi::BowlsPreset SnapshotParams()
     return p;
 }
 
-void ApplyPreset(const chompi::BowlsPreset& p)
+void ApplyPreset(const chompi::BowlsPreset& p, bool boot)
 {
-    // Restore the saved mode (boot-time only, before audio starts:
-    // no voices exist yet, so nothing can be interrupted; latch and
-    // performance state stay at their transient defaults).
-    play_modes.Init(static_cast<PlayMode>(p.mode));
+    const PlayMode target_mode = static_cast<PlayMode>(p.mode);
+    if(boot)
+        play_modes.Init(target_mode);
+    else if(play_modes.SetMode(target_mode))
+    {
+        midi_rub_level_[bowls::kDin] = 0.0f;
+        midi_rub_level_[bowls::kUsb] = 0.0f;
+    }
     params.pitch_hz = p.pitch_hz;
     params.volume_ticks.store(p.volume, std::memory_order_relaxed);
     params.strike_ticks.store(p.strike, std::memory_order_relaxed);
@@ -2388,8 +2550,178 @@ void ApplyPreset(const chompi::BowlsPreset& p)
     params.reverb_mix_ticks.store(p.reverb_mix, std::memory_order_relaxed);
     params.delay_mix_ticks.store(p.delay_mix, std::memory_order_relaxed);
     params.delay_time_ticks.store(p.delay_time, std::memory_order_relaxed);
+    for(int v = 0; v < kVoiceCount; ++v)
+    {
+        const int key = voices[v].Key();
+        const int mode = voices[v].VoiceMode();
+        if(!voices[v].IsActive() || key < 0 || key >= bowls::kKeyCount
+           || mode < 0 || mode >= bowls::kPlayModeCount)
+            continue;
+        voices[v].SetBrightness(bowls::BrightnessFromTicks(
+            params.brightness_ticks[mode][key].load(
+                std::memory_order_relaxed)));
+        voices[v].SetDecayMult(DecayMultTicks(
+            params.decay_ticks[mode][key].load(std::memory_order_relaxed)));
+        voices[v].SetPan(PanNormTicks(
+            params.pan_ticks[mode][key].load(std::memory_order_relaxed)));
+        voices[v].SetBowlGain(BowlGainTicks(
+            params.bowl_vol_ticks[mode][key].load(
+                std::memory_order_relaxed)));
+    }
     ApplyDelayTargets();
     ApplyShimmerToVoices();
+    params.overlay_until.store(0, std::memory_order_relaxed);
+    SyncPadGates();
+}
+
+int PresetSlotForKey(int key)
+{
+    for(int slot = 0; slot < 15; ++slot)
+        if(kWhiteKeyIndices[slot] == key)
+            return slot;
+    return -1;
+}
+
+void PresetEnterMode(int mode)
+{
+    preset_mode_ = mode;
+    preset_sel_slot_ = -1;
+    preset_copy_src_ = -1;
+    params.overlay_until.store(0, std::memory_order_relaxed);
+}
+
+void PresetLoadSlot(int slot)
+{
+    if(!preset_bank.IsValid(slot))
+        return;
+    ApplyPreset(preset_bank.Get(slot), false);
+    preset_current_ = slot;
+}
+
+void PresetShiftConfirm()
+{
+    if(preset_mode_ == kPresetNone || preset_storage.NoSdCard())
+        return;
+
+    switch(preset_mode_)
+    {
+        case kPresetSaveSel:
+            if(preset_sel_slot_ >= 0)
+            {
+                preset_bank.Save(preset_sel_slot_, SnapshotParams());
+                preset_storage.ClearIncompatibleSlot(preset_sel_slot_);
+                preset_current_ = preset_sel_slot_;
+                preset_mode_ = kPresetSaving;
+                preset_anim_t_ = System::GetNow();
+            }
+            break;
+        case kPresetEraseSel:
+            if(preset_sel_slot_ >= 0
+               && preset_bank.Erase(preset_sel_slot_))
+            {
+                preset_storage.ClearIncompatibleSlot(preset_sel_slot_);
+                if(preset_current_ == preset_sel_slot_)
+                    preset_current_ = -1;
+                preset_mode_ = kPresetErasing;
+                preset_anim_t_ = System::GetNow();
+            }
+            break;
+        case kPresetCopyDest:
+            if(preset_sel_slot_ >= 0
+               && preset_bank.Copy(preset_copy_src_, preset_sel_slot_))
+            {
+                preset_storage.ClearIncompatibleSlot(preset_sel_slot_);
+                preset_mode_ = kPresetCopying;
+                preset_anim_t_ = System::GetNow();
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+/** Match the CHOMPI-PIPES preset gestures while keeping note releases
+ *  for notes that began before a selection view was entered. */
+bool PresetKeyEvent(int key, bool down, bool shift)
+{
+    const PlaybackUiState playback_state
+        = playback_ui_state.load(std::memory_order_acquire);
+    if(playback_state != PlaybackUiState::kNormal)
+        return false;
+
+    if(preset_mode_ != kPresetNone)
+    {
+        if(preset_storage.NoSdCard())
+        {
+            preset_mode_ = kPresetNone;
+            preset_sel_slot_ = -1;
+            preset_copy_src_ = -1;
+            return true;
+        }
+        if(!down)
+            return play_modes.DownMode(bowls::Source::kLocal, key) < 0;
+
+        const int slot = PresetSlotForKey(key);
+        if(slot >= 0)
+        {
+            switch(preset_mode_)
+            {
+                case kPresetSaveSel:
+                    preset_sel_slot_ = slot;
+                    break;
+                case kPresetEraseSel:
+                    if(preset_bank.IsValid(slot))
+                        preset_sel_slot_ = slot;
+                    break;
+                case kPresetCopySrc:
+                    if(preset_bank.IsValid(slot))
+                    {
+                        preset_copy_src_ = slot;
+                        preset_sel_slot_ = -1;
+                        preset_mode_ = kPresetCopyDest;
+                    }
+                    break;
+                case kPresetCopyDest:
+                    if(slot != preset_copy_src_)
+                        preset_sel_slot_ = slot;
+                    break;
+                default:
+                    break;
+            }
+            return true;
+        }
+
+        if((key == 18 && preset_mode_ == kPresetEraseSel)
+           || (key == 20
+               && (preset_mode_ == kPresetCopySrc
+                   || preset_mode_ == kPresetCopyDest))
+           || (key == 22 && preset_mode_ == kPresetSaveSel))
+        {
+            preset_mode_ = kPresetNone;
+            preset_sel_slot_ = -1;
+            preset_copy_src_ = -1;
+        }
+        return true;
+    }
+
+    if(!down || !shift)
+        return false;
+
+    const int slot = PresetSlotForKey(key);
+    if(preset_storage.NoSdCard())
+        return slot >= 0 || key == 18 || key == 20 || key == 22;
+
+    if(key == 18)
+        PresetEnterMode(kPresetEraseSel);
+    else if(key == 20)
+        PresetEnterMode(kPresetCopySrc);
+    else if(key == 22)
+        PresetEnterMode(kPresetSaveSel);
+    else if(slot >= 0)
+        PresetLoadSlot(slot);
+    else
+        return false;
+    return true;
 }
 
 /** Boot-only SD status signal on the SHIFT LED (storage has no panel
@@ -2436,49 +2768,34 @@ int main()
     reverb.SetFeedback(0.82f);   // short-to-medium tail
     reverb.SetLpFreq(4500.0f);   // wood damps the highs
 
-    // SD card: mount, BOWLS/ folder, boot-load the saved state
-    // (no card / no file: factory defaults, saves become inert).
+    // Presets: load the embedded factory state and cache the 15 saved
+    // slots. A populated slot is loaded only by an explicit user action.
+    preset_bank.Init();
     preset_storage.Init();
     chompi::BowlsPreset preset;
-    const bool          preset_loaded = preset_storage.Load(preset);
-    if(preset_loaded)
-        ApplyPreset(preset);
+    const bool factory_loaded = preset_storage.LoadFactoryDefaults(preset);
+    if(!factory_loaded)
+    {
+        BOWLS_LOG("SD: embedded factory preset is invalid");
+        preset.SetDefaults();
+    }
+    ApplyPreset(preset, true);
+    preset_storage.LoadAll(preset_bank);
 
-    // Boot-time SD diagnostic (one signal, before audio starts):
-    //   3 red blinks   = no card detected - settings will NOT persist
-    //   2 amber blinks = card OK, no state file; the embedded template is
-    //                    loaded and its first save has been queued
-    //   3 amber blinks = card OK, file present but unreadable/rejected
-    //                    (old schema version, read error, corruption)
-    //   1 green pulse  = saved state loaded
-    // The same line goes to the USB serial log.
     if(preset_storage.NoSdCard())
     {
-        BOWLS_LOG("SD: no card at boot - saves inert");
+        BOWLS_LOG("SD: no card at boot - presets unavailable");
         BootBlink(3, 48, 0, 0);
     }
-    else if(!preset_loaded)
+    else if(!factory_loaded)
     {
-        BOWLS_LOG("SD: load failed, code %d", preset_storage.LoadFail());
+        BOWLS_LOG("SD: factory preset load failed");
         BootBlink(3, 40, 24, 0);
     }
     else
     {
-        if(preset_storage.CreatedDefaultState())
-        {
-            BOWLS_LOG("SD: initialized from default template; saving state");
-            BootBlink(2, 40, 24, 0);
-        }
-        else if(preset_storage.RepairedPitchValues())
-        {
-            BOWLS_LOG("SD: empty pitch values restored to factory defaults");
-            BootBlink(1, 0, 40, 0);
-        }
-        else
-        {
-            BOWLS_LOG("SD: saved state loaded");
-            BootBlink(1, 0, 40, 0);
-        }
+        BOWLS_LOG("SD: factory preset active; saved slots ready");
+        BootBlink(1, 0, 40, 0);
     }
 
     // Show the volume bar briefly at boot.
@@ -2520,8 +2837,23 @@ int main()
 
         /* Staged, non-blocking SD-card work: one small FatFS step per
          * pass, at thread level only (never in the audio ISR). */
-        preset_storage.Service();
+        preset_storage.Service(preset_bank);
         sd_recorder.Service(preset_storage, System::GetNow());
+        const uint32_t now = System::GetNow();
+        if((preset_mode_ == kPresetSaving || preset_mode_ == kPresetCopying
+            || preset_mode_ == kPresetErasing)
+           && now - preset_anim_t_ >= 1000)
+        {
+            preset_mode_ = kPresetNone;
+            preset_sel_slot_ = -1;
+            preset_copy_src_ = -1;
+        }
+        else if(preset_mode_ != kPresetNone && preset_storage.NoSdCard())
+        {
+            preset_mode_ = kPresetNone;
+            preset_sel_slot_ = -1;
+            preset_copy_src_ = -1;
+        }
         if(playback_entry_pending.load(std::memory_order_acquire)
            && !sd_recorder.IsBusy())
         {
@@ -2555,14 +2887,12 @@ int main()
             SetTransportFeedback(kFeedbackPlayerFatal, 2000);
         }
 
-        /* One serial diagnostic + SHIFT-LED flash per storage failure
-         * /recovery/completion: a failed save is never treated as
-         * successful - the state lives in RAM until it can be saved. */
+        /* One diagnostic and SHIFT-LED flash per preset write
+         * failure/recovery/completion. */
         const auto storage_event = preset_storage.ConsumeStatusEvent();
         if(storage_event == chompi::PresetStorage::kStatusFailed)
         {
-            BOWLS_LOG("SD: save failed - state kept in RAM, "
-                      "retrying");
+            BOWLS_LOG("SD: preset write failed - slot kept in RAM, retrying");
             sd_flash_r_     = 48;
             sd_flash_g_     = 0;
             sd_flash_b_     = 0;
@@ -2578,7 +2908,7 @@ int main()
         }
         else if(storage_event == chompi::PresetStorage::kStatusSaved)
         {
-            BOWLS_LOG("SD: state saved");
+            BOWLS_LOG("SD: preset saved");
             sd_flash_r_     = 0;
             sd_flash_g_     = 40;
             sd_flash_b_     = 0;
@@ -2586,9 +2916,7 @@ int main()
         }
 
         /* Card-presence edge: a card detected at boot that later reads
-         * as gone (or comes back) flips the SHIFT LED purple for 1 s
-         * and logs - the runtime disk_status recheck is a live poll
-         * that can disagree with the boot-time state. */
+         * as gone (or comes back) flashes the SHIFT LED and logs. */
         static bool sd_was_present = !preset_storage.NoSdCard();
         const bool  sd_present     = !preset_storage.NoSdCard();
         if(sd_was_present && !sd_present)
@@ -2604,34 +2932,6 @@ int main()
             BOWLS_LOG("SD: card detected");
         }
         sd_was_present = sd_present;
-
-        /* autosave 1 s after the last parameter change */
-        const uint32_t now = System::GetNow();
-        if(params_dirty
-           && static_cast<int32_t>(now - params_changed_at) >= 1000)
-        {
-            params_dirty = false;
-            preset_storage.RequestSave(SnapshotParams());
-            /* Trigger diagnostic: white pulse = autosave fired; purple
-             * 1 s instead when the card is (currently) seen as gone,
-             * which silently blocks the write in Service(). */
-            BOWLS_LOG("SD: autosave fired, card %s",
-                      preset_storage.NoSdCard() ? "GONE" : "present");
-            if(preset_storage.NoSdCard())
-            {
-                sd_flash_r_     = 32;
-                sd_flash_g_     = 0;
-                sd_flash_b_     = 40;
-                sd_flash_until_ = now + 1000;
-            }
-            else
-            {
-                sd_flash_r_     = 32;
-                sd_flash_g_     = 32;
-                sd_flash_b_     = 32;
-                sd_flash_until_ = now + 150;
-            }
-        }
 
         RenderLeds();
     }

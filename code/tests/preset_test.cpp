@@ -1,4 +1,4 @@
-// Host-side tests for the v9 preset schema and editable base pitches.
+// Host-side tests for the v9 preset schema, slot bank, and editable pitches.
 // Run with `make -C code/tests modes-test` from the MSYS2 UCRT64 shell.
 
 #include "BowlsPreset.h"
@@ -230,56 +230,55 @@ int main()
         Check(ok, "round-trip 63 pitches, six banks, all modes", "");
     }
 
-    // Older/corrupt state files can contain empty pitch slots. Recover only
-    // those slots, keep the other state, and serialize a valid replacement.
+    // Slot cache operations are explicit; editing a separate live snapshot
+    // cannot dirty or silently replace a saved preset.
     {
-        char damaged[kStorageJsonSize];
-        char repaired_json[kStorageJsonSize];
-        char empty_array[128];
-        const chompi::BowlsPreset src = PatternPreset(2);
-        size_t len = chompi::Serialize(src, damaged, sizeof(damaged));
-        size_t off = 0;
-        bool ok = len > 0;
-        const char* names[] = {"strikes", "rimming", "split"};
-        const int counts[] = {bowls::kKeyCount, bowls::kKeyCount, 13};
-        for(int array = 0; array < 3 && ok; ++array)
-        {
-            off = 0;
-            empty_array[off++] = '[';
-            for(int i = 0; i < counts[array]; ++i)
-            {
-                empty_array[off++] = ' ';
-                if(i + 1 < counts[array])
-                {
-                    empty_array[off++] = ',';
-                    empty_array[off++] = ' ';
-                }
-            }
-            empty_array[off++] = ']';
-            empty_array[off] = '\0';
-            ok = ReplacePitchArray(damaged, names[array], empty_array);
-        }
+        chompi::BowlsPresetBank bank;
+        bank.Init();
+        chompi::BowlsPreset live_state = PatternPreset(0);
+        const chompi::BowlsPreset saved_state = live_state;
+        bank.LoadSlot(0, saved_state);
+        live_state.volume = 12;
+        const bool ok = bank.IsValid(0) && !bank.IsDirty(0)
+                        && bank.NextDirtySlot() == -1
+                        && Same(bank.Get(0), saved_state)
+                        && !Same(live_state, saved_state);
+        Check(ok, "performance edits do not auto-dirty cached slots", "");
+    }
 
-        len = std::strlen(damaged);
-        chompi::BowlsPreset recovered;
-        bool did_recover = false;
-        if(!ok || !chompi::ParseWithPitchRecovery(
-                      damaged, len, sizeof(damaged), recovered, did_recover))
+    // Saving, copying and erasing dirty only the explicitly selected slots.
+    {
+        chompi::BowlsPresetBank bank;
+        bank.Init();
+        const chompi::BowlsPreset first = PatternPreset(0);
+        bank.Save(0, first);
+        const uint32_t first_revision = bank.Revision(0);
+        bool ok = bank.IsValid(0) && bank.IsDirty(0)
+                  && bank.NextDirtySlot() == 0
+                  && bank.Copy(0, 14) && bank.IsValid(14)
+                  && bank.IsDirty(14) && Same(bank.Get(14), first)
+                  && !bank.Copy(14, 14) && !bank.Copy(1, 2);
+
+        bank.ClearDirtyIfRevision(0, first_revision - 1);
+        if(!bank.IsDirty(0))
+            ok = false;
+        bank.ClearDirtyIfRevision(0, first_revision);
+        if(bank.IsDirty(0) || !bank.IsDirty(14))
             ok = false;
 
-        chompi::BowlsPreset round_trip;
-        round_trip.SetDefaults();
-        const size_t repaired_len
-            = ok ? chompi::Serialize(recovered, repaired_json,
-                                     sizeof(repaired_json))
-                 : 0;
-        if(!did_recover || !SameTicks(recovered, src)
-           || !SamePitches(recovered.pitch_hz, bowls::FactoryPitchTables())
-           || repaired_len == 0
-           || !chompi::Parse(repaired_json, repaired_len, round_trip)
-           || !Same(recovered, round_trip))
+        const uint32_t copy_revision = bank.Revision(14);
+        if(!bank.Erase(14) || bank.IsValid(14)
+           || bank.Revision(14) == copy_revision || !bank.IsDirty(14)
+           || bank.Erase(14) || bank.Copy(14, 3))
             ok = false;
-        Check(ok, "empty pitch slots recover and reserialize", "");
+        bank.ClearDirtyIfRevision(14, copy_revision);
+        if(!bank.IsDirty(14))
+            ok = false;
+        bank.ClearDirtyIfRevision(14, bank.Revision(14));
+        bank.Save(15, first);
+        if(bank.IsDirty(14) || bank.IsValid(15))
+            ok = false;
+        Check(ok, "explicit save/copy/erase slot bookkeeping", "");
     }
 
     // Measure maximum numeric size, terminator and undersized-buffer failure.
@@ -337,7 +336,9 @@ int main()
         for(int cycle = 0; cycle < 4; ++cycle)
         {
             const size_t len = chompi::Serialize(src, buf, sizeof(buf));
-            if(cycle == 0 && std::strstr(buf, "100.123") == nullptr)
+            if(cycle == 0
+               && (std::strstr(buf, "100.123") == nullptr
+                   || std::memchr(buf, '\0', len) != nullptr))
                 ok = false;
             chompi::BowlsPreset next;
             next.SetDefaults();
@@ -347,6 +348,41 @@ int main()
         }
         Check(ok && SamePitches(src.pitch_hz, PatternPreset(0).pitch_hz),
               "three-decimal save cycles remain stable", "");
+    }
+
+    // Older firmware's nano printf wrote NULs instead of pitch decimals.
+    {
+        const chompi::BowlsPreset src = PatternPreset(1);
+        chompi::BowlsPreset fallback;
+        fallback.SetDefaults();
+        size_t len = chompi::Serialize(src, buf, sizeof(buf));
+        char damaged[kStorageJsonSize];
+        bool ok = len > 0;
+        if(ok)
+            std::memcpy(damaged, buf, len + 1);
+        char* pitch_object
+            = ok ? std::strstr(damaged, ",\"pitch_hz\":{") : nullptr;
+        char* first_pitch
+            = pitch_object == nullptr
+                  ? nullptr
+                  : std::strstr(pitch_object, "\"strikes\":[");
+        if(first_pitch == nullptr)
+            ok = false;
+        else
+        {
+            first_pitch += std::strlen("\"strikes\":[");
+            *first_pitch = '\0';
+            chompi::BowlsPreset recovered;
+            recovered.SetDefaults();
+            if(chompi::Parse(damaged, len, recovered)
+               || !chompi::ParseWithPitchFallback(
+                   damaged, len, sizeof(damaged), fallback, recovered)
+               || !SameTicks(recovered, src)
+               || !SamePitches(recovered.pitch_hz, fallback.pitch_hz))
+                ok = false;
+        }
+        Check(ok, "damaged pitch JSON recovers with factory pitch fallback",
+              "");
     }
 
     // Strict versions and pitch arrays; failed parses preserve the target.

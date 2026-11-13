@@ -1,17 +1,9 @@
 /** @file PresetStorage.h
- *  @brief SD-card state storage for CHOMPI-BOWLS: mount + boot load of
- *  BOWLS/state.json, and a staged, non-blocking writer that runs ONLY
- *  from the main loop.
+ *  @brief SD-card storage for 15 CHOMPI-BOWLS presets.
  *
- *  Single-file variant of the CHOMPI-PhaseOff PresetStorage: the state is
- *  written as state.tmp, synced, then renamed over state.json, so a power
- *  loss can corrupt at most the write in flight and the previous file
- *  survives. Each Service() call performs at most one small FatFS stage,
- *  so the watchdog keeps being fed and the audio ISR is never stalled.
- *
- *  Card presence is re-checked once per second via disk_status(0);
- *  without a card the firmware simply runs on its RAM defaults and saves
- *  are dropped.
+ *  Each slot is stored as BOWLS/P01.json .. P15.json. Writes/deletes are
+ *  staged from the main loop, and the complete slot cache stays in RAM;
+ *  performance parameter changes alone never dirty or write a slot.
  */
 #pragma once
 #include "daisy.h"
@@ -28,141 +20,96 @@ extern "C" const char default_state_json_end[];
 class PresetStorage
 {
   public:
-    /* v9 state includes six 75-entry banks and 63 three-decimal pitch
-     * values. The measured worst-case JSON, plus formatted offline input,
-     * fits this 4096-byte budget including the terminator. Buffers stay
-     * members in SRAM (.bss): the SDMMC IDMA
-     * cannot reach DTCMRAM stack. */
-    static constexpr size_t   kJsonSize    = 4096;
-    static constexpr int      kMaxRetries  = 3;
-    static constexpr uint32_t kBackoffMs   = 250;
+    static constexpr int      kNumSlots   = BowlsPresetBank::kNumSlots;
+    static constexpr size_t   kJsonSize   = 4096;
+    static constexpr int      kMaxRetries = 3;
+    static constexpr uint32_t kBackoffMs  = 250;
 
-    /** One-shot storage status change, for a single serial diagnostic
-     *  per failure/recovery (no panel LED by request). */
     enum StatusEvent : uint8_t
     {
         kStatusNone = 0,
-        kStatusFailed,    // a save cycle failed
-        kStatusRecovered, // a write completed after a failure
-        kStatusSaved      // a write completed (no prior failure)
+        kStatusFailed,
+        kStatusRecovered,
+        kStatusSaved
     };
 
     void Init()
     {
         no_sd_card_      = true;
+        fs_leased_       = false;
         stage_           = kIdle;
+        retry_stage_     = kIdle;
+        slot_            = -1;
         retries_         = 0;
         last_disk_check_ = 0;
         retry_at_        = 0;
-        pending_         = false;
-        save_seq_        = 0;
-        written_seq_     = 0;
+        retry_blocked_   = false;
+        rescan_slot_     = kNumSlots;
         failed_          = false;
-        repaired_pitch_values_ = false;
-        created_default_state_ = false;
         event_           = kStatusNone;
-        fs_leased_       = false;
+        json_len_        = 0;
+        valid_snapshot_  = false;
+        factory_preset_.SetDefaults();
+        for(int slot = 0; slot < kNumSlots; ++slot)
+            incompatible_[slot] = false;
 
-        /* same SDMMC/FatFS init as chompi-tape/PhaseOff; with no card
-         * inserted this configures the peripheral without touching a
-         * card and the disk_status check below leaves storage disabled
-         * instead of hanging the boot */
         daisy::SdmmcHandler::Config sd_cfg;
         sd_cfg.speed = daisy::SdmmcHandler::Speed::FAST;
         sd_cfg.width = daisy::SdmmcHandler::BusWidth::BITS_4;
         sdmmc_.Init(sd_cfg);
         fsi_.Init(daisy::FatFSInterface::Config::MEDIA_SD);
         f_mount(&fsi_.GetSDFileSystem(), fsi_.GetSDPath(), 1);
-        f_mkdir("BOWLS"); /* FR_EXIST is fine */
+        f_mkdir("BOWLS");
         no_sd_card_ = disk_status(0) != RES_OK;
     }
 
-    /** Boot load. A missing state file loads the embedded template and
-     *  queues its first save. Returns false when the card cannot be read
-     *  or the file/template fails validation. LoadFail(): 1 = no card,
-     *  3 = open/read error, 4 = invalid content or template. */
-    bool Load(BowlsPreset &p)
+    /** Parse the embedded factory template. This is used on every boot,
+     *  whether or not an SD card or any saved slot is present. */
+    bool LoadFactoryDefaults(BowlsPreset &preset)
     {
-        if(no_sd_card_)
-        {
-            load_fail_ = 1;
+        const std::uintptr_t begin
+            = reinterpret_cast<std::uintptr_t>(default_state_json);
+        const std::uintptr_t end
+            = reinterpret_cast<std::uintptr_t>(default_state_json_end);
+        if(end < begin)
             return false;
-        }
-        /* read_fil_ and read_buf_ MUST be members (SRAM, .bss), never
-         * stack locals: with _FS_TINY=0 every FIL carries its own
-         * 512 B sector buffer and f_read DMAs the data sector into it.
-         * The main stack is in DTCMRAM, which the SDMMC IDMA cannot
-         * reach, so a stack FIL stalls the read forever. */
-        const FRESULT open_result
-            = f_open(&read_fil_, "BOWLS/state.json", FA_READ);
-        if(open_result == FR_NO_FILE)
-            return LoadDefaultTemplate(p);
-        if(open_result != FR_OK)
-        {
-            load_fail_ = 3;
+
+        size_t len = 0;
+        if(!CopyCompactJson(default_state_json,
+                            static_cast<size_t>(end - begin), read_buf_,
+                            sizeof(read_buf_), len))
             return false;
-        }
-        if(f_size(&read_fil_) >= kJsonSize)
-        {
-            f_close(&read_fil_);
-            load_fail_ = 4;
+        if(!Parse(read_buf_, len, preset))
             return false;
-        }
-        UINT    br = 0;
-        FRESULT r  = f_read(&read_fil_, read_buf_, kJsonSize - 1, &br);
-        f_close(&read_fil_);
-        if(r != FR_OK)
-        {
-            load_fail_ = 3;
-            return false;
-        }
-        read_buf_[br] = '\0';
-        size_t json_len = br;
-        bool   repaired_pitch_values = false;
-        if(!ParseWithPitchRecovery(read_buf_, json_len, sizeof(read_buf_), p,
-                                   repaired_pitch_values))
-        {
-            load_fail_ = 4;
-            return false;
-        }
-        load_fail_ = 0;
-        if(repaired_pitch_values)
-        {
-            repaired_pitch_values_ = true;
-            RequestSave(p);
-        }
+        factory_preset_ = preset;
         return true;
     }
 
-    /** Failure code of the last Load() (0 = it succeeded). */
-    int LoadFail() const { return load_fail_; }
-    bool RepairedPitchValues() const { return repaired_pitch_values_; }
-    bool CreatedDefaultState() const { return created_default_state_; }
-
-    /** Snapshot the state and request a save. If a write is already in
-     *  flight, the newest snapshot is written when the next cycle starts
-     *  (save_seq_ tracks that a newer snapshot exists). */
-    void RequestSave(const BowlsPreset &p)
+    /** Load each slot before audio starts. Missing or invalid files leave
+     *  their slots empty; malformed files are marked for LED feedback. */
+    void LoadAll(BowlsPresetBank &bank)
     {
-        snapshot_ = p;
-        ++save_seq_;
-        pending_ = true;
+        rescan_slot_ = kNumSlots;
+        if(no_sd_card_)
+            return;
+        f_mkdir("BOWLS");
+        for(int slot = 0; slot < kNumSlots; ++slot)
+            LoadSlotFromCard(slot, bank, false);
     }
 
-    /** One storage stage per main-loop pass. */
-    void Service()
+    /** One bounded slot-read or one staged write/delete step per pass. */
+    void Service(BowlsPresetBank &bank)
     {
         const uint32_t now = daisy::System::GetNow();
 
-        /* 1 s card-presence check */
         if(now - last_disk_check_ >= 1000)
         {
             last_disk_check_ = now;
-            const bool gone  = disk_status(0) != RES_OK;
-            if(gone)
+            if(disk_status(0) != RES_OK)
             {
-                Abort(); /* drop any in-flight write */
+                Abort();
                 no_sd_card_ = true;
+                rescan_slot_ = kNumSlots;
             }
             else
             {
@@ -170,57 +117,83 @@ class PresetStorage
                 {
                     if(fs_leased_)
                         return;
-                    /* card (re-)inserted: re-mount; the next RequestSave
-                     * writes the current RAM state */
                     f_mount(&fsi_.GetSDFileSystem(), fsi_.GetSDPath(), 1);
                     f_mkdir("BOWLS");
+                    rescan_slot_ = 0;
                 }
                 no_sd_card_ = false;
             }
         }
 
-        if(no_sd_card_ || fs_leased_ || !pending_)
+        if(no_sd_card_ || fs_leased_)
             return;
+
+        if(rescan_slot_ < kNumSlots)
+        {
+            LoadSlotFromCard(rescan_slot_, bank, true);
+            ++rescan_slot_;
+            return;
+        }
+
+        if(retry_blocked_)
+        {
+            if(static_cast<int32_t>(now - retry_at_) < 0)
+                return;
+            retry_blocked_ = false;
+        }
+
+        if(stage_ == kIdle)
+        {
+            __disable_irq();
+            slot_ = bank.NextDirtySlot();
+            if(slot_ < 0)
+            {
+                __enable_irq();
+                return;
+            }
+            valid_snapshot_    = bank.IsValid(slot_);
+            preset_snapshot_   = bank.Get(slot_);
+            revision_snapshot_ = bank.Revision(slot_);
+            __enable_irq();
+
+            retries_ = 0;
+            if(valid_snapshot_)
+            {
+                json_len_ = Serialize(preset_snapshot_, json_, kJsonSize);
+                if(json_len_ == 0)
+                {
+                    FailCycle(now);
+                    return;
+                }
+                stage_ = kOpenTmp;
+            }
+            else
+                stage_ = kDelete;
+        }
 
         switch(stage_)
         {
             case kIdle:
-                json_len_    = Serialize(snapshot_, json_, kJsonSize);
-                written_seq_ = save_seq_;
-                if(json_len_ > 0)
-                {
-                    retries_ = 0;
-                    stage_   = kOpenTmp;
-                }
-                else
-                {
-                    pending_ = false;
-                    if(!failed_)
-                    {
-                        failed_ = true;
-                        event_ = kStatusFailed;
-                    }
-                }
                 break;
 
             case kOpenTmp:
-                if(f_open(&fil_, "BOWLS/state.tmp",
+            {
+                char name[24];
+                SlotName(slot_, name, true);
+                if(f_open(&fil_, name,
                           (FA_OPEN_ALWAYS | FA_WRITE | FA_READ))
                    == FR_OK)
-                {
                     stage_ = kWrite;
-                }
                 else
-                {
                     Retry(now, kOpenTmp);
-                }
                 break;
+            }
 
             case kWrite:
             {
                 UINT bw = 0;
-                const FRESULT r = f_write(&fil_, json_, json_len_, &bw);
-                if(r == FR_OK && bw == json_len_)
+                const FRESULT result = f_write(&fil_, json_, json_len_, &bw);
+                if(result == FR_OK && bw == json_len_)
                     stage_ = kSyncClose;
                 else
                     Retry(now, kOpenTmp);
@@ -229,14 +202,11 @@ class PresetStorage
 
             case kSyncClose:
             {
-                /* truncate at the write pointer: the tmp file may hold a
-                 * longer stale body from a previous attempt, and trailing
-                 * garbage would fail JSON_Validate on load */
-                FRESULT r = f_truncate(&fil_);
-                if(r == FR_OK)
-                    r = f_sync(&fil_);
+                FRESULT result = f_truncate(&fil_);
+                if(result == FR_OK)
+                    result = f_sync(&fil_);
                 f_close(&fil_);
-                if(r == FR_OK)
+                if(result == FR_OK)
                     stage_ = kUnlinkOld;
                 else
                     Retry(now, kOpenTmp);
@@ -245,8 +215,10 @@ class PresetStorage
 
             case kUnlinkOld:
             {
-                const FRESULT r = f_unlink("BOWLS/state.json");
-                if(r == FR_OK || r == FR_NO_FILE)
+                char name[24];
+                SlotName(slot_, name, false);
+                const FRESULT result = f_unlink(name);
+                if(result == FR_OK || result == FR_NO_FILE)
                     stage_ = kRename;
                 else
                     Retry(now, kOpenTmp);
@@ -255,23 +227,26 @@ class PresetStorage
 
             case kRename:
             {
-                /* done either way: a failed rename is not retried (the
-                 * .tmp stays behind and is ignored by Load) */
-                const FRESULT rr
-                    = f_rename("BOWLS/state.tmp", "BOWLS/state.json");
-                stage_ = kIdle;
-                if(written_seq_ == save_seq_)
-                    pending_ = false;
-                /* else: a newer snapshot arrived mid-write - loop again */
-                if(failed_)
-                {
-                    /* a write cycle completed after a failure: report
-                     * the recovery once */
-                    failed_ = false;
-                    event_  = kStatusRecovered;
-                }
-                else if(rr == FR_OK)
-                    event_ = kStatusSaved;
+                char from[24], to[24];
+                SlotName(slot_, from, true);
+                SlotName(slot_, to, false);
+                const FRESULT result = f_rename(from, to);
+                if(result == FR_OK)
+                    CompleteCycle(bank);
+                else
+                    Retry(now, kOpenTmp);
+                break;
+            }
+
+            case kDelete:
+            {
+                char name[24];
+                SlotName(slot_, name, false);
+                const FRESULT result = f_unlink(name);
+                if(result == FR_OK || result == FR_NO_FILE)
+                    CompleteCycle(bank);
+                else
+                    Retry(now, kDelete);
                 break;
             }
 
@@ -283,19 +258,20 @@ class PresetStorage
         }
     }
 
-    /** Card state, polled by the UI. */
     bool NoSdCard() const { return no_sd_card_; }
+    bool Busy() const { return stage_ != kIdle || rescan_slot_ < kNumSlots; }
 
-    /** A write cycle is in flight. */
-    bool Busy() const { return stage_ != kIdle; }
+    bool IsIncompatibleSlot(int slot) const
+    {
+        return slot >= 0 && slot < kNumSlots && incompatible_[slot];
+    }
 
-    /** A write cycle exhausted its retries and no successful write has
-     *  completed since. The RAM state is kept and saving retries on the
-     *  next change / card insertion. */
-    bool Degraded() const { return failed_; }
+    void ClearIncompatibleSlot(int slot)
+    {
+        if(slot >= 0 && slot < kNumSlots)
+            incompatible_[slot] = false;
+    }
 
-    /** Reserve the mounted volume for a recorder/player operation. The
-     *  lease is acquired and released only by the main-loop owner. */
     bool TryAcquireFilesystem()
     {
         if(no_sd_card_ || fs_leased_ || Busy())
@@ -305,51 +281,15 @@ class PresetStorage
     }
 
     void ReleaseFilesystem() { fs_leased_ = false; }
-    bool FilesystemLeased() const { return fs_leased_; }
 
-    /** Consume the one-shot failure/recovery event (kStatusNone when
-     *  nothing changed): the caller emits ONE serial diagnostic per
-     *  transition, never per retry. */
     StatusEvent ConsumeStatusEvent()
     {
-        const StatusEvent e = event_;
-        event_              = kStatusNone;
-        return e;
+        const StatusEvent result = event_;
+        event_ = kStatusNone;
+        return result;
     }
 
   private:
-    bool LoadDefaultTemplate(BowlsPreset &p)
-    {
-        const std::uintptr_t begin
-            = reinterpret_cast<std::uintptr_t>(default_state_json);
-        const std::uintptr_t end
-            = reinterpret_cast<std::uintptr_t>(default_state_json_end);
-        if(end < begin)
-        {
-            load_fail_ = 4;
-            return false;
-        }
-
-        size_t len = 0;
-        if(!CopyCompactJson(default_state_json,
-                            static_cast<size_t>(end - begin), read_buf_,
-                            sizeof(read_buf_), len))
-        {
-            load_fail_ = 4;
-            return false;
-        }
-        if(!Parse(read_buf_, len, p))
-        {
-            load_fail_ = 4;
-            return false;
-        }
-
-        RequestSave(p);
-        created_default_state_ = true;
-        load_fail_ = 0;
-        return true;
-    }
-
     enum Stage : uint8_t
     {
         kIdle = 0,
@@ -358,74 +298,149 @@ class PresetStorage
         kSyncClose,
         kUnlinkOld,
         kRename,
+        kDelete,
         kBackoff
     };
 
-    /** Failed stage: retry a few times with a short backoff, then drop
-     *  the write (the RAM state remains; the next change re-requests).
-     *  The failure is reported once and stays latched until a write
-     *  completes. */
+    static void SlotName(int slot, char *out, bool tmp)
+    {
+        snprintf(out, 24, "BOWLS/P%02d.%s", slot + 1,
+                 tmp ? "tmp" : "json");
+    }
+
+    void LoadSlotFromCard(int slot, BowlsPresetBank &bank, bool gaps_only)
+    {
+        if(gaps_only)
+        {
+            __disable_irq();
+            const bool occupied = bank.IsValid(slot) || bank.IsDirty(slot);
+            __enable_irq();
+            if(occupied)
+                return;
+        }
+
+        char name[24];
+        SlotName(slot, name, false);
+        const FRESULT opened = f_open(&read_fil_, name, FA_READ);
+        if(opened == FR_NO_FILE)
+        {
+            incompatible_[slot] = false;
+            return;
+        }
+        if(opened != FR_OK)
+        {
+            incompatible_[slot] = true;
+            return;
+        }
+        if(f_size(&read_fil_) >= kJsonSize)
+        {
+            f_close(&read_fil_);
+            incompatible_[slot] = true;
+            return;
+        }
+        UINT bytes_read = 0;
+        const FRESULT result
+            = f_read(&read_fil_, read_buf_, kJsonSize - 1, &bytes_read);
+        f_close(&read_fil_);
+        if(result != FR_OK)
+        {
+            incompatible_[slot] = true;
+            return;
+        }
+
+        read_buf_[bytes_read] = '\0';
+        BowlsPreset parsed;
+        if(!ParseWithPitchFallback(read_buf_, bytes_read, sizeof(read_buf_),
+                                   factory_preset_, parsed))
+        {
+            incompatible_[slot] = true;
+            return;
+        }
+
+        __disable_irq();
+        if(!gaps_only || (!bank.IsValid(slot) && !bank.IsDirty(slot)))
+        {
+            bank.LoadSlot(slot, parsed);
+            incompatible_[slot] = false;
+        }
+        __enable_irq();
+    }
+
+    void CompleteCycle(BowlsPresetBank &bank)
+    {
+        __disable_irq();
+        bank.ClearDirtyIfRevision(slot_, revision_snapshot_);
+        __enable_irq();
+        stage_ = kIdle;
+        if(failed_)
+        {
+            failed_ = false;
+            event_ = kStatusRecovered;
+        }
+        else
+            event_ = kStatusSaved;
+    }
+
+    void FailCycle(uint32_t now)
+    {
+        stage_ = kIdle;
+        retry_blocked_ = true;
+        retry_at_ = now + 1000;
+        if(!failed_)
+        {
+            failed_ = true;
+            event_ = kStatusFailed;
+        }
+    }
+
     void Retry(uint32_t now, Stage retry_stage)
     {
         if(stage_ == kOpenTmp || stage_ == kWrite || stage_ == kSyncClose
-           || stage_ == kUnlinkOld)
-            f_close(&fil_); /* harmless if not open */
+           || stage_ == kUnlinkOld || stage_ == kRename)
+            f_close(&fil_);
         if(++retries_ >= kMaxRetries)
         {
-            stage_ = kIdle;
-            if(!failed_)
-            {
-                failed_ = true;
-                event_  = kStatusFailed;
-            }
+            FailCycle(now);
             return;
         }
         retry_stage_ = retry_stage;
-        retry_at_    = now + kBackoffMs;
-        stage_       = kBackoff;
+        retry_at_ = now + kBackoffMs;
+        stage_ = kBackoff;
     }
 
-    /** Card vanished mid-write: close and drop back to idle. */
     void Abort()
     {
         if(stage_ == kOpenTmp || stage_ == kWrite || stage_ == kSyncClose
-           || stage_ == kUnlinkOld)
+           || stage_ == kUnlinkOld || stage_ == kRename)
             f_close(&fil_);
         stage_ = kIdle;
+        retry_blocked_ = false;
     }
 
     daisy::SdmmcHandler   sdmmc_;
     daisy::FatFSInterface fsi_;
     FIL                   fil_;
-    FIL                   read_fil_; /* own FIL for the reader: the write
-                                      * path's fil_ may hold an open tmp
-                                      * file; both must stay off the
-                                      * DTCMRAM stack (IDMA, see above) */
+    FIL                   read_fil_;
 
     volatile bool no_sd_card_;
     volatile bool fs_leased_;
     Stage         stage_;
     Stage         retry_stage_;
+    int           slot_;
     int           retries_;
+    int           rescan_slot_;
     uint32_t      last_disk_check_;
     uint32_t      retry_at_;
+    bool          retry_blocked_;
 
-    BowlsPreset   snapshot_;
-    volatile bool pending_;
-    uint32_t      save_seq_;
-    uint32_t      written_seq_;
-    size_t        json_len_ = 0;
-    bool          failed_   = false; /* write failure latched until success */
-    bool          repaired_pitch_values_ = false;
-    bool          created_default_state_ = false;
-    uint8_t       load_fail_ = 0;    /* last Load() failure code */
-    StatusEvent   event_    = kStatusNone;
-    /* 32-byte alignment is MANDATORY: for whole-sector transfers FatFS
-     *  hands these buffers straight to the SDMMC IDMA, which requires a
-     *  word-aligned address and silently drops the low address bits
-     *  otherwise - an odd struct offset prepends junk bytes to the
-     *  file and smears the boot read (the v7 layout shift surfaced
-     *  this). 32 B also covers D-cache line maintenance. */
+    BowlsPreset   factory_preset_;
+    BowlsPreset   preset_snapshot_;
+    uint32_t      revision_snapshot_;
+    bool          valid_snapshot_;
+    volatile bool incompatible_[kNumSlots];
+    bool          failed_;
+    StatusEvent   event_;
+    size_t        json_len_;
     alignas(32) char json_[kJsonSize];
     alignas(32) char read_buf_[kJsonSize];
 };

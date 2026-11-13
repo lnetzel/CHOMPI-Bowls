@@ -9,7 +9,7 @@
  *  Note On treated as Note Off, and the 33-position tick conversion
  *  `t = (v * 32 + 63) / 127` for every saved rotary parameter.
  *
- *  Every parameter that is saved in BOWLS/state.json has a CC. All CCs
+ *  Every preset-saved rotary parameter has a CC. All CCs
  *  are absolute setters (not encoder increments) and set their values
  *  silently - incoming CCs never trigger the white-key parameter bars.
  */

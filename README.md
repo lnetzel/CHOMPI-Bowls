@@ -6,10 +6,10 @@ The firmware uses the BOOT_SRAM build setup and STM32H750 memory layout. It does
 
 ## Controls
 
-All sound parameters and the active play mode autosave to
-BOWLS/state.json on the SD card. Parameter bars are temporary ~500 ms
-overlays on the 15 white keys; with no bar up, held keys light white,
-ringing voices glow dim amber, and LOOP-latched notes glow yellow.
+Sound parameters and the active play mode are saved only when you
+explicitly save a preset. Parameter bars are temporary ~500 ms overlays
+on the 15 white keys; with no bar up, held keys light white, ringing
+voices glow dim amber, and LOOP-latched notes glow yellow.
 
 | Control | Click | Turn | SHIFT + Turn | Indication |
 |---|---|---|---|---|
@@ -21,7 +21,10 @@ ringing voices glow dim amber, and LOOP-latched notes glow yellow.
 | **Encoder 4** | - | Shimmer: paired-mode beating 0 .. 2x (16 = profile detune; live) | - | LED5 purple; centered purple bar |
 | **Transport wheel** | - | Rim the current mode's wheel set (see Play modes): turn speed = loudness; **clockwise = friction texture, counter-clockwise = clean sustained tone**; the last direction sticks per key while the wheel is still. The wheel never starts a strike and never revives a stolen note | - | Wheel LEDs (LED6/LED7) follow the rub level |
 | **Volume knob** | Switch page | Page 1: master volume. Page 2: delay mix/feedback. Page 3: temple-room reverb dry/wet mix | Page 2: delay time (40-500 ms) | LED10 follows the page (green->amber->red / yellow / pale ice) |
-| **SHIFT** (KEY_26) | Hold + lower F#/G#/A# = play mode (below); hold + Black 6 (C#4) / Black 7 (D#4) = audio routing (below) | - | - | While held, the active mode's shortcut key glows blue and the active routing's selection key glows pink |
+| **SHIFT** (KEY_26) | Hold + lower F#/G#/A# = play mode (below); hold + Black 6 (C#4) / Black 7 (D#4) = audio routing (below); hold + a white key = load that preset slot | - | - | While held, every saved slot glows white to show it can be loaded; empty slots stay off (all white keys glow red if no card is available). The active mode's shortcut key glows blue and the active routing's selection key glows pink. Preset shortcuts glow red (erase), green (copy), and blue (save); only the active shortcut stays lit during selection |
+| **Preset save** | SHIFT + Black A#4 enters save selection; choose a white-key slot, then release and press SHIFT to confirm. Press Black A#4 to cancel. | - | - | Empty slots blink dim grey; filled slots are purple; selected slot is blue; save animation is purple |
+| **Preset copy** | SHIFT + Black G#4 enters copy; choose a filled source, then a different destination, release and press SHIFT to confirm. Press Black G#4 to cancel. | - | - | Source is green; selected destination is blue |
+| **Preset erase** | SHIFT + Black F#4 enters erase selection; choose a filled slot, then release and press SHIFT to confirm. Press Black F#4 to cancel. | - | - | Selected slot is red |
 | **PLAY** (KEY_27) | Tap in playback to pause/resume; hold alone for 2 s to enter or exit playback | - | - | Blue in playback; blinks while playing |
 | **LOOP** (KEY_28) | Tap to toggle the Rimming note latch (retained in Strikes, cleared on entry to Split); hold with PLAY for recording gestures | - | - | Yellow for the Rimming latch; blue while take looping is enabled |
 
@@ -59,31 +62,36 @@ current mode. Black keys are playable everywhere.
   added higher bowl (1240.8 Hz).
 
 A mode shortcut consumes its key through release - it never sounds a
-note or moves the bowl editor target. With no SD card (or an
-incompatible old state file) the instrument boots factory settings in
-**Strikes**; v7/v8 and other legacy state files are rejected. If
-`BOWLS/state.json` is missing, the embedded
-`code/state examples/default.json` template is loaded and saved automatically
-on boot.
+note or moves the bowl editor target. White Keys 1-15 map left to right
+to `BOWLS/P01.json` through `BOWLS/P15.json`. SHIFT+white-key loads a
+populated slot; an empty slot leaves the current sound unchanged. At
+boot, the embedded `code/state examples/default.json` template is loaded
+as the factory sound and the 15 saved slots are cached, but no slot is
+automatically loaded or created. Parameter changes remain in RAM until
+you explicitly save; copying and saving also write only their selected
+destination slot.
+
+Slots written by firmware affected by the disabled float-printf issue
+contain invalid `pitch_hz` values. On load, their other settings are
+preserved and the factory pitch tables are used; explicitly saving the
+slot again rewrites it as valid JSON.
 
 ## Offline base-pitch editing
 
 Base pitches for Strikes, Rimming, and Split are stored in the `pitch_hz`
-object in `BOWLS/state.json`. There is no on-device pitch editor or MIDI
+object of each saved preset. There is no on-device pitch editor or MIDI
 CC for these base values. Existing per-key tuning remains independent:
 the played fundamental is the saved base frequency multiplied by the
 existing 0.5x-2x tuning control (tick 16 is unison). Base values must be
 40-10,000 Hz; saves round to three decimal places.
 
-On a fresh card, the firmware loads the embedded
-`code/state examples/default.json` template and queues `BOWLS/state.json`
-for saving during boot. Wait for the save-complete indication before
-removing the card. To edit pitches, power off, remove the card, and edit
-that file on a computer. Keep the v9 fields and all array lengths intact;
-edit only the pitch numbers if no other settings should change. Safely
-eject the card before reinserting it, then reboot. Changes are read only
-at boot. Never edit the card while the instrument is on: a later autosave
-can overwrite the offline edit. Back up the file first.
+To edit pitches, first save a slot, power off, and edit its
+`BOWLS/Pxx.json` file on a computer. Keep the v9 fields and all array
+lengths intact; edit only the pitch numbers if no other settings should
+change. Safely eject the card before reinserting it, then reboot. The
+saved slots are read at boot; the embedded factory template remains the
+boot sound until you explicitly load a slot with SHIFT+white key. Never
+edit the card while the instrument is on.
 
 `strikes` and `rimming` each contain 25 frequencies, indexed by key from
 C3 (index 0) through C5 (index 24). `split` contains 13 frequencies:
@@ -105,8 +113,9 @@ Keys in order are:
 | 8 | G#3 | 17 | F4 |  |  |
 
 The engine accepts duplicate pitches and any key ordering. Frequencies
-outside 40-10,000 Hz, missing tables, wrong array lengths, and legacy
-schemas are rejected as a whole; factory defaults are used for that boot.
+outside 40-10,000 Hz, missing tables, wrong array lengths, and unsupported
+schemas make that slot unavailable; factory defaults remain active until
+a valid slot is loaded.
 
 ### SD recording and playback
 
@@ -119,7 +128,7 @@ schemas are rejected as a whole; factory defaults are used for that boot.
 
 ### Stereo delay
 
-The volume knob cycles **Master -> Delay -> Reverb**. On the Delay page, turning the encoder moves a combined control: the first half raises the wet mix from 0 to 50% at 35% feedback; the second half holds mix at 50% and raises feedback to a bounded 120%, entering self-oscillation above 100%. Hold SHIFT and turn to change delay time from 40 to 500 ms; changes glide smoothly without clearing echoes. The delay runs at 0% mix so history survives later mix changes and preset loads. Delay positions are saved in `BOWLS/state.json`; schema v9 is required and legacy v7/v8 presets are rejected.
+The volume knob cycles **Master -> Delay -> Reverb**. On the Delay page, turning the encoder moves a combined control: the first half raises the wet mix from 0 to 50% at 35% feedback; the second half holds mix at 50% and raises feedback to a bounded 120%, entering self-oscillation above 100%. Hold SHIFT and turn to change delay time from 40 to 500 ms; changes glide smoothly without clearing echoes. The delay runs at 0% mix so history survives later mix changes and preset loads. Delay positions are included in each v9 preset.
 
 ### Audio routing (send-FX loop)
 

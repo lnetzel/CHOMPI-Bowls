@@ -1,6 +1,6 @@
 # Preset Management Rehaul
 
-Status: **planned**.
+Status: **implemented**.
 Intended repository destination: `plans/preset-management-rehaul.md`.
 Links below are relative to that destination.
 
@@ -32,7 +32,7 @@ of that template's persisted format.
 | Complete state | Store the full persistent state represented by the embedded `default.json` template in each preset. |
 | Legacy state file | Remove all `BOWLS/state.json` load/write behavior. Do not migrate, read, overwrite, or delete an old `state.json`. |
 | Empty-card boot | Use factory/default values in RAM; do not create or save a preset automatically. |
-| Empty slot selection | Follow CHOMPI-PIPES' empty-slot behavior. Verify its exact behavior before implementation. |
+| Empty slot selection | Match CHOMPI-PIPES: selecting an empty slot leaves the current sound/settings unchanged. |
 
 ## Recommended approach
 
@@ -113,10 +113,9 @@ and is never consulted.
 
 ## Step-by-step tasks
 
-1. Inspect CHOMPI-PIPES' preset-management interaction and document the
-   exact user-visible behavior and JSON contract. Compare the Bowls
-   template and preset fields to identify any persistent data that must be
-   added or retained.
+1. Inspect CHOMPI-PIPES' preset-management interaction and JSON contract.
+   Compare the Bowls template and preset fields to identify the complete
+   persistent data set.
 2. Define slot filename/order mapping and boot selection behavior to match
    Pipes, including no-card, no-preset, and empty-slot cases. Ensure first
    boot uses factory/default values without creating a preset.
@@ -204,4 +203,5 @@ and is never consulted.
   removal/reinsertion, slow/full-card failures, and interrupted writes.
   Verify audio and watchdog responsiveness throughout.
 
-Implementation begins only after this plan is approved.
+Implementation is complete. Firmware build, focused host tests, and
+hardware behavior remain subject to device-level validation.

@@ -9,7 +9,7 @@ LDSCRIPT = chompi_sram.lds
 CPP_SOURCES = chompi_main.cpp
 ASM_SOURCES = default_state.s
 
-# SD-card state (BOWLS/state.json): FatFS + coreJSON (vendored)
+# SD-card presets (BOWLS/P01.json .. P15.json): FatFS + coreJSON (vendored)
 USE_FATFS = 1
 C_SOURCES = ../libs/coreJSON/source/core_json.c
 C_INCLUDES += -I../libs/coreJSON/source/include
