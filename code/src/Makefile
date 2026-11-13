@@ -7,6 +7,7 @@ APP_TYPE = BOOT_SRAM
 LDSCRIPT = chompi_sram.lds
 
 CPP_SOURCES = chompi_main.cpp
+ASM_SOURCES = default_state.s
 
 # SD-card state (BOWLS/state.json): FatFS + coreJSON (vendored)
 USE_FATFS = 1
@@ -23,6 +24,8 @@ C_DEFS += -DCPU_METER
 endif
 
 include $(SYSTEM_FILES_DIR)/Makefile
+
+$(BUILD_DIR)/default_state.o: ../state\ examples/default.json
 
 .PHONY: check-toolchain
 check-toolchain:

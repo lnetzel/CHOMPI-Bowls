@@ -6,6 +6,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <iterator>
+#include <string>
 
 namespace
 {
@@ -190,6 +193,28 @@ int main()
         Check(ok, "factory pitches equal existing tables", "");
     }
 
+    // The first-boot template is embedded directly from the state example.
+    {
+        std::ifstream input("../state examples/default.json",
+                            std::ios::binary);
+        const bool opened = input.is_open();
+        const std::string source((std::istreambuf_iterator<char>(input)),
+                                 std::istreambuf_iterator<char>());
+        char doc[kStorageJsonSize];
+        size_t len = 0;
+        bool ok = opened
+                  && chompi::CopyCompactJson(source.data(), source.size(), doc,
+                                             sizeof(doc), len);
+        chompi::BowlsPreset preset;
+        preset.SetDefaults();
+        if(!ok || !chompi::Parse(doc, len, preset)
+           || preset.mode != 0 || preset.volume != 11 || preset.strike != 20
+           || preset.pan[12] != 23 || preset.bvol[12] != 20
+           || !SamePitches(preset.pitch_hz, bowls::FactoryPitchTables()))
+            ok = false;
+        Check(ok, "embedded first-boot template parses", "");
+    }
+
     // Distinct fractional pitches, all six banks, all globals and modes.
     {
         bool ok = true;
@@ -203,6 +228,58 @@ int main()
                 ok = false;
         }
         Check(ok, "round-trip 63 pitches, six banks, all modes", "");
+    }
+
+    // Older/corrupt state files can contain empty pitch slots. Recover only
+    // those slots, keep the other state, and serialize a valid replacement.
+    {
+        char damaged[kStorageJsonSize];
+        char repaired_json[kStorageJsonSize];
+        char empty_array[128];
+        const chompi::BowlsPreset src = PatternPreset(2);
+        size_t len = chompi::Serialize(src, damaged, sizeof(damaged));
+        size_t off = 0;
+        bool ok = len > 0;
+        const char* names[] = {"strikes", "rimming", "split"};
+        const int counts[] = {bowls::kKeyCount, bowls::kKeyCount, 13};
+        for(int array = 0; array < 3 && ok; ++array)
+        {
+            off = 0;
+            empty_array[off++] = '[';
+            for(int i = 0; i < counts[array]; ++i)
+            {
+                empty_array[off++] = ' ';
+                if(i + 1 < counts[array])
+                {
+                    empty_array[off++] = ',';
+                    empty_array[off++] = ' ';
+                }
+            }
+            empty_array[off++] = ']';
+            empty_array[off] = '\0';
+            ok = ReplacePitchArray(damaged, names[array], empty_array);
+        }
+
+        len = std::strlen(damaged);
+        chompi::BowlsPreset recovered;
+        bool did_recover = false;
+        if(!ok || !chompi::ParseWithPitchRecovery(
+                      damaged, len, sizeof(damaged), recovered, did_recover))
+            ok = false;
+
+        chompi::BowlsPreset round_trip;
+        round_trip.SetDefaults();
+        const size_t repaired_len
+            = ok ? chompi::Serialize(recovered, repaired_json,
+                                     sizeof(repaired_json))
+                 : 0;
+        if(!did_recover || !SameTicks(recovered, src)
+           || !SamePitches(recovered.pitch_hz, bowls::FactoryPitchTables())
+           || repaired_len == 0
+           || !chompi::Parse(repaired_json, repaired_len, round_trip)
+           || !Same(recovered, round_trip))
+            ok = false;
+        Check(ok, "empty pitch slots recover and reserialize", "");
     }
 
     // Measure maximum numeric size, terminator and undersized-buffer failure.
@@ -393,7 +470,8 @@ int main()
         p.SetDefaults();
         const size_t len = chompi::Serialize(p, buf, sizeof(buf));
         Check(p.mode == chompi::BowlsPreset::kModeStrikes
-                  && p.delay_mix == 0 && p.delay_time == 15
+                  && p.delay_mix == 0
+                  && p.delay_time == chompi::BowlsPreset::kDefaultDelayTime
                   && len > 0 && std::strstr(buf, "\"pitch_hz\"") != nullptr
                   && std::strstr(buf, "latch") == nullptr,
               "factory defaults include pitches without runtime state", "");

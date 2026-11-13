@@ -22,6 +22,15 @@ inline float MidiVelocityToStrikeHardness(int velocity)
     return static_cast<float>(velocity - 1) * (1.0f / 126.0f);
 }
 
+inline float BrightnessFromTicks(int ticks)
+{
+    if(ticks < 0)
+        ticks = 0;
+    if(ticks > 32)
+        ticks = 32;
+    return 1.5f * static_cast<float>(ticks) * (1.0f / 32.0f);
+}
+
 inline float DecayMultiplierFromTicks(int ticks)
 {
     if(ticks < 0)

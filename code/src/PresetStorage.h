@@ -22,6 +22,9 @@
 namespace chompi
 {
 
+extern "C" const char default_state_json[];
+extern "C" const char default_state_json_end[];
+
 class PresetStorage
 {
   public:
@@ -55,6 +58,8 @@ class PresetStorage
         save_seq_        = 0;
         written_seq_     = 0;
         failed_          = false;
+        repaired_pitch_values_ = false;
+        created_default_state_ = false;
         event_           = kStatusNone;
         fs_leased_       = false;
 
@@ -72,10 +77,10 @@ class PresetStorage
         no_sd_card_ = disk_status(0) != RES_OK;
     }
 
-    /** Boot load. Returns false (caller keeps defaults) when there is no
-     *  card, no file, or the file fails validation. LoadFail() reports
-     *  the reason: 1 = no card, 2 = no state file, 3 = read error,
-     *  4 = content rejected (old schema / corruption). */
+    /** Boot load. A missing state file loads the embedded template and
+     *  queues its first save. Returns false when the card cannot be read
+     *  or the file/template fails validation. LoadFail(): 1 = no card,
+     *  3 = open/read error, 4 = invalid content or template. */
     bool Load(BowlsPreset &p)
     {
         if(no_sd_card_)
@@ -88,9 +93,13 @@ class PresetStorage
          * 512 B sector buffer and f_read DMAs the data sector into it.
          * The main stack is in DTCMRAM, which the SDMMC IDMA cannot
          * reach, so a stack FIL stalls the read forever. */
-        if(f_open(&read_fil_, "BOWLS/state.json", FA_READ) != FR_OK)
+        const FRESULT open_result
+            = f_open(&read_fil_, "BOWLS/state.json", FA_READ);
+        if(open_result == FR_NO_FILE)
+            return LoadDefaultTemplate(p);
+        if(open_result != FR_OK)
         {
-            load_fail_ = 2;
+            load_fail_ = 3;
             return false;
         }
         if(f_size(&read_fil_) >= kJsonSize)
@@ -108,17 +117,27 @@ class PresetStorage
             return false;
         }
         read_buf_[br] = '\0';
-        if(!Parse(read_buf_, br, p))
+        size_t json_len = br;
+        bool   repaired_pitch_values = false;
+        if(!ParseWithPitchRecovery(read_buf_, json_len, sizeof(read_buf_), p,
+                                   repaired_pitch_values))
         {
             load_fail_ = 4;
             return false;
         }
         load_fail_ = 0;
+        if(repaired_pitch_values)
+        {
+            repaired_pitch_values_ = true;
+            RequestSave(p);
+        }
         return true;
     }
 
     /** Failure code of the last Load() (0 = it succeeded). */
     int LoadFail() const { return load_fail_; }
+    bool RepairedPitchValues() const { return repaired_pitch_values_; }
+    bool CreatedDefaultState() const { return created_default_state_; }
 
     /** Snapshot the state and request a save. If a write is already in
      *  flight, the newest snapshot is written when the next cycle starts
@@ -299,6 +318,38 @@ class PresetStorage
     }
 
   private:
+    bool LoadDefaultTemplate(BowlsPreset &p)
+    {
+        const std::uintptr_t begin
+            = reinterpret_cast<std::uintptr_t>(default_state_json);
+        const std::uintptr_t end
+            = reinterpret_cast<std::uintptr_t>(default_state_json_end);
+        if(end < begin)
+        {
+            load_fail_ = 4;
+            return false;
+        }
+
+        size_t len = 0;
+        if(!CopyCompactJson(default_state_json,
+                            static_cast<size_t>(end - begin), read_buf_,
+                            sizeof(read_buf_), len))
+        {
+            load_fail_ = 4;
+            return false;
+        }
+        if(!Parse(read_buf_, len, p))
+        {
+            load_fail_ = 4;
+            return false;
+        }
+
+        RequestSave(p);
+        created_default_state_ = true;
+        load_fail_ = 0;
+        return true;
+    }
+
     enum Stage : uint8_t
     {
         kIdle = 0,
@@ -365,6 +416,8 @@ class PresetStorage
     uint32_t      written_seq_;
     size_t        json_len_ = 0;
     bool          failed_   = false; /* write failure latched until success */
+    bool          repaired_pitch_values_ = false;
+    bool          created_default_state_ = false;
     uint8_t       load_fail_ = 0;    /* last Load() failure code */
     StatusEvent   event_    = kStatusNone;
     /* 32-byte alignment is MANDATORY: for whole-sector transfers FatFS

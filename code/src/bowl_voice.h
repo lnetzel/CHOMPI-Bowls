@@ -28,10 +28,11 @@
 // resonators pass straight through during the burst (ya = x + ...), so
 // both the dry strike and the reverb send splatter. Instead: a smooth
 // contact-force bump (zero value AND zero slope at both ends) over a
-// short mallet contact (~1.8-2.8 ms, hardness-scaled), plus a brief,
+// short mallet contact (~1.8-2.8 ms, hardness-scaled), plus an optional
 // subordinate contact tick: high-band noise (3-5 kHz) inside a fixed
-// ~1.2 ms initial-touch sub-burst. Both are distributed across the
-// modes with per-mode weights. The Strike parameter tilts the burst
+// ~1.2 ms initial-touch sub-burst. The tick is muted by default and can
+// be enabled through the host diagnostic hook. Both are distributed
+// across the modes with per-mode weights. The Strike parameter tilts the burst
 // spectrum (soft = low modes; the hardest contact is capped at a
 // medium-bright mallet). Brightness adds a strong high-mode shelf
 // (applied at the next strike) and also opens up the rubbed modes live.
@@ -105,7 +106,7 @@ class BowlVoice
         exc_lp1_       = 0.0f;
         exc_lp2_       = 0.0f;
         diag_force_    = 1.0f;
-        diag_noise_    = 1.0f;
+        diag_noise_    = 0.0f;
         rub_level_     = 0.0f;
         rub_smooth_    = 0.0f;
         rub_lp_        = 0.0f;
@@ -268,8 +269,8 @@ class BowlVoice
 
     /** Test hook (code/tests strike analysis): scale the strike's
      *  force-bump and contact-noise components independently for
-     *  force-only / noise-only diagnostic renders. Defaults 1/1; the
-     *  firmware never touches this. */
+     *  force-only / noise-only diagnostic renders. Defaults 1/0, so
+     *  the contact tick is muted during normal firmware operation. */
     void SetStrikeDiagnostics(float force_scale, float noise_scale)
     {
         diag_force_ = force_scale;
@@ -377,35 +378,57 @@ class BowlVoice
         // intensity_ still uses the full strike_norm range.)
         const float softness = 1.0f - 0.5f * strike_norm;
 
-        // Contact time scales with mallet hardness: a felt mallet
-        // presses into the bowl for several ms (soft ~6 ms, hardest
-        // ~4 ms), so the ring BLOOMS over the push instead of stepping
-        // to full level. (Longer contacts were measured: the pulse
-        // rolloff at the fundamental forces the level normalization
-        // into its cap and the amplified push reads as a mid-contact
-        // thump - the felt character comes from the spectral tilt,
-        // not from stretching the contact.)
-        burst_len_ = static_cast<int>(fs_ * (0.002f + 0.004f * softness));
+        // Contact time scales with mallet hardness. Low bowls also need
+        // a longer contact relative to their period, or the force pulse
+        // ends before the fundamental has completed a full swing.
+        float contact_s = 0.002f + 0.004f * softness;
+        const float low_note_contact_s = 1.5f / fundamental_;
+        if(contact_s < low_note_contact_s)
+            contact_s = low_note_contact_s;
+        burst_len_ = static_cast<int>(fs_ * contact_s);
         if(burst_len_ < 12)
             burst_len_ = 12;
         burst_pos_ = burst_len_;
 
-        // Per-mode excitation weight: profile weight x strike spectral
-        // tilt (soft strikes favour the low modes; the felt-mallet
-        // voicing tilts harder than the original 2.2) x brightness
-        // shelf x a mild upper-mode shelf (kStrikeUpper). The pulse's
-        // own smooth rolloff adds the register-aware mallet lowpass.
+        // Brightness blends the dark strike voicing into the same
+        // per-mode shelf used by the rim path. At maximum, compensate
+        // for the contact pulse's frequency rolloff; at zero, the
+        // original strike voicing is unchanged.
+        const float brightness_blend
+            = brightness_ <= 0.0f ? 0.0f
+              : brightness_ >= 1.5f
+                  ? 1.0f
+                  : brightness_ * (1.0f / 1.5f);
         for(int m = 0; m < kPairs; ++m)
         {
             const float tilt
                 = expf(-2.4f * softness * static_cast<float>(m));
-            const float bright
-                = powf(8.0f,
-                       brightness_
-                           * (static_cast<float>(m)
-                              / static_cast<float>(kPairs - 1)));
-            in_weight_[m] = p.excite[m] * tilt * bright
-                            * (m > 0 ? kStrikeUpper : 1.0f);
+            const float strike_weight
+                = p.excite[m] * tilt
+                  * powf(8.0f,
+                         brightness_
+                             * (static_cast<float>(m)
+                                / static_cast<float>(kPairs - 1)))
+                  * (m > 0 ? kStrikeUpper : 1.0f);
+            const float rim_bright
+                = 1.0f + 1.2f * brightness_ * static_cast<float>(m);
+            const float mode_freq = fundamental_ * p.ratio[m];
+            float shelf_position = (mode_freq - 1500.0f) * (1.0f / 4500.0f);
+            if(shelf_position < 0.0f)
+                shelf_position = 0.0f;
+            if(shelf_position > 1.0f)
+                shelf_position = 1.0f;
+            shelf_position
+                = shelf_position * shelf_position * (3.0f - 2.0f * shelf_position);
+            const float strike_brightness_shelf
+                = 1.0f
+                  + brightness_blend * (kStrikeBrightnessBoost - 1.0f)
+                        * shelf_position;
+            const float rim_weight
+                = rub_weight_[m] * rim_bright * strike_brightness_shelf;
+            in_weight_[m]
+                = strike_weight
+                  + brightness_blend * (rim_weight - strike_weight);
         }
 
         ApplyPendingShimmerAtNoteStart();
@@ -431,8 +454,7 @@ class BowlVoice
         // Bump gain: normalize the mode-1 ring to the established level
         // (the old 0.6 impulse equivalent) at THIS contact length: the
         // pulse's response at the fundamental is measured per strike
-        // with a short Goertzel recurrence over the bump shape (one
-        // cosf + a few hundred multiply-adds, strike-time only), so a
+        // with a short Goertzel recurrence over the bump shape, so a
         // low bowl's longer contact does not dull its body.
         {
             const float w  = 2.0f * kPi * fundamental_ / fs_;
@@ -784,9 +806,7 @@ class BowlVoice
      *  4-6 ms contact instead, masked there by the new burst). */
     static constexpr float kGhostFadeS = 0.1f;
 
-    /** Strike contact-tick gain: the felt-mallet thud is a small,
-     *  dark articulation marker, subordinate to the bowl's bloom
-     *  (calibrated with code/tests, `make analyze`). */
+    /** Strike contact-tick gain when enabled by the diagnostic hook. */
     static constexpr float kStrikeNoise = 0.5f;
 
     /** Strike upper-mode shelf (modes 2+): mild +5.1 dB over the
@@ -794,6 +814,10 @@ class BowlVoice
      *  favours the low modes; the shelf only keeps the attack from
      *  going dull. The Brightness knob adds the metallic side live. */
     static constexpr float kStrikeUpper = 1.8f;
+
+    /** Extra strike-only upper shelf at maximum brightness, compensating
+     *  for the smooth contact pulse's high-frequency rolloff. */
+    static constexpr float kStrikeBrightnessBoost = 40.0f;
 
     /** Contact force pulse shape: smoothstep press over the first ~65%
      *  of the contact, smoothstep release over the rest - zero value

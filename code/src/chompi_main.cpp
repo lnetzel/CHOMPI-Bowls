@@ -569,7 +569,7 @@ void SetBrightnessTicks(int m, int key, int ticks, uint32_t now)
 {
     if(!StoreTicks(params.brightness_ticks[m][key], ticks, now))
         return;
-    const float bnorm = TicksToNorm(
+    const float bnorm = bowls::BrightnessFromTicks(
         params.brightness_ticks[m][key].load(std::memory_order_relaxed));
     ForVoiceIdentity(m, key,
                      [&](int v) { voices[v].SetBrightness(bnorm); });
@@ -693,7 +693,7 @@ void ApplyVoiceSettings(int v, PlayMode mode, int key)
     const int m = ModeIdx(mode);
     voices[v].SetProfile(
         params.profile_ticks[m][key].load(std::memory_order_relaxed));
-    voices[v].SetBrightness(TicksToNorm(
+    voices[v].SetBrightness(bowls::BrightnessFromTicks(
         params.brightness_ticks[m][key].load(std::memory_order_relaxed)));
     voices[v].SetDecayMult(DecayMultTicks(
         params.decay_ticks[m][key].load(std::memory_order_relaxed)));
@@ -2446,8 +2446,8 @@ int main()
 
     // Boot-time SD diagnostic (one signal, before audio starts):
     //   3 red blinks   = no card detected - settings will NOT persist
-    //   2 amber blinks = card OK, no state file yet (first boot - the
-    //                    next knob change writes one)
+    //   2 amber blinks = card OK, no state file; the embedded template is
+    //                    loaded and its first save has been queued
     //   3 amber blinks = card OK, file present but unreadable/rejected
     //                    (old schema version, read error, corruption)
     //   1 green pulse  = saved state loaded
@@ -2459,14 +2459,26 @@ int main()
     }
     else if(!preset_loaded)
     {
-        const int load_fail = preset_storage.LoadFail();
-        BOWLS_LOG("SD: load failed, code %d", load_fail);
-        BootBlink(load_fail == 2 ? 2 : 3, 40, 24, 0);
+        BOWLS_LOG("SD: load failed, code %d", preset_storage.LoadFail());
+        BootBlink(3, 40, 24, 0);
     }
     else
     {
-        BOWLS_LOG("SD: saved state loaded");
-        BootBlink(1, 0, 40, 0);
+        if(preset_storage.CreatedDefaultState())
+        {
+            BOWLS_LOG("SD: initialized from default template; saving state");
+            BootBlink(2, 40, 24, 0);
+        }
+        else if(preset_storage.RepairedPitchValues())
+        {
+            BOWLS_LOG("SD: empty pitch values restored to factory defaults");
+            BootBlink(1, 0, 40, 0);
+        }
+        else
+        {
+            BOWLS_LOG("SD: saved state loaded");
+            BootBlink(1, 0, 40, 0);
+        }
     }
 
     // Show the volume bar briefly at boot.

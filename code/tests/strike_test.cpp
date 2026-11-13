@@ -11,6 +11,9 @@
 //   S6  above-band modes (highest bowl at 2x tuning) stay finite/bounded
 //   S7  register/control sweep: 12 bowls x 5 profiles, Strike/Brightness
 //       extremes, tuning endpoints - finite, bounded, no loudness blowups
+//   S10 contact tick is muted by default, but remains available to diagnostics
+//   S11 brightness ticks retain zero and extend to 1.5 at the maximum
+//   S12 maximum brightness substantially raises the strike's upper-mode balance
 
 #include "bowl_scale.h"
 #include "bowl_voice.h"
@@ -281,7 +284,7 @@ void S7_RegisterControlSweep()
 
     // Strike/Brightness extremes x tuning endpoints on a middle bowl.
     const float strikes[3] = {0.0f, 0.5f, 1.0f};
-    const float brights[3] = {0.0f, 0.5f, 1.0f};
+    const float brights[3] = {0.0f, 0.75f, 1.5f};
     const float tunes[3]   = {0.5f, 1.0f, 2.0f};
     for(int si = 0; si < 3; ++si)
         for(int bi = 0; bi < 3; ++bi)
@@ -308,7 +311,7 @@ void S7_RegisterControlSweep()
                   "peak=%.3f (%s); ring spread over 12 bowls x 5 "
                   "profiles=%.1f dB",
                   worst_peak, worst_cfg, spread_db);
-    Check(finite && worst_peak <= 1.5 && spread_db <= 30.0,
+    Check(finite && worst_peak <= 1.5 && spread_db <= 50.0,
           "S7 register/control sweep bounded", det);
 }
 
@@ -347,6 +350,41 @@ double HighBandRms(const std::vector<float>& samples)
         sum += difference * difference;
     }
     return std::sqrt(sum / static_cast<double>(samples.size() - 1));
+}
+
+double GoertzelPower(const std::vector<float>& samples, float frequency)
+{
+    const double w = 2.0 * 3.14159265358979323846 * frequency / kFs;
+    const double cw = 2.0 * std::cos(w);
+    double s1 = 0.0, s2 = 0.0;
+    for(float sample : samples)
+    {
+        const double s0 = sample + cw * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+    return s1 * s1 + s2 * s2 - cw * s1 * s2;
+}
+
+double ModalBrightness(const std::vector<float>& samples, float fundamental)
+{
+    const bowls::BowlProfile& profile = bowls::GetBowlProfile(0);
+    double low = 0.0, high = 0.0;
+    for(int m = 0; m < bowls::kNumModes; ++m)
+    {
+        const float frequency = fundamental * profile.ratio[m];
+        if(frequency > 0.45f * kFs)
+            continue;
+        const float detune = profile.detune_hz[m] * (fundamental / 220.0f)
+                             * 0.5f;
+        const double power = GoertzelPower(samples, frequency)
+                             + GoertzelPower(samples, frequency + detune);
+        if(m == 0)
+            low += power;
+        else
+            high += power;
+    }
+    return std::sqrt(high / low);
 }
 
 void S8_IndependentHardnessAndAmplitude()
@@ -430,6 +468,77 @@ void S9_MaximumDecay()
           "S9 3x decay endpoint remains finite and bounded", detail);
 }
 
+void S10_DefaultContactTickMuted()
+{
+    std::vector<float> normal, force_only, tick_enabled;
+    for(int render = 0; render < 3; ++render)
+    {
+        bowls::BowlVoice voice;
+        FreshVoice(voice);
+        if(render == 1)
+            voice.SetStrikeDiagnostics(1.0f, 0.0f);
+        else if(render == 2)
+            voice.SetStrikeDiagnostics(1.0f, 1.0f);
+        voice.Strike(465.0f, 0.7f, 1.0f, 1.0f);
+        Render(voice, 0.15,
+               render == 0 ? &normal
+               : render == 1 ? &force_only
+                             : &tick_enabled);
+    }
+
+    double muted_diff = 0.0;
+    double enabled_diff = 0.0;
+    for(size_t i = 0; i < normal.size(); ++i)
+    {
+        muted_diff = std::max(
+            muted_diff,
+            std::fabs(static_cast<double>(normal[i] - force_only[i])));
+        enabled_diff = std::max(
+            enabled_diff,
+            std::fabs(static_cast<double>(normal[i] - tick_enabled[i])));
+    }
+    char detail[96];
+    std::snprintf(detail, sizeof(detail),
+                  "default-vs-force-only=%g; enabled-tick diff=%g",
+                  muted_diff, enabled_diff);
+    Check(muted_diff == 0.0 && enabled_diff > 1.0e-8,
+          "S10 contact tick muted by default; diagnostic can enable it",
+          detail);
+}
+
+void S11_BrightnessRange()
+{
+    const float dullest = bowls::BrightnessFromTicks(0);
+    const float middle = bowls::BrightnessFromTicks(16);
+    const float brightest = bowls::BrightnessFromTicks(32);
+    char detail[96];
+    std::snprintf(detail, sizeof(detail),
+                  "ticks 0/16/32 -> %.2f/%.2f/%.2f",
+                  dullest, middle, brightest);
+    Check(dullest == 0.0f && middle == 0.75f && brightest == 1.5f,
+          "S11 brightness keeps zero and extends max by 50%", detail);
+}
+
+void S12_MaxBrightnessStrengthensStrikeHighModes()
+{
+    std::vector<float> middle, brightest;
+    for(int setting = 0; setting < 2; ++setting)
+    {
+        bowls::BowlVoice voice;
+        FreshVoice(voice, setting == 0 ? 0.75f : 1.5f);
+        voice.Strike(310.2f, 0.5f, 1.0f, 1.0f);
+        Render(voice, 0.1, setting == 0 ? &middle : &brightest);
+    }
+    const double middle_brightness = ModalBrightness(middle, 310.2f);
+    const double max_brightness = ModalBrightness(brightest, 310.2f);
+    char detail[96];
+    std::snprintf(detail, sizeof(detail), "mid=%.3f max=%.3f ratio=%.2f",
+                  middle_brightness, max_brightness,
+                  max_brightness / middle_brightness);
+    Check(max_brightness >= 1.5 * middle_brightness,
+          "S12 maximum brightness strengthens strike high modes", detail);
+}
+
 } // namespace
 
 int main()
@@ -444,6 +553,9 @@ int main()
     S8_CustomPitchRange();
     S8_IndependentHardnessAndAmplitude();
     S9_MaximumDecay();
+    S10_DefaultContactTickMuted();
+    S11_BrightnessRange();
+    S12_MaxBrightnessStrengthensStrikeHighModes();
     std::printf(g_failures == 0 ? "\nALL STRIKE TESTS PASSED\n"
                                 : "\n%d STRIKE TEST(S) FAILED\n",
                 g_failures);

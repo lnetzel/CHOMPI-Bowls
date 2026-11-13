@@ -7,7 +7,7 @@
  *  remembers its state across power cycles (spec section 1).
  *
  *  Schema v9: editable per-mode base-pitch tables atop v8. Legacy
- *  schemas are rejected; a missing state file uses factory defaults.
+ *  schemas are rejected; a missing state file uses the embedded template.
  */
 #pragma once
 #include <cstdint>
@@ -228,6 +228,38 @@ inline void SkipWhitespace(const char *buf, size_t len, size_t &index)
         ++index;
 }
 
+inline bool CopyCompactJson(const char *source, size_t source_len,
+                            char *dest, size_t capacity, size_t &dest_len)
+{
+    bool in_string = false;
+    bool escaped = false;
+    dest_len = 0;
+    for(size_t i = 0; i < source_len; ++i)
+    {
+        const char c = source[i];
+        if(!in_string && (c == ' ' || c == '\t' || c == '\n' || c == '\r'))
+            continue;
+        if(dest_len + 1 >= capacity)
+            return false;
+        dest[dest_len++] = c;
+        if(in_string)
+        {
+            if(escaped)
+                escaped = false;
+            else if(c == '\\')
+                escaped = true;
+            else if(c == '"')
+                in_string = false;
+        }
+        else if(c == '"')
+            in_string = true;
+    }
+    if(in_string || escaped || dest_len >= capacity)
+        return false;
+    dest[dest_len] = '\0';
+    return true;
+}
+
 inline bool NumberTokenEnd(const char *buf, size_t len, size_t start,
                            size_t &end)
 {
@@ -399,6 +431,113 @@ inline bool QueryPitchArrayStrict(char *buf, size_t len, const char *query,
     return i + 1 == value_len && value[i] == ']';
 }
 
+inline char *FindText(char *buf, size_t start, size_t end, const char *text)
+{
+    const size_t text_len = strlen(text);
+    if(text_len == 0 || end > strlen(buf) || start > end
+       || text_len > end - start)
+        return nullptr;
+    for(size_t i = start; i + text_len <= end; ++i)
+        if(memcmp(buf + i, text, text_len) == 0)
+            return buf + i;
+    return nullptr;
+}
+
+inline bool FillEmptyPitchArray(char *buf, size_t &len, size_t capacity,
+                                size_t object_start, size_t &object_end,
+                                const char *name,
+                                const float *defaults, int count,
+                                bool &changed)
+{
+    char marker[24];
+    const int marker_len = snprintf(marker, sizeof(marker), "\"%s\"", name);
+    if(marker_len < 0 || static_cast<size_t>(marker_len) >= sizeof(marker))
+        return false;
+    char *key = FindText(buf, object_start, object_end, marker);
+    if(key == nullptr)
+        return false;
+
+    size_t i = static_cast<size_t>(key - buf) + static_cast<size_t>(marker_len);
+    SkipWhitespace(buf, object_end, i);
+    if(i >= object_end || buf[i++] != ':')
+        return false;
+    SkipWhitespace(buf, object_end, i);
+    if(i >= object_end || buf[i++] != '[')
+        return false;
+
+    for(int n = 0; n < count; ++n)
+    {
+        SkipWhitespace(buf, object_end, i);
+        if(i >= object_end)
+            return false;
+
+        if(buf[i] == ',' || buf[i] == ']')
+        {
+            char value[24];
+            const int value_len
+                = snprintf(value, sizeof(value), "%.3f",
+                           static_cast<double>(defaults[n]));
+            if(value_len <= 0
+               || static_cast<size_t>(value_len) >= sizeof(value)
+               || len + static_cast<size_t>(value_len) >= capacity)
+                return false;
+            memmove(buf + i + value_len, buf + i, len - i + 1);
+            memcpy(buf + i, value, static_cast<size_t>(value_len));
+            len += static_cast<size_t>(value_len);
+            object_end += static_cast<size_t>(value_len);
+            i += static_cast<size_t>(value_len);
+            changed = true;
+        }
+        else
+        {
+            size_t value_end = 0;
+            if(!NumberTokenEnd(buf, object_end, i, value_end))
+                return false;
+            i = value_end;
+        }
+
+        SkipWhitespace(buf, object_end, i);
+        const char expected = n + 1 < count ? ',' : ']';
+        if(i >= object_end || buf[i++] != expected)
+            return false;
+    }
+    return true;
+}
+
+inline bool FillEmptyPitchValues(char *buf, size_t &len, size_t capacity,
+                                 bool &changed)
+{
+    changed = false;
+    if(len >= capacity || buf[len] != '\0')
+        return false;
+
+    char *key = FindText(buf, 0, len, "\"pitch_hz\"");
+    if(key == nullptr)
+        return false;
+    size_t i = static_cast<size_t>(key - buf) + strlen("\"pitch_hz\"");
+    SkipWhitespace(buf, len, i);
+    if(i >= len || buf[i++] != ':')
+        return false;
+    SkipWhitespace(buf, len, i);
+    if(i >= len || buf[i++] != '{')
+        return false;
+    const size_t object_start = i;
+    char *object_close = FindText(buf, object_start, len, "}");
+    if(object_close == nullptr)
+        return false;
+    size_t object_end = static_cast<size_t>(object_close - buf);
+
+    const bowls::PitchTables &defaults = bowls::FactoryPitchTables();
+    return FillEmptyPitchArray(buf, len, capacity, object_start, object_end,
+                               "strikes", defaults.strikes, bowls::kKeyCount,
+                               changed)
+           && FillEmptyPitchArray(buf, len, capacity, object_start, object_end,
+                                  "rimming", defaults.rimming,
+                                  bowls::kKeyCount, changed)
+           && FillEmptyPitchArray(buf, len, capacity, object_start, object_end,
+                                  "split", defaults.split, 13, changed);
+}
+
 /** Parse a complete current-schema state document. Legacy, malformed,
  *  truncated and partially valid documents are rejected without
  *  changing the destination. */
@@ -468,6 +607,21 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
                                  tmp.pitch_hz.split, 13))
         return false;
     p = tmp;
+    return true;
+}
+
+inline bool ParseWithPitchRecovery(char *buf, size_t &len, size_t capacity,
+                                   BowlsPreset &p, bool &recovered)
+{
+    recovered = false;
+    if(Parse(buf, len, p))
+        return true;
+
+    bool changed = false;
+    if(!FillEmptyPitchValues(buf, len, capacity, changed) || !changed
+       || !Parse(buf, len, p))
+        return false;
+    recovered = true;
     return true;
 }
 

@@ -61,9 +61,10 @@ current mode. Black keys are playable everywhere.
 A mode shortcut consumes its key through release - it never sounds a
 note or moves the bowl editor target. With no SD card (or an
 incompatible old state file) the instrument boots factory settings in
-**Strikes**; v7/v8 and other legacy state files are rejected. The next
-ordinary control change triggers autosave and may replace the old file;
-legacy settings are not imported.
+**Strikes**; v7/v8 and other legacy state files are rejected. If
+`BOWLS/state.json` is missing, the embedded
+`code/state examples/default.json` template is loaded and saved automatically
+on boot.
 
 ## Offline base-pitch editing
 
@@ -74,16 +75,15 @@ the played fundamental is the saved base frequency multiplied by the
 existing 0.5x-2x tuning control (tick 16 is unison). Base values must be
 40-10,000 Hz; saves round to three decimal places.
 
-To create and edit the file, boot with the SD card inserted and let the
-first ordinary control change autosave the factory state. Wait for the
-save-complete indication, power the instrument off, remove the card, and
-edit `BOWLS/state.json` on a computer. Keep the v9 fields and all array
-lengths intact; edit only the pitch numbers if no other settings should
-change. Safely eject the card before reinserting it, then reboot. Changes
-are read only at boot. Never edit the card while the instrument is on:
-a later autosave can overwrite the offline edit. Back up the file first.
-There is no automatic boot write. A missing file leaves factory state in
-RAM until the next ordinary control change requests its first save.
+On a fresh card, the firmware loads the embedded
+`code/state examples/default.json` template and queues `BOWLS/state.json`
+for saving during boot. Wait for the save-complete indication before
+removing the card. To edit pitches, power off, remove the card, and edit
+that file on a computer. Keep the v9 fields and all array lengths intact;
+edit only the pitch numbers if no other settings should change. Safely
+eject the card before reinserting it, then reboot. Changes are read only
+at boot. Never edit the card while the instrument is on: a later autosave
+can overwrite the offline edit. Back up the file first.
 
 `strikes` and `rimming` each contain 25 frequencies, indexed by key from
 C3 (index 0) through C5 (index 24). `split` contains 13 frequencies:

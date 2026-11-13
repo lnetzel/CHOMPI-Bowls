@@ -86,7 +86,7 @@ pad_test.exe: pad_test.cpp ../src/bowl_voice.h ../src/bowl_profile.h ../src/bowl
 
 COREJSON_DIR = ../libs/coreJSON/source
 
-preset_test.exe: preset_test.cpp ../src/BowlsPreset.h ../src/bowl_scale.h core_json_host.o
+preset_test.exe: preset_test.cpp ../src/BowlsPreset.h ../src/bowl_scale.h ../state\ examples/default.json core_json_host.o
 	$(CXX) $(CXXFLAGS) -I$(COREJSON_DIR)/include -o $@ preset_test.cpp core_json_host.o
 
 core_json_host.o: $(COREJSON_DIR)/core_json.c
