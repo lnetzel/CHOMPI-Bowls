@@ -7,11 +7,11 @@
 // voice) with per-mode decay, paired-mode beating (shimmer) and a
 // finite-contact mallet excitation. The five voices are shared by all
 // modes; a sixth simultaneous note steals the quietest unprotected voice
-// (preserved Rimming latches are protected in Strikes). Switching modes
+// (preserved Rimming and Strike latches are protected in Strikes).
 // never interrupts ringing voices or reverb tails: outgoing voices keep
 // their sound, and the wheel only drives notes started in the current
 // mode. Persistent parameters are stored only in explicitly saved presets;
-// the LOOP latch and all other performance state remain transient.
+// the LOOP/PLAY latches and all other performance state remain transient.
 //
 //   Play modes            : SHIFT + lower F# (key 6) = STRIKES - all 25
 //                         keys strike distinct ascending bowls; the
@@ -23,7 +23,10 @@
 //                         dependent rimming; LOOP toggles a note
 //                         latch: enabling captures the held sounding
 //                         pads, key-down toggles a note on/off, key-up
-//                         never releases a latched note. SHIFT + lower
+//                         never releases a latched note. In STRIKES, a
+//                         separate PLAY latch captures held strikes;
+//                         later key-downs toggle notes that retrigger
+//                         after their resonator tails end. SHIFT + lower
 //                         A# (key 10) = SPLIT - the v1 layout: keys
 //                         0-11 (C3-B3) SELECT one of the 12 bowls for
 //                         wheel rimming (never strike), keys 12-23
@@ -90,8 +93,9 @@
 //                         retained in Strikes, cleared on entry to Split;
 //                         hold with PLAY for recording arm/stop; in
 //                         playback, tap toggles take looping (blue).
-//   PLAY (KEY_27)       : hold alone 2 s to enter/exit playback; tap
-//                         pauses/resumes playback. SW_TOG is reserved.
+//   PLAY (KEY_27)       : in Strikes, tap toggles the Strike note latch
+//                         (yellow); hold alone 2 s to enter/exit playback;
+//                         in playback, tap pauses/resumes. SW_TOG is reserved.
 //
 // Every encoder turn shows its bar on the 15 white keys for ~500 ms (the
 // CHOMPI-PhaseOff overlay pattern); with no bar up, held keys light
@@ -670,18 +674,29 @@ bool IsProtectedRimmingVoice(int voice)
            && key >= 0 && play_modes.Latched(key);
 }
 
+bool IsProtectedStrikeVoice(int voice)
+{
+    const int key = voices[voice].Key();
+    return play_modes.Mode() == PlayMode::kStrikes
+           && voices[voice].VoiceMode() == ModeIdx(PlayMode::kStrikes)
+           && key >= 0 && play_modes.StrikeLatched(key);
+}
+
 int AllocVoice(PlayMode mode, int key)
 {
     const int found = FindVoice(mode, key);
     if(found >= 0)
         return found;
     for(int i = 0; i < kVoiceCount; ++i)
-        if(!IsProtectedRimmingVoice(i) && !voices[i].IsActive())
+        if(!IsProtectedRimmingVoice(i) && !IsProtectedStrikeVoice(i)
+           && !voices[i].IsActive())
             return i;
     const int v = bowls::QuietestUnprotectedVoice(
         kVoiceCount,
         [](int i) { return voices[i].IsActive(); },
-        [](int i) { return IsProtectedRimmingVoice(i); },
+        [](int i) {
+            return IsProtectedRimmingVoice(i) || IsProtectedStrikeVoice(i);
+        },
         [](int i) { return voices[i].Envelope(); });
     if(v < 0)
         return -1;
@@ -762,6 +777,27 @@ void StrikeKey(PlayMode mode, int key, int velocity = 127,
     // edit context is kept per sender instead).
     if(edit_target)
         last_key_[ModeIdx(mode)] = key;
+}
+
+/** A latched Strike reuses its assigned voice after the resonators go
+ *  silent; this makes its cadence follow the selected bowl's decay. */
+void RetriggerLatchedStrikes()
+{
+    if(play_modes.Mode() != PlayMode::kStrikes
+       || !play_modes.StrikeLatchEnabled())
+        return;
+    for(int key = 0; key < bowls::kKeyCount; ++key)
+    {
+        if(!play_modes.StrikeLatched(key))
+            continue;
+        const int voice = FindVoice(PlayMode::kStrikes, key);
+        if(voice >= 0
+           && (voices[voice].IsActive() || voices[voice].HasTail()))
+            continue;
+        const int velocity = play_modes.StrikeLatchVelocity(key);
+        StrikeKey(PlayMode::kStrikes, key, velocity > 0 ? velocity : 127,
+                  false, play_modes.StrikeLatchUsesMidiVelocity(key));
+    }
 }
 
 /** Rimming-mode pad start: allocate/select the voice, tune it without
@@ -992,6 +1028,9 @@ bool HandleTransport()
     const bool loop_released = hw.LoopReleased();
     PlaybackUiState playback_state
         = playback_ui_state.load(std::memory_order_acquire);
+    const bool play_loop_chord
+        = (hw.PlayPressed() && hw.LoopPressed()) || chord_hold_valid_
+          || loop_hold_valid_;
 
     if(transport_wait_for_release_)
     {
@@ -1211,6 +1250,11 @@ bool HandleTransport()
     }
     if(play_released)
     {
+        if(!play_loop_chord && !play_gesture_consumed_
+           && !play_solo_cancelled_ && preset_mode_ == kPresetNone
+           && record_ui_state.load(std::memory_order_relaxed)
+                  == RecordUiState::kIdle)
+            play_modes.PlayPressed();
         play_hold_valid_ = false;
         play_gesture_consumed_ = false;
         play_solo_cancelled_ = false;
@@ -1453,6 +1497,7 @@ void ApplyControls()
     SyncPadGates();
     if(HandleTransport())
         return;
+    RetriggerLatchedStrikes();
     const uint32_t now   = System::GetNow();
     const bool     shift = hw.ShiftHeld();
     static bool prev_shift_held = false;
@@ -2060,11 +2105,9 @@ void DrawOverlayBar(uint32_t now)
         }
     }
 
-    // Pressed keys light white, ringing voices glow dim amber on their
-    // key, and LOOP-latched Rimming notes glow yellow in Rimming and
-    // Strikes - but NOT while a temporary overlay bar is up, so the bars stay readable while a
-    // setting is edited. (A stolen note's latch is cleared by the state
-    // machine, so its yellow indication disappears at the steal.)
+    // Pressed keys light white, ringing voices glow dim amber, and
+    // latched notes glow yellow - except while a temporary overlay bar
+    // is up. A stolen note's latch is cleared by the state machine.
     if(!overlay_active)
     {
         // Held keys light white - physical keys AND MIDI-held notes
@@ -2081,9 +2124,12 @@ void DrawOverlayBar(uint32_t now)
                                        14, 8, 2);
         }
           if(play_modes.Mode() == PlayMode::kRimming
-              || play_modes.Mode() == PlayMode::kStrikes)
+             || play_modes.Mode() == PlayMode::kStrikes)
             for(int key = 0; key < bowls::kKeyCount; ++key)
-                if(play_modes.Latched(key) && !hw.KeyHeld(key))
+                  if((play_modes.Latched(key)
+                      || (play_modes.Mode() == PlayMode::kStrikes
+                          && play_modes.StrikeLatched(key)))
+                     && !hw.KeyHeld(key))
                     // The same yellow as the LOOP LED.
                     chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key],
                                            40, 40, 0);
@@ -2392,7 +2438,13 @@ void RenderLeds()
     }
     else
     {
-        chompi_leds::SetPthLed(chompi_leds::kPthPlay, 0, 0, 0);
+        const uint8_t strike_latch
+            = play_modes.Mode() == PlayMode::kStrikes
+                      && play_modes.StrikeLatchEnabled()
+                  ? 40
+                  : 0;
+        chompi_leds::SetPthLed(chompi_leds::kPthPlay,
+                               strike_latch, strike_latch, 0);
         chompi_leds::SetPthLed(chompi_leds::kPthLoop,
                                play_modes.LatchEnabled() ? 40 : 0,
                                play_modes.LatchEnabled() ? 40 : 0,

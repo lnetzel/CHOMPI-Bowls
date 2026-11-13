@@ -9,7 +9,7 @@ The firmware uses the BOOT_SRAM build setup and STM32H750 memory layout. It does
 Sound parameters and the active play mode are saved only when you
 explicitly save a preset. Parameter bars are temporary ~500 ms overlays
 on the 15 white keys; with no bar up, held keys light white, ringing
-voices glow dim amber, and LOOP-latched notes glow yellow.
+voices glow dim amber, and latched notes glow yellow.
 
 | Control | Click | Turn | SHIFT + Turn | Indication |
 |---|---|---|---|---|
@@ -25,7 +25,7 @@ voices glow dim amber, and LOOP-latched notes glow yellow.
 | **Preset save** | SHIFT + Black A#4 enters save selection; choose a white-key slot, then release and press SHIFT to confirm. Press Black A#4 to cancel. | - | - | Empty slots blink dim grey; filled slots are purple; selected slot is blue; save animation is purple |
 | **Preset copy** | SHIFT + Black G#4 enters copy; choose a filled source, then a different destination, release and press SHIFT to confirm. Press Black G#4 to cancel. | - | - | Source is green; selected destination is blue |
 | **Preset erase** | SHIFT + Black F#4 enters erase selection; choose a filled slot, then release and press SHIFT to confirm. Press Black F#4 to cancel. | - | - | Selected slot is red |
-| **PLAY** (KEY_27) | Tap in playback to pause/resume; hold alone for 2 s to enter or exit playback | - | - | Blue in playback; blinks while playing |
+| **PLAY** (KEY_27) | In Strikes, tap to toggle the Strike note latch; in playback, tap to pause/resume; hold alone for 2 s to enter or exit playback | - | - | Yellow for the Strike latch; blue in playback, blinking while playing |
 | **LOOP** (KEY_28) | Tap to toggle the Rimming note latch (retained in Strikes, cleared on entry to Split); hold with PLAY for recording gestures | - | - | Yellow for the Rimming latch; blue while take looping is enabled |
 
 \* The selected bowl = the last played/selected key **in the current
@@ -37,15 +37,19 @@ mix are global. The mode toggle (SW_TOG) is reserved.
 ### Play modes (keyboard)
 
 The instrument has **five shared voices**; a sixth simultaneous note
-steals the quietest unprotected voice. Rimming voices latched before
-switching to Strikes are protected; if all five voices are protected,
-incoming strikes are dropped rather than stealing a latch.
+steals the quietest unprotected voice. Latched Rimming and Strike voices
+are protected in Strikes; if all five voices are protected, incoming
+strikes are dropped rather than stealing a latch.
 Switching modes never interrupts ringing voices or the reverb: outgoing
 notes keep their sound, and the wheel only drives notes started in the
 current mode. Black keys are playable everywhere.
 
 - **Strikes** (SHIFT + lower F#): all 25 keys strike distinct,
-  ascending bowls (99 Hz .. 1560 Hz). The wheel rims the currently
+  ascending bowls (99 Hz .. 1560 Hz). Tap **PLAY** to toggle the Strike
+  latch: enabling it captures held strikes, and later key presses toggle
+  individual notes on/off. A latched bowl retriggers when its resonator
+  tail ends, so shorter decay settings produce more frequent strikes.
+  Latched voices are protected from stealing. The wheel rims currently
   sounding, physically held strikes.
 - **Rimming** (SHIFT + lower G#): all 25 keys hold clean, sustained
   bowl pads - 10 s attack to ~90%, 10 s release to ~10%; the bowl's

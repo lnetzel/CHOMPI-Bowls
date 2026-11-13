@@ -263,6 +263,58 @@ void TestLatch()
     Check(!sm.PadOn(11), "M5h held note releases on its key-up", "");
 }
 
+// -- M9: Strike PLAY latch --------------------------------------------------
+
+void TestStrikeLatch()
+{
+    PlayModes sm;
+    sm.Init(PlayMode::kStrikes);
+    Check(sm.KeyDown(4, false).kind == KeyAction::kStrike,
+          "M9a ordinary Strike still triggers", "");
+    sm.PlayPressed();
+    Check(sm.StrikeLatchEnabled() && sm.StrikeLatched(4),
+          "M9b PLAY captures held strikes", "");
+    sm.KeyUp(4);
+    Check(sm.StrikeLatched(4),
+          "M9c captured Strike survives key-up", "");
+
+    KeyAction a = sm.KeyDown(7, false);
+    Check(a.kind == KeyAction::kStrike && sm.StrikeLatched(7),
+          "M9d latched-mode key-down strikes and latches", "");
+    sm.KeyUp(7);
+    a = sm.KeyDown(7, false);
+    Check(a.kind == KeyAction::kNone && !sm.StrikeLatched(7),
+          "M9e second key-down toggles a Strike latch off", "");
+    sm.KeyUp(7);
+
+    sm.PlayPressed();
+    Check(!sm.StrikeLatchEnabled() && !sm.StrikeLatched(4),
+          "M9f PLAY off clears Strike latches", "");
+
+    sm.PlayPressed();
+    sm.KeyDown(12, false);
+    sm.KeyUp(12);
+    sm.OnVoiceStolen(PlayMode::kStrikes, 12);
+    Check(!sm.StrikeLatched(12),
+          "M9g a stolen Strike latch is cleared", "");
+    sm.SetMode(PlayMode::kRimming);
+    sm.PlayPressed();
+    Check(sm.StrikeLatchEnabled(),
+          "M9h PLAY latch is inert outside Strikes", "");
+    sm.SetMode(PlayMode::kSplit);
+    Check(!sm.StrikeLatchEnabled(),
+          "M9i entering Split clears Strike latches", "");
+
+    PlayModes midi;
+    midi.Init(PlayMode::kStrikes);
+    midi.PlayPressed();
+    midi.MidiNoteOn(bowls::Source::kMidiDin, 9, 86);
+    midi.MidiNoteOff(bowls::Source::kMidiDin, 9);
+    Check(midi.StrikeLatchVelocity(9) == 86
+              && midi.StrikeLatchUsesMidiVelocity(9),
+          "M9j MIDI latch retains its retrigger velocity", "");
+}
+
 // -- M6: leaving Rimming -----------------------------------------------------
 
 void TestModeExit()
@@ -373,6 +425,21 @@ void TestLatchedVoiceProtection()
     protected_voice[1] = false;
     Check(select() == 0,
           "M7g allocator steals quietest unprotected voice only", "");
+
+    sm.Init(PlayMode::kStrikes);
+    sm.PlayPressed();
+    for(int key = 0; key < 5; ++key)
+    {
+        sm.KeyDown(key, false);
+        sm.KeyUp(key);
+        protected_voice[key] = sm.StrikeLatched(key);
+    }
+    Check(bowls::QuietestUnprotectedVoice(
+              5, [&](int i) { return active[i]; },
+              [&](int i) { return protected_voice[i]; },
+              [&](int i) { return envelope[i]; })
+              == -1,
+          "M7h five Strike latches are protected from stealing", "");
 }
 
 // -- M8: wheel sets ------------------------------------------------------------
@@ -445,6 +512,7 @@ int main()
     TestShortcuts();
     TestBasicModes();
     TestLatch();
+    TestStrikeLatch();
     TestModeExit();
     TestSteals();
     TestLatchedVoiceProtection();

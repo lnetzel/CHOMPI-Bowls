@@ -6,10 +6,10 @@
 // shortcuts, per-source per-key press provenance (which input source
 // holds which key, and in which mode the press began, so a release
 // after a mode switch still releases the right note) and the Rimming
-// LOOP latch. No audio, no hardware: chompi_main.cpp feeds debounced
-// key/LOOP/MIDI events in and executes the returned KeyAction on the
-// voice pool; pad gate-offs are reconciled from PadOn() every block,
-// so a single event can never lose a release.
+// LOOP / Strike PLAY latches. No audio, no hardware: chompi_main.cpp
+// feeds debounced key/transport/MIDI events in and executes the returned
+// KeyAction on the voice pool; pad gate-offs are reconciled from PadOn()
+// every block, so a single event can never lose a release.
 //
 // Ownership: every held note is a per-SOURCE claim (local keyboard,
 // MIDI DIN, MIDI USB). A Rimming pad gate stays open while ANY source
@@ -18,7 +18,7 @@
 // are source-aware too, so CC 123 cleans one sender without erasing
 // the others.
 //
-// Latch rules (enabled in Rimming; preserved but inert in Strikes):
+// Rimming latch rules (preserved but inert in Strikes):
 //   - latch off: note-on opens the pad gate, note-off releases it
 //   - LOOP on captures the currently held, sounding pad notes (any
 //     source); a later note-on toggles that SOURCE's claim on
@@ -30,6 +30,9 @@
 //     Rimming -> Split clears them, releasing latched-only notes
 //   - a stolen latched or held note is unlatched and never restarts
 //     by itself
+// Strike latch rules (enabled in Strikes; preserved but inert elsewhere):
+//   - PLAY on captures held strikes; later key-downs toggle a latch that
+//     retriggers after the resonator tail ends
 // Latch, held-key, sustain and pad state are transient - never
 // persisted.
 
@@ -81,7 +84,8 @@ class PlayModes
     {
         mode_          = mode;
         shortcut_key_  = -1;
-        latch_enabled_ = false;
+        latch_enabled_        = false;
+        strike_latch_enabled_ = false;
         rim_held_[0]   = -1;
         rim_held_[1]   = -1;
         rim_held_n_    = 0;
@@ -93,18 +97,20 @@ class PlayModes
             src_rim_latch_[s] = -1;
             for(int k = 0; k < kKeyCount; ++k)
             {
-                down_mode_[s][k]   = -1;
-                latched_[s][k]     = false;
-                sustained_[s][k]   = false;
-                muted_held_[s][k]  = false;
-                velocity_[s][k]    = 0;
+                down_mode_[s][k]      = -1;
+                latched_[s][k]        = false;
+                strike_latched_[s][k] = false;
+                sustained_[s][k]      = false;
+                muted_held_[s][k]     = false;
+                velocity_[s][k]       = 0;
             }
         }
         for(int k = 0; k < kKeyCount; ++k)
         {
-            pad_on_[k]       = false;
-            stolen_pad_[k]   = false;
-            rim_held_src_[k] = 0;
+            pad_on_[k]        = false;
+            stolen_pad_[k]    = false;
+            stolen_strike_[k] = false;
+            rim_held_src_[k]  = 0;
         }
     }
 
@@ -131,6 +137,9 @@ class PlayModes
     /** LOOP latch enabled; preserved in Strikes, cleared when entering Split. */
     bool LatchEnabled() const { return latch_enabled_; }
 
+    /** PLAY latch enabled for Strikes, independent of the Rimming LOOP latch. */
+    bool StrikeLatchEnabled() const { return strike_latch_enabled_; }
+
     /** Key's pad note is latched on for ANY source (drives the
      *  latched-key LED). */
     bool Latched(int key) const
@@ -141,6 +150,28 @@ class PlayModes
             if(latched_[s][key])
                 return true;
         return false;
+    }
+
+    /** Strike note is latched on for ANY source. */
+    bool StrikeLatched(int key) const
+    {
+        if(key < 0 || key >= kKeyCount)
+            return false;
+        for(int s = 0; s < kSourceCount; ++s)
+            if(strike_latched_[s][key])
+                return true;
+        return false;
+    }
+
+    int StrikeLatchVelocity(int key) const
+    {
+        const int s = StrikeLatchSource(key);
+        return s >= 0 ? velocity_[s][key] : 0;
+    }
+
+    bool StrikeLatchUsesMidiVelocity(int key) const
+    {
+        return StrikeLatchSource(key) > 0;
     }
 
     /** Desired pad gate for a Rimming key; chompi_main reconciles the
@@ -319,6 +350,13 @@ class PlayModes
      *  other modes. */
     void LoopPressed() { SetLatchEnabled(!latch_enabled_); }
 
+    /** PLAY toggles the Strike note latch. Reserved outside Strikes. */
+    void PlayPressed()
+    {
+        if(mode_ == PlayMode::kStrikes)
+            SetStrikeLatchEnabled(!strike_latch_enabled_);
+    }
+
     // -- MIDI events (no shortcut/routing consumption, never SHIFT) -----
 
     /** MIDI Note On (velocity 1..127; velocity 0 arrives as
@@ -379,6 +417,7 @@ class PlayModes
         {
             down_mode_[s][k]   = -1;
             latched_[s][k]     = false;
+            strike_latched_[s][k] = false;
             sustained_[s][k]   = false;
             muted_held_[s][k]  = false;
             velocity_[s][k]    = 0;
@@ -423,6 +462,7 @@ class PlayModes
             {
                 down_mode_[s][k]  = -1;
                 latched_[s][k]    = false;
+                strike_latched_[s][k] = false;
                 sustained_[s][k]  = false;
                 muted_held_[s][k] = false;
                 velocity_[s][k]   = 0;
@@ -438,6 +478,7 @@ class PlayModes
         {
             pad_on_[k]       = false;
             stolen_pad_[k]   = false;
+            stolen_strike_[k] = false;
             rim_held_src_[k] = 0;
         }
     }
@@ -491,6 +532,27 @@ class PlayModes
         }
     }
 
+    /** PLAY latch setter: capture held strikes; disabling stops retriggers
+     *  without choking their currently ringing tails. */
+    void SetStrikeLatchEnabled(bool on)
+    {
+        if(mode_ != PlayMode::kStrikes || on == strike_latch_enabled_)
+            return;
+        strike_latch_enabled_ = on;
+        for(int k = 0; k < kKeyCount; ++k)
+            for(int s = 0; s < kSourceCount; ++s)
+            {
+                if(on)
+                {
+                    if(down_mode_[s][k] == StrikeIndex
+                       && !stolen_strike_[k])
+                        strike_latched_[s][k] = true;
+                }
+                else
+                    strike_latched_[s][k] = false;
+            }
+    }
+
     /** The voice holding (mode, key) was stolen by a newer note: clear
      *  that note's latch/sustain claims (all sources) and its gate.
      *  LOOP itself stays enabled; the held state is remembered (the
@@ -509,6 +571,12 @@ class PlayModes
             stolen_pad_[key] = true; // suppress the gate until a fresh press
             pad_on_[key]     = false;
         }
+        else if(mode == PlayMode::kStrikes && key >= 0 && key < kKeyCount)
+        {
+            for(int s = 0; s < kSourceCount; ++s)
+                strike_latched_[s][key] = false;
+            stolen_strike_[key] = true;
+        }
     }
 
   private:
@@ -522,6 +590,19 @@ class PlayModes
     static constexpr uint8_t SrcBit(int s)
     {
         return static_cast<uint8_t>(1u << s);
+    }
+
+    int StrikeLatchSource(int key) const
+    {
+        if(key < 0 || key >= kKeyCount)
+            return -1;
+        int best_source = -1;
+        for(int s = 0; s < kSourceCount; ++s)
+            if(strike_latched_[s][key]
+               && (best_source < 0
+                   || velocity_[s][key] > velocity_[best_source][key]))
+                best_source = s;
+        return best_source;
     }
 
     bool SrcHoldsRimKey(int s) const
@@ -566,7 +647,21 @@ class PlayModes
         a.key  = key;
         switch(mode_)
         {
-            case PlayMode::kStrikes: a.kind = KeyAction::kStrike; break;
+            case PlayMode::kStrikes:
+                stolen_strike_[key] = false;
+                if(strike_latch_enabled_ && strike_latched_[s][key])
+                {
+                    strike_latched_[s][key] = false;
+                    velocity_[s][key] = 0;
+                    a.kind = KeyAction::kNone;
+                }
+                else
+                {
+                    if(strike_latch_enabled_)
+                        strike_latched_[s][key] = true;
+                    a.kind = KeyAction::kStrike;
+                }
+                break;
             case PlayMode::kRimming:
                 if(latch_enabled_)
                 {
@@ -660,8 +755,11 @@ class PlayModes
         const int s  = static_cast<int>(src);
         const int dm = down_mode_[s][key];
         if(dm < 0)
-            return latched_[s][key] || sustained_[s][key] ? RimmingIndex
-                                                          : -1;
+        {
+            if(latched_[s][key] || sustained_[s][key])
+                return RimmingIndex;
+            return strike_latched_[s][key] ? StrikeIndex : -1;
+        }
         const bool was_muted  = muted_held_[s][key];
         down_mode_[s][key]    = -1;
         muted_held_[s][key]   = false;
@@ -700,17 +798,25 @@ class PlayModes
      *  Strikes keeps them intact so the pads can resume on return. */
     void LeaveMode(PlayMode target)
     {
-        if(mode_ != PlayMode::kRimming || target == PlayMode::kStrikes)
-            return;
-        latch_enabled_ = false;
-        for(int k = 0; k < kKeyCount; ++k)
+        if(target == PlayMode::kSplit)
         {
-            for(int s = 0; s < kSourceCount; ++s)
+            strike_latch_enabled_ = false;
+            for(int k = 0; k < kKeyCount; ++k)
+                for(int s = 0; s < kSourceCount; ++s)
+                    strike_latched_[s][k] = false;
+        }
+        if(mode_ == PlayMode::kRimming && target != PlayMode::kStrikes)
+        {
+            latch_enabled_ = false;
+            for(int k = 0; k < kKeyCount; ++k)
             {
-                latched_[s][k]   = false;
-                sustained_[s][k] = false;
+                for(int s = 0; s < kSourceCount; ++s)
+                {
+                    latched_[s][k]   = false;
+                    sustained_[s][k] = false;
+                }
+                RecomputePadGate(k);
             }
-            RecomputePadGate(k);
         }
     }
 
@@ -721,13 +827,16 @@ class PlayModes
     // note-on velocity (0 = no claim).
     int8_t  down_mode_[kSourceCount][kKeyCount];
     bool    latched_[kSourceCount][kKeyCount];
+    bool    strike_latched_[kSourceCount][kKeyCount];
     bool    sustained_[kSourceCount][kKeyCount];
     bool    muted_held_[kSourceCount][kKeyCount];
     uint8_t velocity_[kSourceCount][kKeyCount];
     bool    sustain_on_[kSourceCount];
     bool    latch_enabled_ = false;
+    bool    strike_latch_enabled_ = false;
     bool    pad_on_[kKeyCount];
     bool    stolen_pad_[kKeyCount]; // steal suppresses the gate
+    bool    stolen_strike_[kKeyCount];
     // Split rim set: combined press-ordered held keys (max 2) with the
     // owning sources per key, the combined last-selected fallback and
     // each source's own last selection (the CC 1 fallback).
