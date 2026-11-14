@@ -67,13 +67,13 @@
 //                         the currently sounding held or latched pads
 //                         (slow = soft, fast = loud; only the two
 //                         wheel LEDs follow the level - no keyboard
-//                         bar). The wheel never creates a strike or
-//                         revives a stolen note. The DIRECTION picks
-//                         the sound: clockwise = the classic friction
-//                         texture, counter-clockwise = a clean
-//                         sustained bowl tone; the last direction
-//                         sticks per (mode, key) while the wheel is
-//                         still.
+//                         bar); Split rim keys glow yellow while held
+//                         and strike keys blue. The wheel never creates
+//                         a strike or revives a stolen note. The
+//                         DIRECTION picks the sound and wheel LED color:
+//                         clockwise = purple friction, counter-clockwise
+//                         = pink clean sustained bowl tone; the last
+//                         direction sticks per (mode, key) while still.
 //   Volume encoder      : press cycles page 1 master volume / page 2
 //                         stereo delay (yellow bar/LED; turn = combined
 //                         mix/feedback, SHIFT+turn = 40..500 ms time) /
@@ -911,6 +911,7 @@ bool wheel_clean_[bowls::kPlayModeCount][bowls::kKeyCount] = {};
 
 // What the wheel LEDs show (set in ApplyControls, read in RenderLeds).
 volatile float rub_display_ = 0.0f;
+volatile bool  rub_display_clean_ = false;
 
 /** The effective rub candidate for (mode, key) in the CURRENT mode:
  *  the local wheel's decaying pumped level and each MIDI source's held
@@ -1750,13 +1751,19 @@ void ApplyControls()
     {
         const int cur_mode = ModeIdx(play_modes.Mode());
         float     d        = 0.0f;
+        bool      clean    = false;
         for(int k = 0; k < bowls::kKeyCount; ++k)
         {
-            const float lvl = EffectiveRub(cur_mode, k).level;
+            const bowls::RubCandidate candidate = EffectiveRub(cur_mode, k);
+            const float lvl = candidate.level;
             if(lvl > d)
+            {
                 d = lvl;
+                clean = candidate.clean;
+            }
         }
         rub_display_ = d;
+        rub_display_clean_ = clean;
     }
     ApplyWheel();
 
@@ -2119,9 +2126,12 @@ void DrawOverlayBar(uint32_t now)
                 else if(play_modes.Mode() == PlayMode::kRimming)
                     chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key],
                                            40, 40, 0);
+                else if(key <= bowls::kRimKeyLast)
+                    chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key],
+                                           40, 40, 0);
                 else
                     chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key],
-                                           48, 48, 48);
+                                           0, 0, 48);
             }
         for(int v = 0; v < kVoiceCount; ++v)
         {
@@ -2450,8 +2460,23 @@ void RenderLeds()
         chompi_leds::SetPthLed(chompi_leds::kPthEncoder4, 40, 40, 40);
 #endif
     const uint8_t rub = static_cast<uint8_t>(rub_display_ * 40.0f);
-    chompi_leds::SetPthLed(chompi_leds::kPthWheelLeft, rub, rub, rub);
-    chompi_leds::SetPthLed(chompi_leds::kPthWheelRight, rub, rub, rub);
+    if(rub_display_clean_)
+    {
+        const uint8_t pink_blue = rub / 2;
+        chompi_leds::SetPthLed(chompi_leds::kPthWheelLeft,
+                               rub, 0, pink_blue);
+        chompi_leds::SetPthLed(chompi_leds::kPthWheelRight,
+                               rub, 0, pink_blue);
+    }
+    else
+    {
+        const uint8_t purple_red
+            = static_cast<uint8_t>(rub * (34.0f / 48.0f));
+        chompi_leds::SetPthLed(chompi_leds::kPthWheelLeft,
+                               purple_red, 0, rub);
+        chompi_leds::SetPthLed(chompi_leds::kPthWheelRight,
+                               purple_red, 0, rub);
+    }
     const PlaybackUiState playback_state
         = playback_ui_state.load(std::memory_order_acquire);
     if(playback_state != PlaybackUiState::kNormal)
