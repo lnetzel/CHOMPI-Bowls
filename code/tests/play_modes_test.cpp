@@ -315,6 +315,39 @@ void TestStrikeLatch()
           "M9j MIDI latch retains its retrigger velocity", "");
 }
 
+void TestIndependentLatches()
+{
+    PlayModes sm;
+    sm.Init(PlayMode::kStrikes);
+    sm.KeyDown(3, false);
+    sm.PlayPressed();
+    sm.KeyUp(3);
+
+    Check(sm.StrikeLatchEnabled() && sm.StrikeLatched(3),
+          "M10a Strike latch enabled in Strikes", "");
+
+    sm.SetMode(PlayMode::kRimming);
+    Check(sm.StrikeLatchEnabled() && sm.StrikeLatched(3),
+          "M10b Strike latch persists in Rimming", "");
+    sm.LoopPressed();
+    sm.KeyDown(5, false);
+    sm.KeyUp(5);
+    Check(sm.LatchEnabled() && sm.Latched(5) && sm.PadOn(5)
+              && sm.StrikeLatchEnabled() && sm.StrikeLatched(3),
+          "M10c both independent latches can be enabled", "");
+
+    sm.SetMode(PlayMode::kStrikes);
+    Check(sm.LatchEnabled() && sm.StrikeLatchEnabled()
+              && sm.Latched(5) && sm.StrikeLatched(3),
+          "M10d both latches persist between modes", "");
+
+    sm.SetMode(PlayMode::kSplit);
+    Check(!sm.LatchEnabled() && !sm.StrikeLatchEnabled()
+              && !sm.Latched(5) && !sm.StrikeLatched(3)
+              && !sm.PadOn(5),
+          "M10e entering Split clears both latches", "");
+}
+
 // -- M6: leaving Rimming -----------------------------------------------------
 
 void TestModeExit()
@@ -513,6 +546,7 @@ int main()
     TestBasicModes();
     TestLatch();
     TestStrikeLatch();
+    TestIndependentLatches();
     TestModeExit();
     TestSteals();
     TestLatchedVoiceProtection();

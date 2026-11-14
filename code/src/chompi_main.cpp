@@ -7,7 +7,7 @@
 // voice) with per-mode decay, paired-mode beating (shimmer) and a
 // finite-contact mallet excitation. The five voices are shared by all
 // modes; a sixth simultaneous note steals the quietest unprotected voice
-// (preserved Rimming and Strike latches are protected in Strikes).
+// (preserved Rimming and Strike latches are protected across modes).
 // never interrupts ringing voices or reverb tails: outgoing voices keep
 // their sound, and the wheel only drives notes started in the current
 // mode. Persistent parameters are stored only in explicitly saved presets;
@@ -25,7 +25,7 @@
 //                         pads, key-down toggles a note on/off, key-up
 //                         never releases a latched note. In STRIKES, a
 //                         separate PLAY latch captures held strikes;
-//                         later key-downs toggle notes that retrigger
+//                         later key-downs toggle blue notes that retrigger
 //                         after their resonator tails end. SHIFT + lower
 //                         A# (key 10) = SPLIT - the v1 layout: keys
 //                         0-11 (C3-B3) SELECT one of the 12 bowls for
@@ -79,7 +79,8 @@
 //                         mix/feedback, SHIFT+turn = 40..500 ms time) /
 //                         page 3 temple-room reverb mix (pale ice)
 //   SHIFT (KEY_26)      : modifier + mode shortcuts; while held, the
-//                         active mode's shortcut key glows blue and
+//                         active mode's shortcut key glows blue
+//                         (Strikes), yellow (Rimming) or pink (Split);
 //                         the active audio routing's selection key
 //                         glows pink. SHIFT + Black 6 (C#4) = Normal
 //                         audio routing, SHIFT + Black 7 (D#4) =
@@ -89,17 +90,17 @@
 //                         SHIFT + White Key 1-15 loads that preset;
 //                         SHIFT + Black F#4/G#4/A#4 enters erase/copy/save
 //                         selection, confirmed with a fresh SHIFT press.
-//   LOOP (KEY_28)       : tap toggles the Rimming note latch (yellow);
+//                         LOOP (KEY_28)       : tap toggles the Rimming note latch (yellow);
 //                         retained in Strikes, cleared on entry to Split;
 //                         hold with PLAY for recording arm/stop; in
 //                         playback, tap toggles take looping (blue).
 //   PLAY (KEY_27)       : in Strikes, tap toggles the Strike note latch
-//                         (yellow); hold alone 2 s to enter/exit playback;
+//                         (blue); hold alone 2 s to enter/exit playback;
 //                         in playback, tap pauses/resumes. SW_TOG is reserved.
 //
 // Every encoder turn shows its bar on the 15 white keys for ~500 ms (the
-// CHOMPI-PhaseOff overlay pattern); with no bar up, held keys light
-// white and ringing voices glow dim amber on their key.
+// CHOMPI-PhaseOff overlay pattern); with no bar up, held Strike notes
+// light blue, held Rimming notes yellow and ringing voices glow dim amber.
 //
 // Audio: 48 kHz, block 24, dual codec - headphones are outputs 0/1 and
 // the master line out is outputs 2/3 (per the TAPE firmware channel
@@ -677,8 +678,7 @@ bool IsProtectedRimmingVoice(int voice)
 bool IsProtectedStrikeVoice(int voice)
 {
     const int key = voices[voice].Key();
-    return play_modes.Mode() == PlayMode::kStrikes
-           && voices[voice].VoiceMode() == ModeIdx(PlayMode::kStrikes)
+    return voices[voice].VoiceMode() == ModeIdx(PlayMode::kStrikes)
            && key >= 0 && play_modes.StrikeLatched(key);
 }
 
@@ -783,8 +783,7 @@ void StrikeKey(PlayMode mode, int key, int velocity = 127,
  *  silent; this makes its cadence follow the selected bowl's decay. */
 void RetriggerLatchedStrikes()
 {
-    if(play_modes.Mode() != PlayMode::kStrikes
-       || !play_modes.StrikeLatchEnabled())
+    if(!play_modes.StrikeLatchEnabled())
         return;
     for(int key = 0; key < bowls::kKeyCount; ++key)
     {
@@ -2105,16 +2104,25 @@ void DrawOverlayBar(uint32_t now)
         }
     }
 
-    // Pressed keys light white, ringing voices glow dim amber, and
-    // latched notes glow yellow - except while a temporary overlay bar
-    // is up. A stolen note's latch is cleared by the state machine.
+    // Held Strike notes glow blue, held Rimming notes glow yellow,
+    // ringing voices glow dim amber, and latched notes use their mode
+    // color - except while a temporary overlay bar is up.
     if(!overlay_active)
     {
-        // Held keys light white - physical keys AND MIDI-held notes
-        // (any source's claim) alike.
+        // Physical keys AND MIDI-held notes (any source's claim) alike.
         for(unsigned key = 0; key < 25; ++key)
             if(hw.KeyHeld(key) || play_modes.AnyHeld(key))
-                chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key], 48, 48, 48);
+            {
+                if(play_modes.Mode() == PlayMode::kStrikes)
+                    chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key],
+                                           0, 0, 48);
+                else if(play_modes.Mode() == PlayMode::kRimming)
+                    chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key],
+                                           40, 40, 0);
+                else
+                    chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key],
+                                           48, 48, 48);
+            }
         for(int v = 0; v < kVoiceCount; ++v)
         {
             const int key = voices[v].Key();
@@ -2123,16 +2131,22 @@ void DrawOverlayBar(uint32_t now)
                 chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key],
                                        14, 8, 2);
         }
-          if(play_modes.Mode() == PlayMode::kRimming
-             || play_modes.Mode() == PlayMode::kStrikes)
-            for(int key = 0; key < bowls::kKeyCount; ++key)
-                  if((play_modes.Latched(key)
-                      || (play_modes.Mode() == PlayMode::kStrikes
-                          && play_modes.StrikeLatched(key)))
-                     && !hw.KeyHeld(key))
-                    // The same yellow as the LOOP LED.
+        for(int key = 0; key < bowls::kKeyCount; ++key)
+            if(!hw.KeyHeld(key) && !play_modes.AnyHeld(key))
+            {
+                const bool rimming_latched = play_modes.Latched(key);
+                const bool strike_latched = play_modes.StrikeLatched(key);
+                const bool show_strike
+                    = strike_latched
+                      && (play_modes.Mode() == PlayMode::kStrikes
+                          || !rimming_latched);
+                if(show_strike)
+                    chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key],
+                                           0, 0, 48);
+                else if(rimming_latched)
                     chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key],
                                            40, 40, 0);
+            }
     }
 }
 
@@ -2312,18 +2326,36 @@ void RenderLeds()
 
     const uint32_t now = System::GetNow();
     const bool transport_keybed = DrawTransportKeybed(now);
+    const bool keybar_overlay_active
+        = static_cast<int32_t>(
+              params.overlay_until.load(std::memory_order_relaxed) - now)
+          > 0;
     if(!transport_keybed && !DrawPresetKeybed(now))
         DrawOverlayBar(now);
 
     // While SHIFT is held, highlight the active mode's lower black
-    // shortcut key (blue) and the active audio routing's selection
-    // key (pink). Black keys never collide with the white-key
+    // shortcut key in its mode color and the active audio routing's
+    // selection key in pink. Black keys never collide with the white-key
     // parameter bars, so this reads over either view.
     if(hw.ShiftHeld() && !sd_player.ModeActive())
     {
         const int sk
             = bowls::kModeShortcutKey[ModeIdx(play_modes.Mode())];
-        chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[sk], 0, 26, 48);
+        switch(play_modes.Mode())
+        {
+            case PlayMode::kStrikes:
+                chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[sk],
+                                       0, 26, 48);
+                break;
+            case PlayMode::kRimming:
+                chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[sk],
+                                       40, 40, 0);
+                break;
+            case PlayMode::kSplit:
+                chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[sk],
+                                       48, 0, 24);
+                break;
+        }
         chompi_leds::SetSmtLed(
             chompi_leds::kKeyLeds[bowls::RoutingSelectKey(routing_)],
             static_cast<uint8_t>(48.0f * bowls::kRoutingColorR),
@@ -2332,7 +2364,8 @@ void RenderLeds()
 
         if(preset_mode_ == kPresetNone
            && playback_ui_state.load(std::memory_order_acquire)
-                  == PlaybackUiState::kNormal)
+                  == PlaybackUiState::kNormal
+           && (transport_keybed || !keybar_overlay_active))
         {
             // SHIFT advertises loadable slots above other keybed overlays.
             for(int slot = 0; slot < 15; ++slot)
@@ -2439,12 +2472,9 @@ void RenderLeds()
     else
     {
         const uint8_t strike_latch
-            = play_modes.Mode() == PlayMode::kStrikes
-                      && play_modes.StrikeLatchEnabled()
-                  ? 40
-                  : 0;
+            = play_modes.StrikeLatchEnabled() ? 40 : 0;
         chompi_leds::SetPthLed(chompi_leds::kPthPlay,
-                               strike_latch, strike_latch, 0);
+                               0, 0, strike_latch);
         chompi_leds::SetPthLed(chompi_leds::kPthLoop,
                                play_modes.LatchEnabled() ? 40 : 0,
                                play_modes.LatchEnabled() ? 40 : 0,

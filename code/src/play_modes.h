@@ -485,9 +485,9 @@ class PlayModes
 
     // -- explicit setters (MIDI CC 80 / CC 83) --------------------------
 
-    /** CC 80 mode change: Rimming -> Strikes preserves the latch;
-     *  Rimming -> Split clears it. Returns true when the mode changed
-     *  (idempotent re-selection is a no-op). */
+    /** CC 80 mode change: Strikes and Rimming preserve their independent
+     *  latches; entering Split clears both. Returns true when the mode
+     *  changed (idempotent re-selection is a no-op). */
     bool SetMode(PlayMode target)
     {
         if(target == mode_)
@@ -794,8 +794,9 @@ class PlayModes
             }
     }
 
-    /** Leaving Rimming for Split clears the latch and deferred claims.
-     *  Strikes keeps them intact so the pads can resume on return. */
+    /** Strikes and Rimming preserve their independent latches when
+     *  switching between them. Entering Split clears both latches and
+     *  deferred Rimming claims. */
     void LeaveMode(PlayMode target)
     {
         if(target == PlayMode::kSplit)
@@ -805,7 +806,9 @@ class PlayModes
                 for(int s = 0; s < kSourceCount; ++s)
                     strike_latched_[s][k] = false;
         }
-        if(mode_ == PlayMode::kRimming && target != PlayMode::kStrikes)
+        if(target == PlayMode::kSplit
+           || (mode_ == PlayMode::kRimming
+               && target != PlayMode::kStrikes))
         {
             latch_enabled_ = false;
             for(int k = 0; k < kKeyCount; ++k)
