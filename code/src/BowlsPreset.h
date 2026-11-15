@@ -44,10 +44,10 @@ struct BowlsPreset
     /* boot defaults (mirror Params in chompi_main.cpp) */
     static constexpr int kDefaultMode       = kModeStrikes;
     static constexpr int kDefaultVolume     = 8;
-    static constexpr int kDefaultStrike     = 16;
-    static constexpr int kDefaultBrightness = 16;
-    static constexpr int kDefaultDecay      = 16;
-    static constexpr int kDefaultShimmer    = 8;
+    static constexpr int kDefaultStrike     = 32;
+    static constexpr int kDefaultBrightness = 32;
+    static constexpr int kDefaultDecay      = 0;
+    static constexpr int kDefaultShimmer    = 0;
     static constexpr int kDefaultProfile    = 0;
     static constexpr int kDefaultPan        = 16; /* centre */
     static constexpr int kDefaultReverbMix  = 0;  /* subtle temple room */
