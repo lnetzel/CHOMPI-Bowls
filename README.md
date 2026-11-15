@@ -25,7 +25,7 @@ voices glow dim amber, and latched notes glow yellow.
 | **Preset save** | SHIFT + Black A#4 enters save selection; choose a white-key slot, then release and press SHIFT to confirm. Press Black A#4 to cancel. | - | - | Empty slots blink dim grey; filled slots are purple; selected slot is blue; save animation is purple |
 | **Preset copy** | SHIFT + Black G#4 enters copy; choose a filled source, then a different destination, release and press SHIFT to confirm. Press Black G#4 to cancel. | - | - | Source is green; selected destination is blue |
 | **Preset erase** | SHIFT + Black F#4 enters erase selection; choose a filled slot, then release and press SHIFT to confirm. Press Black F#4 to cancel. | - | - | Selected slot is red |
-| **PLAY** (KEY_27) | In Strikes, tap to toggle the Strike note latch; in playback, tap to pause/resume; hold alone for 2 s to enter or exit playback | - | - | Yellow for the Strike latch; blue in playback, blinking while playing |
+| **PLAY** (KEY_27) | In Strikes, tap to toggle the Strike note latch; SHIFT+PLAY cycles its retrigger pattern; in playback, tap to pause/resume; hold alone for 2 s to enter or exit playback | - | - | Strike pattern color is dim while the latch is off and bright while on: blue = Duration Loop, green = Bottom Pair, orange = Top Pair, purple = Middle Pair. Blue in playback, blinking while playing |
 | **LOOP** (KEY_28) | Tap to toggle the Rimming note latch (retained in Strikes, cleared on entry to Split); hold with PLAY for recording gestures | - | - | Yellow for the Rimming latch; blue while take looping is enabled |
 
 \* The selected bowl = the last played/selected key **in the current
@@ -50,8 +50,11 @@ current mode. Black keys are playable everywhere.
   latch: enabling it captures held strikes, and later key presses toggle
   individual notes on/off. A latched bowl retriggers when its resonator
   tail ends, so shorter decay settings produce more frequent strikes.
-  Latched voices are protected from stealing. The wheel rims currently
-  sounding, physically held strikes.
+  **SHIFT+PLAY** cycles Duration Loop (blue), Bottom Pair (green), Top
+  Pair (orange), and Middle Pair (purple). The PLAY LED uses a dim color
+  when the latch is off and a bright color when it is on. Latched voices
+  are protected from stealing. The wheel rims currently sounding,
+  physically held strikes.
 - **Rimming** (SHIFT + lower G#): all 25 keys hold clean, sustained
   bowl pads - 10 s attack to ~90%, 10 s release to ~10%; the bowl's
   ring and the reverb can ring out longer. The wheel adds the

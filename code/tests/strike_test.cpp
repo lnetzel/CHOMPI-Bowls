@@ -14,6 +14,7 @@
 //   S10 contact tick is muted by default, but remains available to diagnostics
 //   S11 brightness ticks retain zero and extend to 1.5 at the maximum
 //   S12 maximum brightness substantially raises the strike's upper-mode balance
+//   S13 an idle lower-register voice clears its stale activity envelope
 
 #include "bowl_scale.h"
 #include "bowl_voice.h"
@@ -539,6 +540,32 @@ void S12_MaxBrightnessStrengthensStrikeHighModes()
           "S12 maximum brightness strengthens strike high modes", detail);
 }
 
+void S13_IdleLowerVoiceClearsActivityEnvelope()
+{
+    bowls::BowlVoice voice;
+    voice.Init(kFs);
+    voice.SetProfile(0);
+    voice.SetBrightness(1.5f);
+    voice.SetDecayMult(0.25f);
+    voice.SetShimmerMult(0.0f);
+    voice.Strike(219.6f, 1.0f, 1.0f, 1.0f);
+
+    float left[kBlk] = {};
+    float right[kBlk] = {};
+    int samples = 0;
+    while((voice.IsActive() || voice.HasTail())
+          && samples < static_cast<int>(10.0f * kFs))
+    {
+        for(int i = 0; i < kBlk; ++i)
+            left[i] = right[i] = 0.0f;
+        voice.ProcessBlock(left, right, kBlk);
+        samples += kBlk;
+    }
+
+    Check(!voice.HasTail() && !voice.IsActive(),
+          "S13 idle lower voice clears its activity envelope", "");
+}
+
 } // namespace
 
 int main()
@@ -556,6 +583,7 @@ int main()
     S10_DefaultContactTickMuted();
     S11_BrightnessRange();
     S12_MaxBrightnessStrengthensStrikeHighModes();
+    S13_IdleLowerVoiceClearsActivityEnvelope();
     std::printf(g_failures == 0 ? "\nALL STRIKE TESTS PASSED\n"
                                 : "\n%d STRIKE TEST(S) FAILED\n",
                 g_failures);

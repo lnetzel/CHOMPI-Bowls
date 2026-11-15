@@ -555,7 +555,12 @@ class BowlVoice
         // without cutting off low-level resonator tails.
         if(burst_pos_ <= 0 && rub_level_ < 0.001f && rub_smooth_ < 0.001f
            && !pad_gate_ && pad_env_ < 0.001f && !HasTail())
+        {
+            // The output follower can outlast the resonator-state
+            // threshold; don't leave an idle voice permanently active.
+            envelope_ = 0.0f;
             return;
+        }
 
         UpdateLife(n);
 

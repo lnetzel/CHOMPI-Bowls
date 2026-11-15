@@ -95,8 +95,10 @@
 //                         retained in Strikes, cleared on entry to Split;
 //                         hold with PLAY for recording arm/stop; in
 //                         playback, tap toggles take looping (blue).
-//   PLAY (KEY_27)       : in Strikes, tap toggles the Strike note latch
-//                         (blue); SHIFT+PLAY cycles its retrigger pattern;
+//   PLAY (KEY_27)       : in Strikes, tap toggles the Strike note latch;
+//                         SHIFT+PLAY cycles its pattern (dim/bright blue =
+//                         Duration Loop, green = Bottom Pair, orange = Top
+//                         Pair, purple = Middle Pair);
 //                         hold alone 2 s to enter/exit playback;
 //                         in playback, tap pauses/resumes. SW_TOG is reserved.
 //
@@ -2567,10 +2569,29 @@ void RenderLeds()
     }
     else
     {
-        const uint8_t strike_latch
-            = play_modes.StrikeLatchEnabled() ? 40 : 0;
-        chompi_leds::SetPthLed(chompi_leds::kPthPlay,
-                               0, 0, strike_latch);
+        const uint8_t level
+            = play_modes.StrikeLatchEnabled() ? 40 : 8;
+        uint8_t red = 0;
+        uint8_t green = 0;
+        uint8_t blue = 0;
+        switch(play_modes.GetStrikeArpeggioMode())
+        {
+            case bowls::StrikeArpeggioMode::kDurationLoop:
+                blue = level;
+                break;
+            case bowls::StrikeArpeggioMode::kBottomPair:
+                green = level;
+                break;
+            case bowls::StrikeArpeggioMode::kTopPair:
+                red = level;
+                green = static_cast<uint8_t>(level / 3);
+                break;
+            case bowls::StrikeArpeggioMode::kMiddlePair:
+                red = static_cast<uint8_t>(level / 2);
+                blue = level;
+                break;
+        }
+        chompi_leds::SetPthLed(chompi_leds::kPthPlay, red, green, blue);
         chompi_leds::SetPthLed(chompi_leds::kPthLoop,
                                play_modes.LatchEnabled() ? 40 : 0,
                                play_modes.LatchEnabled() ? 40 : 0,
