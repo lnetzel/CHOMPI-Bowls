@@ -39,7 +39,10 @@ inline float DelayFeedback(int position)
 
 inline int DelayTimeMs(int position)
 {
-    return 40 + ScaledInteger(position, 460);
+    const int clamped = ClampPosition(position);
+    if(clamped <= 15)
+        return 40 + (clamped * 460 + 7) / 15;
+    return 500 + ((clamped - 15) * 500 + 8) / 17;
 }
 
 } // namespace delay_parameters

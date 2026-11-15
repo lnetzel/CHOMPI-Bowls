@@ -41,8 +41,8 @@ int main()
     assert(DelayMix(0) == 0.f && DelayFeedback(0) == .35f);
     assert(DelayMix(16) == .5f && DelayFeedback(16) == .35f);
     assert(DelayMix(32) == .5f && DelayFeedback(32) == 1.2f);
-    assert(DelayTimeMs(0) == 40 && DelayTimeMs(15) == 256
-           && DelayTimeMs(32) == 500);
+    assert(DelayTimeMs(0) == 40 && DelayTimeMs(15) == 500
+           && DelayTimeMs(32) == 1000);
     float out_l, out_r;
 
     Rig dry;
@@ -55,12 +55,14 @@ int main()
     }
     assert(dry.delay.GetMix() == 0.f);
     assert(dry.delay.GetFeedback() == .35f);
-    assert(dry.delay.GetDelayMs() == 250.f);
+    assert(dry.delay.GetDelayMs() == 500.f);
 
     dry.delay.SetDelayMs(1.f);
     assert(dry.delay.GetDelayMs() == 40.f);
     dry.delay.SetDelayMs(900.f);
-    assert(dry.delay.GetDelayMs() == 500.f);
+    assert(dry.delay.GetDelayMs() == 900.f);
+    dry.delay.SetDelayMs(1500.f);
+    assert(dry.delay.GetDelayMs() == 1000.f);
     dry.delay.SetFeedback(2.f);
     assert(dry.delay.GetFeedback() == 1.2f);
 
@@ -142,6 +144,29 @@ int main()
         max_output = std::fmax(max_output, std::fabs(out_l));
     }
     assert(max_output < .7f);
+
+    const auto MeasureDelayedRms = [](float frequency) {
+        Rig rig;
+        rig.delay.SetMix(1.f);
+        rig.delay.SetFeedback(0.f);
+        rig.delay.SetDelayMs(100.f);
+        float sum_sq = 0.f;
+        const int measure_start = static_cast<int>(2.f * kSampleRate);
+        const int frames = measure_start + static_cast<int>(kSampleRate / 10.f);
+        float out_l, out_r;
+        for(int i = 0; i < frames; ++i)
+        {
+            const float in = .5f * std::sin(
+                6.283185307179586f * frequency * i / kSampleRate);
+            rig.delay.Process(in, in, out_l, out_r);
+            if(i >= measure_start)
+                sum_sq += out_l * out_l;
+        }
+        return std::sqrt(sum_sq / (frames - measure_start));
+    };
+    const float low_frequency_rms = MeasureDelayedRms(20.f);
+    const float high_frequency_rms = MeasureDelayedRms(500.f);
+    assert(low_frequency_rms < high_frequency_rms * .3f);
 
     std::puts("stereo_bbd_delay_test: PASS");
     return 0;

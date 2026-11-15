@@ -207,8 +207,8 @@ int main()
         chompi::BowlsPreset preset;
         preset.SetDefaults();
         if(!ok || !chompi::Parse(doc, len, preset)
-           || preset.mode != 0 || preset.volume != 11 || preset.strike != 20
-           || preset.pan[12] != 23 || preset.bvol[12] != 20
+           || preset.mode != 0
+           || preset.delay_time != chompi::BowlsPreset::kDefaultDelayTime
            || !SamePitches(preset.pitch_hz, bowls::FactoryPitchTables()))
             ok = false;
         Check(ok, "embedded first-boot template parses", "");

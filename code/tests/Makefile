@@ -72,7 +72,7 @@ sd_audio_test.exe: sd_audio_test.cpp ../src/sd_audio.h
 delay-test: stereo_bbd_delay_test.exe
 	./stereo_bbd_delay_test.exe
 
-stereo_bbd_delay_test.exe: stereo_bbd_delay_test.cpp ../src/StereoBbdDelay.h
+stereo_bbd_delay_test.exe: stereo_bbd_delay_test.cpp ../src/StereoBbdDelay.h ../src/delay_parameters.h
 	$(CXX) $(CXXFLAGS) -o $@ stereo_bbd_delay_test.cpp
 
 audio_routing_test.exe: audio_routing_test.cpp ../src/audio_routing.h ../src/bowl_scale.h

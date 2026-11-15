@@ -17,15 +17,16 @@ namespace chompi
 class StereoBbdDelay
 {
   public:
-    static constexpr int kBufferSize = 32768;
+    static constexpr int kBufferSize = 65536;
     static constexpr float kMinDelayMs = 40.f;
-    static constexpr float kMaxDelayMs = 500.f;
-    static constexpr float kDefaultDelayMs = 250.f;
+    static constexpr float kMaxDelayMs = 1000.f;
+    static constexpr float kDefaultDelayMs = 500.f;
     static constexpr float kMixRampSeconds = .010f;
     static constexpr float kDefaultFeedback = .35f;
     static constexpr float kMaxFeedback = 1.2f;
     static constexpr float kDarkenLpHz = 2800.f;
     static constexpr float kLowCutHz = 40.f;
+    static constexpr float kInputHighPassHz = 100.f;
     static constexpr float kStereoSpread = .01f;
     static constexpr float kModDepthLMs = .5f;
     static constexpr float kModDepthRMs = .7f;
@@ -51,9 +52,13 @@ class StereoBbdDelay
         lp_coeff_ = 1.f - expf(-6.283185307179586f * kDarkenLpHz
                                 / sample_rate);
         hp_coeff_ = expf(-6.283185307179586f * kLowCutHz / sample_rate);
+        input_hp_coeff_ = expf(-6.283185307179586f * kInputHighPassHz
+                               / sample_rate);
         lp_l_ = lp_r_ = 0.f;
         hp_x_l_ = hp_y_l_ = 0.f;
         hp_x_r_ = hp_y_r_ = 0.f;
+        input_hp_x_l_ = input_hp_y_l_ = 0.f;
+        input_hp_x_r_ = input_hp_y_r_ = 0.f;
         slew_coeff_ = 1.f - expf(-1.f / (kTimeSlewSeconds * sample_rate));
         min_samples_ = kMinDelayMs * .001f * sample_rate;
         max_samples_ = kMaxDelayMs * .001f * sample_rate;
@@ -141,8 +146,16 @@ class StereoBbdDelay
         const float hp_r = lp_r_ - hp_x_r_ + hp_coeff_ * hp_y_r_;
         hp_x_r_ = lp_r_;
         hp_y_r_ = hp_r;
-        buf_l_[write_] = SoftClip(in_l + feedback_ * hp_l);
-        buf_r_[write_] = SoftClip(in_r + feedback_ * hp_r);
+        const float input_hp_l
+            = input_hp_coeff_ * (input_hp_y_l_ + in_l - input_hp_x_l_);
+        const float input_hp_r
+            = input_hp_coeff_ * (input_hp_y_r_ + in_r - input_hp_x_r_);
+        input_hp_x_l_ = in_l;
+        input_hp_y_l_ = input_hp_l;
+        input_hp_x_r_ = in_r;
+        input_hp_y_r_ = input_hp_r;
+        buf_l_[write_] = SoftClip(input_hp_l + feedback_ * hp_l);
+        buf_r_[write_] = SoftClip(input_hp_r + feedback_ * hp_r);
         write_ = (write_ + 1) & (kBufferSize - 1);
 
         if(mix_ == 0.f)
@@ -210,9 +223,12 @@ class StereoBbdDelay
     float feedback_inc_;
     float lp_coeff_;
     float hp_coeff_;
+    float input_hp_coeff_;
     float lp_l_, lp_r_;
     float hp_x_l_, hp_y_l_;
     float hp_x_r_, hp_y_r_;
+    float input_hp_x_l_, input_hp_y_l_;
+    float input_hp_x_r_, input_hp_y_r_;
     float slew_coeff_;
     float min_samples_;
     float max_samples_;

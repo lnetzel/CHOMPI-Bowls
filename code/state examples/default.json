@@ -6,7 +6,7 @@
   "shimmer": 0,
   "reverb_mix": 0,
   "delay_mix": 0,
-  "delay_time": 0,
+  "delay_time": 15,
   "pan": [
     16,
     16,

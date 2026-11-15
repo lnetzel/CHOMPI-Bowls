@@ -53,7 +53,7 @@ struct BowlsPreset
     static constexpr int kDefaultPan        = 16; /* centre */
     static constexpr int kDefaultReverbMix  = 0;  /* subtle temple room */
     static constexpr int kDefaultDelayMix   = 0;  /* dry, 35% feedback */
-    static constexpr int kDefaultDelayTime  = 0; /* 256 ms */
+    static constexpr int kDefaultDelayTime  = 15; /* 500 ms */
     static constexpr int kDefaultBowlVol    = 8; /* unity gain (0 dB) */
     static constexpr float kMinPitchHz = bowls::kMinPitchHz;
     static constexpr float kMaxPitchHz = bowls::kMaxPitchHz;
@@ -64,7 +64,7 @@ struct BowlsPreset
     uint8_t shimmer;    /**< 0..32 paired-mode detune ticks */
     uint8_t reverb_mix; /**< 0..32 reverb dry/wet mix ticks */
     uint8_t delay_mix;  /**< 0..32 combined wet/feedback control */
-    uint8_t delay_time; /**< 0..32 delay time (40..500 ms) */
+    uint8_t delay_time; /**< 0..32 delay time (40..1000 ms) */
     /* per-mode/per-key banks, flattened [mode * 25 + key] */
     uint8_t pan[kBankSlots];     /**< per-key pan 0..32 (16 = centre) */
     uint8_t bvol[kBankSlots];    /**< per-key volume 0..32 (16 = unity) */
