@@ -49,6 +49,17 @@ bool FloatEq(float a, float b)
     return d < 0.001f && d > -0.001f;
 }
 
+bool IntArrayEq(const int* actual, int count, const int* expected,
+                int expected_count)
+{
+    if(count != expected_count)
+        return false;
+    for(int i = 0; i < count; ++i)
+        if(actual[i] != expected[i])
+            return false;
+    return true;
+}
+
 // -- M1: mappings ----------------------------------------------------------
 
 void TestMappings()
@@ -315,6 +326,73 @@ void TestStrikeLatch()
           "M9j MIDI latch retains its retrigger velocity", "");
 }
 
+void TestStrikeArpeggioModes()
+{
+    PlayModes sm;
+    sm.Init(PlayMode::kStrikes);
+    Check(sm.GetStrikeArpeggioMode()
+              == bowls::StrikeArpeggioMode::kDurationLoop,
+          "M9k Strike latch defaults to duration loop", "");
+    sm.PlayPressed();
+    const int latched[] = {2, 5, 9, 14, 20};
+    for(unsigned i = 0; i < sizeof(latched) / sizeof(latched[0]); ++i)
+    {
+        sm.KeyDown(latched[i], false);
+        sm.KeyUp(latched[i]);
+    }
+
+    int order[bowls::kStrikeArpeggioMaxSequenceLength];
+    const int bottom_expected[] = {2, 5, 9, 2, 5, 14, 2, 5, 20};
+    sm.CycleStrikeArpeggioMode();
+    int count = sm.GetStrikeArpeggioOrder(order);
+    Check(sm.GetStrikeArpeggioMode()
+                  == bowls::StrikeArpeggioMode::kBottomPair
+              && IntArrayEq(order, count, bottom_expected, 9),
+          "M9l bottom pair repeats with ascending third notes", "");
+
+    const int top_expected[] = {20, 14, 9, 20, 14, 5, 20, 14, 2};
+    sm.CycleStrikeArpeggioMode();
+    count = sm.GetStrikeArpeggioOrder(order);
+    Check(sm.GetStrikeArpeggioMode()
+                  == bowls::StrikeArpeggioMode::kTopPair
+              && IntArrayEq(order, count, top_expected, 9),
+          "M9m top pair repeats with descending third notes", "");
+
+    const int middle_expected[] = {9, 14, 2, 9, 14, 5, 9, 14, 20};
+    sm.CycleStrikeArpeggioMode();
+    count = sm.GetStrikeArpeggioOrder(order);
+    Check(sm.GetStrikeArpeggioMode()
+                  == bowls::StrikeArpeggioMode::kMiddlePair
+              && IntArrayEq(order, count, middle_expected, 9),
+          "M9n middle pair repeats with ascending third notes", "");
+
+    sm.CycleStrikeArpeggioMode();
+    Check(sm.GetStrikeArpeggioMode()
+                  == bowls::StrikeArpeggioMode::kDurationLoop,
+          "M9o Strike arpeggio modes cycle back to duration loop", "");
+
+    PlayModes four;
+    four.Init(PlayMode::kStrikes);
+    four.PlayPressed();
+    for(int key = 0; key < 4; ++key)
+    {
+        four.KeyDown(key, false);
+        four.KeyUp(key);
+    }
+    for(int i = 0; i < 3; ++i)
+        four.CycleStrikeArpeggioMode();
+    const int four_middle_expected[] = {1, 2, 0, 1, 2, 3};
+    count = four.GetStrikeArpeggioOrder(order);
+    Check(IntArrayEq(order, count, four_middle_expected, 6),
+          "M9p four-note middle pattern matches example", "");
+
+    sm.SetMode(PlayMode::kRimming);
+    sm.CycleStrikeArpeggioMode();
+    Check(sm.GetStrikeArpeggioMode()
+                  == bowls::StrikeArpeggioMode::kDurationLoop,
+          "M9q SHIFT+PLAY mode cycle is inert outside Strikes", "");
+}
+
 void TestIndependentLatches()
 {
     PlayModes sm;
@@ -546,6 +624,7 @@ int main()
     TestBasicModes();
     TestLatch();
     TestStrikeLatch();
+    TestStrikeArpeggioModes();
     TestIndependentLatches();
     TestModeExit();
     TestSteals();

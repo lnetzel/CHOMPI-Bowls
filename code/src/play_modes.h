@@ -33,6 +33,8 @@
 // Strike latch rules (enabled in Strikes; preserved but inert elsewhere):
 //   - PLAY on captures held strikes; later key-downs toggle a latch that
 //     retriggers after the resonator tail ends
+//   - Strike arpeggio modes order latched strikes; the duration-loop
+//     mode preserves the tail-driven retrigger behavior
 // Latch, held-key, sustain and pad state are transient - never
 // persisted.
 
@@ -42,6 +44,15 @@
 
 namespace bowls
 {
+enum class StrikeArpeggioMode : uint8_t
+{
+    kDurationLoop = 0,
+    kBottomPair,
+    kTopPair,
+    kMiddlePair,
+};
+constexpr int kStrikeArpeggioMaxSequenceLength = kKeyCount * 3;
+
 /** What the firmware must do in response to one input event. Pad
  *  gate-CLOSING is never reported here: the voice pool reconciles
  *  against PadOn() after every event (and every block), so bulk
@@ -86,6 +97,7 @@ class PlayModes
         shortcut_key_  = -1;
         latch_enabled_        = false;
         strike_latch_enabled_ = false;
+        strike_arpeggio_mode_ = StrikeArpeggioMode::kDurationLoop;
         rim_held_[0]   = -1;
         rim_held_[1]   = -1;
         rim_held_n_    = 0;
@@ -355,6 +367,98 @@ class PlayModes
     {
         if(mode_ == PlayMode::kStrikes)
             SetStrikeLatchEnabled(!strike_latch_enabled_);
+    }
+
+    /** SHIFT+PLAY cycles the Strike latch's retrigger pattern. */
+    void CycleStrikeArpeggioMode()
+    {
+        if(mode_ != PlayMode::kStrikes)
+            return;
+        strike_arpeggio_mode_
+            = static_cast<StrikeArpeggioMode>(
+                (static_cast<int>(strike_arpeggio_mode_) + 1) % 4);
+    }
+
+    StrikeArpeggioMode GetStrikeArpeggioMode() const
+    {
+        return strike_arpeggio_mode_;
+    }
+
+    /** Build repeated three-note groups from the latched keys. Each
+     *  group plays the selected pair followed by one remaining note. */
+    int GetStrikeArpeggioOrder(int* order) const
+    {
+        int keys[kKeyCount];
+        int count = 0;
+        for(int key = 0; key < kKeyCount; ++key)
+            if(StrikeLatched(key))
+                keys[count++] = key;
+        if(count == 0)
+            return 0;
+        if(strike_arpeggio_mode_ == StrikeArpeggioMode::kDurationLoop)
+        {
+            for(int i = 0; i < count; ++i)
+                order[i] = keys[i];
+            return count;
+        }
+
+        int first = 0;
+        int second = count > 1 ? 1 : -1;
+        switch(strike_arpeggio_mode_)
+        {
+            case StrikeArpeggioMode::kBottomPair:
+                break;
+            case StrikeArpeggioMode::kTopPair:
+                if(count == 1)
+                {
+                    first = 0;
+                    second = -1;
+                }
+                else
+                {
+                    first = count - 1;
+                    second = count - 2;
+                }
+                break;
+            case StrikeArpeggioMode::kMiddlePair:
+                first = (count - 1) / 2;
+                second = count > 1 ? first + 1 : -1;
+                break;
+            case StrikeArpeggioMode::kDurationLoop:
+                break;
+        }
+
+        int remaining[kKeyCount];
+        int remaining_count = 0;
+        if(strike_arpeggio_mode_ == StrikeArpeggioMode::kTopPair)
+        {
+            for(int i = count - 1; i >= 0; --i)
+                if(i != first && i != second)
+                    remaining[remaining_count++] = keys[i];
+        }
+        else
+        {
+            for(int i = 0; i < count; ++i)
+                if(i != first && i != second)
+                    remaining[remaining_count++] = keys[i];
+        }
+
+        int written = 0;
+        if(second < 0)
+            order[written++] = keys[first];
+        else if(remaining_count == 0)
+        {
+            order[written++] = keys[first];
+            order[written++] = keys[second];
+        }
+        else
+            for(int i = 0; i < remaining_count; ++i)
+            {
+                order[written++] = keys[first];
+                order[written++] = keys[second];
+                order[written++] = remaining[i];
+            }
+        return written;
     }
 
     // -- MIDI events (no shortcut/routing consumption, never SHIFT) -----
@@ -837,6 +941,8 @@ class PlayModes
     bool    sustain_on_[kSourceCount];
     bool    latch_enabled_ = false;
     bool    strike_latch_enabled_ = false;
+    StrikeArpeggioMode strike_arpeggio_mode_
+        = StrikeArpeggioMode::kDurationLoop;
     bool    pad_on_[kKeyCount];
     bool    stolen_pad_[kKeyCount]; // steal suppresses the gate
     bool    stolen_strike_[kKeyCount];

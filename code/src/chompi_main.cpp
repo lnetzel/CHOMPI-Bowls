@@ -95,7 +95,8 @@
 //                         hold with PLAY for recording arm/stop; in
 //                         playback, tap toggles take looping (blue).
 //   PLAY (KEY_27)       : in Strikes, tap toggles the Strike note latch
-//                         (blue); hold alone 2 s to enter/exit playback;
+//                         (blue); SHIFT+PLAY cycles its retrigger pattern;
+//                         hold alone 2 s to enter/exit playback;
 //                         in playback, tap pauses/resumes. SW_TOG is reserved.
 //
 // Every encoder turn shows its bar on the 15 white keys for ~500 ms (the
@@ -779,12 +780,60 @@ void StrikeKey(PlayMode mode, int key, int velocity = 127,
         last_key_[ModeIdx(mode)] = key;
 }
 
-/** A latched Strike reuses its assigned voice after the resonators go
- *  silent; this makes its cadence follow the selected bowl's decay. */
+/** Retrigger latched Strikes using the selected cadence. The duration
+ *  mode follows each bowl's decay; arpeggio modes use a fixed interval. */
 void RetriggerLatchedStrikes()
 {
+    static bool arpeggio_active = false;
+    static bowls::StrikeArpeggioMode previous_mode
+        = bowls::StrikeArpeggioMode::kDurationLoop;
+    static uint32_t previous_mask = 0;
+    static uint32_t next_strike_at = 0;
+    static int sequence_position = 0;
     if(!play_modes.StrikeLatchEnabled())
+    {
+        arpeggio_active = false;
         return;
+    }
+
+    const bowls::StrikeArpeggioMode arpeggio_mode
+        = play_modes.GetStrikeArpeggioMode();
+    if(arpeggio_mode != bowls::StrikeArpeggioMode::kDurationLoop)
+    {
+        int keys[bowls::kStrikeArpeggioMaxSequenceLength];
+        const int count = play_modes.GetStrikeArpeggioOrder(keys);
+        uint32_t mask = 0;
+        for(int i = 0; i < count; ++i)
+            mask |= uint32_t(1) << keys[i];
+        if(count == 0)
+        {
+            arpeggio_active = false;
+            return;
+        }
+
+        const uint32_t now = System::GetNow();
+        if(!arpeggio_active || previous_mode != arpeggio_mode
+           || previous_mask != mask)
+        {
+            arpeggio_active = true;
+            previous_mode = arpeggio_mode;
+            previous_mask = mask;
+            sequence_position = 0;
+            next_strike_at = now;
+        }
+        if(static_cast<int32_t>(now - next_strike_at) < 0)
+            return;
+
+        const int key = keys[sequence_position];
+        const int velocity = play_modes.StrikeLatchVelocity(key);
+        StrikeKey(PlayMode::kStrikes, key, velocity > 0 ? velocity : 127,
+                  false, play_modes.StrikeLatchUsesMidiVelocity(key));
+        sequence_position = (sequence_position + 1) % count;
+        next_strike_at = now + 333u;
+        return;
+    }
+
+    arpeggio_active = false;
     for(int key = 0; key < bowls::kKeyCount; ++key)
     {
         if(!play_modes.StrikeLatched(key))
@@ -1226,7 +1275,8 @@ bool HandleTransport()
                                       std::memory_order_release);
         }
 
-        if(hw.PlayPressed() && !hw.LoopPressed() && play_hold_valid_
+        if(hw.PlayPressed() && !hw.LoopPressed() && !hw.ShiftHeld()
+           && play_hold_valid_
            && !play_solo_cancelled_ && !play_gesture_consumed_
            && preset_mode_ == kPresetNone
            && now - play_hold_started_ >= 2000)
@@ -1254,7 +1304,12 @@ bool HandleTransport()
            && !play_solo_cancelled_ && preset_mode_ == kPresetNone
            && record_ui_state.load(std::memory_order_relaxed)
                   == RecordUiState::kIdle)
-            play_modes.PlayPressed();
+        {
+            if(hw.ShiftHeld())
+                play_modes.CycleStrikeArpeggioMode();
+            else
+                play_modes.PlayPressed();
+        }
         play_hold_valid_ = false;
         play_gesture_consumed_ = false;
         play_solo_cancelled_ = false;
@@ -2293,7 +2348,8 @@ bool DrawTransportKeybed(uint32_t now)
      * blue left-to-right fill over the 2 s hold, drawn in BOTH normal
      * and playback modes. A chord (LOOP joins), a cancelled solo hold,
      * or an already-completed hold never fills. */
-    if(hw.PlayPressed() && !hw.LoopPressed() && play_hold_valid_
+    if(hw.PlayPressed() && !hw.LoopPressed() && !hw.ShiftHeld()
+       && play_hold_valid_
        && !play_gesture_consumed_ && !play_solo_cancelled_
        && preset_mode_ == kPresetNone)
     {
