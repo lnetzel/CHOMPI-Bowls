@@ -38,7 +38,7 @@ baseline: baseline_gen.exe
 
 # Play-modes feature tests (plans/improve-play-modes.md): the
 # hardware-independent mode/key/latch state machine, the clean-pad
-# envelope DSP, and the v9 preset schema (needs coreJSON, compiled as
+# envelope DSP, and the v10 preset schema (needs coreJSON, compiled as
 # C99 like the firmware does).
 modes-test: play_modes_test.exe pad_test.exe preset_test.exe
 	./play_modes_test.exe

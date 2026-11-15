@@ -44,7 +44,6 @@ namespace MidiCcMap
     constexpr uint8_t kCcProfile      = 70; /* selected bank/key; ranges below */
     constexpr uint8_t kCcBrightness   = 74; /* selected bank/key; ticks */
     constexpr uint8_t kCcDecay        = 75; /* selected bank/key; ticks */
-    constexpr uint8_t kCcTune         = 76; /* selected bank/key; ticks 16 = unison */
     constexpr uint8_t kCcBowlVolume   = 77; /* selected bank/key; ticks 16 = unity */
     constexpr uint8_t kCcStrike       = 78; /* global strike hardness; ticks */
     constexpr uint8_t kCcShimmer      = 79; /* global shimmer; ticks */
@@ -73,7 +72,6 @@ namespace MidiCcMap
             case kCcProfile:
             case kCcBrightness:
             case kCcDecay:
-            case kCcTune:
             case kCcBowlVolume:
             case kCcStrike:
             case kCcShimmer:

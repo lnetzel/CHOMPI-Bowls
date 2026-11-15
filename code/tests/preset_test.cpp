@@ -1,4 +1,4 @@
-// Host-side tests for the v9 preset schema, slot bank, and editable pitches.
+// Host-side tests for the v10 preset schema, slot bank, and direct pitches.
 // Run with `make -C code/tests modes-test` from the MSYS2 UCRT64 shell.
 
 #include "BowlsPreset.h"
@@ -42,7 +42,6 @@ chompi::BowlsPreset PatternPreset(int mode)
     {
         p.pan[i] = static_cast<uint8_t>(i % 33);
         p.bvol[i] = static_cast<uint8_t>((i * 7) % 33);
-        p.tune[i] = static_cast<uint8_t>((i * 13) % 33);
         p.profile[i] = static_cast<uint8_t>(i % 5);
         p.bright[i] = static_cast<uint8_t>((i * 3) % 33);
         p.decay[i] = static_cast<uint8_t>((i * 11) % 33);
@@ -52,7 +51,7 @@ chompi::BowlsPreset PatternPreset(int mode)
         p.pitch_hz.strikes[i] = 100.12345f + i * 17.03125f;
         p.pitch_hz.rimming[i] = 200.54321f + i * 13.015625f;
     }
-    for(int i = 0; i < 13; ++i)
+    for(int i = 0; i < bowls::kKeyCount; ++i)
         p.pitch_hz.split[i] = 300.23456f + i * 21.078125f;
     return p;
 }
@@ -64,7 +63,6 @@ bool SameTicks(const chompi::BowlsPreset& a, const chompi::BowlsPreset& b)
            && a.delay_mix == b.delay_mix && a.delay_time == b.delay_time
            && std::memcmp(a.pan, b.pan, sizeof(a.pan)) == 0
            && std::memcmp(a.bvol, b.bvol, sizeof(a.bvol)) == 0
-           && std::memcmp(a.tune, b.tune, sizeof(a.tune)) == 0
            && std::memcmp(a.profile, b.profile, sizeof(a.profile)) == 0
            && std::memcmp(a.bright, b.bright, sizeof(a.bright)) == 0
            && std::memcmp(a.decay, b.decay, sizeof(a.decay)) == 0;
@@ -77,7 +75,7 @@ bool SamePitches(const bowls::PitchTables& a, const bowls::PitchTables& b,
         if(!Close(a.strikes[i], b.strikes[i], tolerance)
            || !Close(a.rimming[i], b.rimming[i], tolerance))
             return false;
-    for(int i = 0; i < 13; ++i)
+    for(int i = 0; i < bowls::kKeyCount; ++i)
         if(!Close(a.split[i], b.split[i], tolerance))
             return false;
     return true;
@@ -186,9 +184,10 @@ int main()
                || preset.pitch_hz.rimming[i] != bowls::kFullScaleHz[i])
                 ok = false;
         for(int i = 0; i < 12; ++i)
-            if(preset.pitch_hz.split[i] != bowls::kBowlScaleHz[i])
+            if(preset.pitch_hz.split[i] != bowls::kBowlScaleHz[i]
+               || preset.pitch_hz.split[12 + i] != bowls::kBowlScaleHz[i])
                 ok = false;
-        if(preset.pitch_hz.split[12] != 1240.8f)
+        if(preset.pitch_hz.split[24] != 1240.8f)
             ok = false;
         Check(ok, "factory pitches equal existing tables", "");
     }
@@ -227,7 +226,7 @@ int main()
             if(len == 0 || !chompi::Parse(buf, len, dst) || !Same(src, dst))
                 ok = false;
         }
-        Check(ok, "round-trip 63 pitches, six banks, all modes", "");
+        Check(ok, "round-trip 75 pitches, five banks, all modes", "");
     }
 
     // Slot cache operations are explicit; editing a separate live snapshot
@@ -287,12 +286,12 @@ int main()
         p.SetDefaults();
         for(int i = 0; i < chompi::BowlsPreset::kBankSlots; ++i)
         {
-            p.pan[i] = p.bvol[i] = p.tune[i] = p.bright[i] = p.decay[i] = 255;
+            p.pan[i] = p.bvol[i] = p.bright[i] = p.decay[i] = 255;
             p.profile[i] = 255;
         }
         for(int i = 0; i < bowls::kKeyCount; ++i)
             p.pitch_hz.strikes[i] = p.pitch_hz.rimming[i] = 10000.0f;
-        for(int i = 0; i < 13; ++i)
+        for(int i = 0; i < bowls::kKeyCount; ++i)
             p.pitch_hz.split[i] = 10000.0f;
         p.volume = p.strike = p.shimmer = p.reverb_mix = 255;
         p.delay_mix = p.delay_time = 255;
@@ -393,18 +392,26 @@ int main()
         char doc[kStorageJsonSize];
         chompi::BowlsPreset sentinel = PatternPreset(2);
         const chompi::BowlsPreset before = sentinel;
-        const char* versions[] = {"7", "8", "10"};
+        const char* versions[] = {"7", "8", "9", "11"};
         for(const char* version : versions)
         {
             std::memcpy(doc, buf, len + 1);
             char replacement[24];
             std::snprintf(replacement, sizeof(replacement), "\"version\":%s",
                           version);
-            if(!Replace(doc, "\"version\":9", replacement)
+            if(!Replace(doc, "\"version\":10", replacement)
                || chompi::Parse(doc, std::strlen(doc), sentinel)
                || !Same(sentinel, before))
                 ok = false;
         }
+        std::memcpy(doc, buf, len + 1);
+        chompi::BowlsPreset legacy_destination = before;
+        if(!Replace(doc, "\"version\":10", "\"version\":9")
+           || chompi::ParseWithPitchFallback(
+               doc, std::strlen(doc), sizeof(doc), src, legacy_destination)
+           || !Same(legacy_destination, before)
+           || std::strstr(doc, "\"version\":9") == nullptr)
+            ok = false;
         std::memcpy(doc, buf, len + 1);
         char* pitch_object = std::strstr(doc, ",\"pitch_hz\":{");
         char* object_end = pitch_object == nullptr
@@ -429,7 +436,7 @@ int main()
         const size_t len = chompi::Serialize(src, buf, sizeof(buf));
         bool ok = len > 0;
         const int full_bad_lengths[] = {0, 12, 14, 24, 26};
-        const int split_bad_lengths[] = {0, 12, 14};
+        const int split_bad_lengths[] = {0, 12, 24, 26};
         char doc[kStorageJsonSize];
         for(int count : full_bad_lengths)
         {

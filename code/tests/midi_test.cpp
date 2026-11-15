@@ -160,18 +160,18 @@ void TestSelectorConversions()
     // The supported-CC filter: every documented CC passes; reserved
     // and unused controllers are rejected (so floods never queue).
     const uint8_t supported[] = {1,  7,  10, 64, 70, 74, 75,
-                                 76, 77, 78, 79, 80, 81, 82,
+                                 77, 78, 79, 80, 81, 82,
                                  83, 84, 85, 91, 120, 121, 123};
     ok = true;
     for(uint8_t cc : supported)
         if(!ccmap::IsSupportedCc(cc))
             ok = false;
-    const uint8_t unsupported[] = {0,  2,  11, 32,  65,  98, 99,
+    const uint8_t unsupported[] = {0,  2,  11, 32,  65,  76, 98, 99,
                                    100, 101, 122, 124, 125, 126, 127};
     for(uint8_t cc : unsupported)
         if(ccmap::IsSupportedCc(cc))
             ok = false;
-    Check(ok, "T1h supported-CC filter (incl. reserved 122/124-127)",
+    Check(ok, "T1h supported-CC filter (CC 76 and reserved CCs ignored)",
           "");
 
     ok = ccmap::CcToLevel(0) == 0.0f && ccmap::CcToLevel(127) == 1.0f

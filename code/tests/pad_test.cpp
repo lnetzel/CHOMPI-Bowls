@@ -170,7 +170,7 @@ int main()
         for(int k = 0; k < bowls::kKeyCount; k += 6)
         {
             bowls::BowlVoice w;
-            FreshPad(w, bowls::BaseFundamentalHz(bowls::PlayMode::kRimming, k));
+            FreshPad(w, bowls::FundamentalHz(bowls::PlayMode::kRimming, k));
             Run(w, static_cast<long>(1.0 * kFs));
             const Out oo = Run(w, static_cast<long>(1.0 * kFs));
             if(!oo.finite || oo.peak > 2.0)

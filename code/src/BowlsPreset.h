@@ -2,8 +2,8 @@
  *  @brief SD-card preset model for CHOMPI-BOWLS: 15 versioned JSON slots,
  *  host-testable (no Daisy dependencies).
  *
- *  Schema v9 stores all persistent panel parameters, including editable
- *  per-mode base-pitch tables. Legacy schemas are rejected.
+ *  Schema v10 stores all persistent panel parameters, including direct
+ *  per-mode/per-key fundamental frequencies. Legacy schemas are rejected.
  */
 #pragma once
 #include <cstdint>
@@ -26,8 +26,9 @@ struct BowlsPreset
      * v6: play modes - mode field + per-mode/per-key banks of 25 slots
      * (3 modes x 25 keys = 75), profile becomes per-bowl per-mode;
     * v7: brightness and decay move from globals to per-mode/per-key
-    * banks (six banks of 75); v8: delay mix and time; v9: base pitches. */
-    static constexpr int kVersion = 9;
+    * banks (six banks of 75); v8: delay mix and time; v9: base pitches;
+    * v10: direct per-mode/per-key pitches replace relative tune ticks. */
+    static constexpr int kVersion = 10;
 
     /* field ranges (mirror the tick counts in chompi_main.cpp) */
     static constexpr int kMaxTicks   = 32; /* 0..32 tick parameters */
@@ -54,9 +55,8 @@ struct BowlsPreset
     static constexpr int kDefaultDelayMix   = 0;  /* dry, 35% feedback */
     static constexpr int kDefaultDelayTime  = 0; /* 256 ms */
     static constexpr int kDefaultBowlVol    = 8; /* unity gain (0 dB) */
-    static constexpr int kDefaultTune       = 16; /* unison (ratio 1) */
-    static constexpr float kMinPitchHz = 40.0f;
-    static constexpr float kMaxPitchHz = 10000.0f;
+    static constexpr float kMinPitchHz = bowls::kMinPitchHz;
+    static constexpr float kMaxPitchHz = bowls::kMaxPitchHz;
 
     uint8_t mode;       /**< 0..2 active play mode */
     uint8_t volume;     /**< 0..32 master volume ticks */
@@ -68,11 +68,10 @@ struct BowlsPreset
     /* per-mode/per-key banks, flattened [mode * 25 + key] */
     uint8_t pan[kBankSlots];     /**< per-key pan 0..32 (16 = centre) */
     uint8_t bvol[kBankSlots];    /**< per-key volume 0..32 (16 = unity) */
-    uint8_t tune[kBankSlots];    /**< per-key tuning 0..32 (16 = unison) */
     uint8_t profile[kBankSlots]; /**< per-key bowl profile 0..4 */
     uint8_t bright[kBankSlots];  /**< per-key brightness 0..32 */
     uint8_t decay[kBankSlots];   /**< per-key decay 0..32 */
-    bowls::PitchTables pitch_hz; /**< base pitch for each mode/key */
+    bowls::PitchTables pitch_hz; /**< final fundamental for each mode/key */
 
     void SetDefaults()
     {
@@ -88,7 +87,6 @@ struct BowlsPreset
         {
             pan[w]     = kDefaultPan;
             bvol[w]    = kDefaultBowlVol;
-            tune[w]    = kDefaultTune;
             profile[w] = kDefaultProfile;
             bright[w]  = kDefaultBrightness;
             decay[w]   = kDefaultDecay;
@@ -279,7 +277,8 @@ inline size_t AppendPitchObject(char *buf, size_t size, size_t off,
     if(n < 0 || static_cast<size_t>(n) >= size - off)
         return 0;
     off += static_cast<size_t>(n);
-    off = AppendFloatValues(buf, size, off, preset.pitch_hz.split, 13);
+    off = AppendFloatValues(buf, size, off, preset.pitch_hz.split,
+                            bowls::kKeyCount);
     if(off == 0)
         return 0;
     n = snprintf(buf + off, size - off, "}}");
@@ -313,9 +312,6 @@ inline size_t Serialize(const BowlsPreset &p, char *buf, size_t size)
     off = AppendArray(buf, size, off, "pan", p.pan, BowlsPreset::kBankSlots);
     if(off != 0)
         off = AppendArray(buf, size, off, "bvol", p.bvol,
-                          BowlsPreset::kBankSlots);
-    if(off != 0)
-        off = AppendArray(buf, size, off, "tune", p.tune,
                           BowlsPreset::kBankSlots);
     if(off != 0)
         off = AppendArray(buf, size, off, "profile", p.profile,
@@ -590,9 +586,6 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
        || !QueryArrayStrict(buf, len, "bvol", tmp.bvol,
                             BowlsPreset::kBankSlots,
                             BowlsPreset::kMaxTicks)
-       || !QueryArrayStrict(buf, len, "tune", tmp.tune,
-                            BowlsPreset::kBankSlots,
-                            BowlsPreset::kMaxTicks)
        || !QueryArrayStrict(buf, len, "profile", tmp.profile,
                             BowlsPreset::kBankSlots,
                             BowlsPreset::kMaxProfile)
@@ -607,7 +600,7 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
        || !QueryPitchArrayStrict(buf, len, "pitch_hz.rimming",
                                  tmp.pitch_hz.rimming, bowls::kKeyCount)
        || !QueryPitchArrayStrict(buf, len, "pitch_hz.split",
-                                 tmp.pitch_hz.split, 13))
+                                 tmp.pitch_hz.split, bowls::kKeyCount))
         return false;
     p = tmp;
     return true;

@@ -68,15 +68,15 @@ void TestMappings()
     // Split: keys 0-11 and 12-23 share the original 12 bowls...
     for(int k = 0; k < 12; ++k)
     {
-        if(!FloatEq(bowls::BaseFundamentalHz(PlayMode::kSplit, k),
+        if(!FloatEq(bowls::FundamentalHz(PlayMode::kSplit, k),
                     bowls::kBowlScaleHz[k]))
             ok = false;
-        if(!FloatEq(bowls::BaseFundamentalHz(PlayMode::kSplit, 12 + k),
+        if(!FloatEq(bowls::FundamentalHz(PlayMode::kSplit, 12 + k),
                     bowls::kBowlScaleHz[k]))
             ok = false;
     }
     // ...and key 24 strikes the added 1240.8 Hz top bowl.
-    if(!FloatEq(bowls::BaseFundamentalHz(PlayMode::kSplit, 24), 1240.8f))
+    if(!FloatEq(bowls::FundamentalHz(PlayMode::kSplit, 24), 1240.8f))
         ok = false;
     Check(ok, "M1a Split keeps 12 bowls + 1240.8 top", "");
 
@@ -84,15 +84,15 @@ void TestMappings()
     ok = true;
     for(int k = 0; k < bowls::kKeyCount; ++k)
     {
-        const float fs = bowls::BaseFundamentalHz(PlayMode::kStrikes, k);
-        const float fr = bowls::BaseFundamentalHz(PlayMode::kRimming, k);
+        const float fs = bowls::FundamentalHz(PlayMode::kStrikes, k);
+        const float fr = bowls::FundamentalHz(PlayMode::kRimming, k);
         if(!FloatEq(fs, fr))
             ok = false;
-        if(k > 0 && !(fs > bowls::BaseFundamentalHz(PlayMode::kStrikes,
+        if(k > 0 && !(fs > bowls::FundamentalHz(PlayMode::kStrikes,
                                                     k - 1)))
             ok = false;
         for(int j = 0; j < k; ++j)
-            if(FloatEq(fs, bowls::BaseFundamentalHz(PlayMode::kStrikes, j)))
+            if(FloatEq(fs, bowls::FundamentalHz(PlayMode::kStrikes, j)))
                 ok = false;
     }
     Check(ok, "M1b full modes: 25 distinct ascending", "");
@@ -101,26 +101,47 @@ void TestMappings()
     custom.strikes[3] = 321.25f;
     custom.rimming[3] = 654.5f;
     custom.split[4] = 777.75f;
-    Check(FloatEq(bowls::BaseFundamentalHz(PlayMode::kStrikes, 3, custom),
+    custom.split[16] = 888.25f;
+    Check(FloatEq(bowls::FundamentalHz(PlayMode::kStrikes, 3, custom),
                   321.25f)
-              && FloatEq(bowls::BaseFundamentalHz(PlayMode::kRimming, 3,
+              && FloatEq(bowls::FundamentalHz(PlayMode::kRimming, 3,
                                                    custom),
                          654.5f)
-              && FloatEq(bowls::BaseFundamentalHz(PlayMode::kSplit, 4,
+              && FloatEq(bowls::FundamentalHz(PlayMode::kSplit, 4,
                                                    custom),
                          777.75f)
-              && FloatEq(bowls::BaseFundamentalHz(PlayMode::kSplit, 16,
+              && FloatEq(bowls::FundamentalHz(PlayMode::kSplit, 16,
                                                    custom),
-                         777.75f),
-          "M1c custom tables preserve mode and Split pairing", "");
-        Check(std::fabs(bowls::TuneRatioFromTicks(0) - 0.5f) < 0.00001f
-            && std::fabs(bowls::TuneRatioFromTicks(8) - 0.7071068f)
-                < 0.00001f
-            && std::fabs(bowls::TuneRatioFromTicks(16) - 1.0f) < 0.00001f
-            && std::fabs(bowls::TuneRatioFromTicks(24) - 1.4142136f)
-                < 0.00001f
-            && std::fabs(bowls::TuneRatioFromTicks(32) - 2.0f) < 0.00001f,
-           "M1d relative tuning ratio remains 0.5x to 2x", "");
+                         888.25f),
+          "M1c direct pitches preserve mode and Split-key independence",
+          "");
+
+    Check(bowls::AdjustPitchHz(40.0f, 1, false) == 41.0f
+              && bowls::AdjustPitchHz(100.0f, 1, false) == 101.0f
+              && bowls::AdjustPitchHz(1000.0f, 1, false) == 1010.0f
+              && bowls::AdjustPitchHz(10000.0f, 1, false) == 10000.0f
+              && bowls::AdjustPitchHz(40.0f, -1, false) == 40.0f
+              && bowls::AdjustPitchHz(1000.0f, -1, false) == 990.0f,
+          "M1d coarse tuning is ~1% with bounded endpoints", "");
+    Check(bowls::AdjustPitchHz(40.0f, 1, true) == 41.0f
+              && bowls::AdjustPitchHz(10000.0f, -1, true) == 9999.0f
+              && bowls::AdjustPitchHz(1000.0f, 2, true) == 1002.0f,
+          "M1e fine tuning is exactly 1 Hz per detent", "");
+
+    bool led_ordered = bowls::PitchLedIndex(40.0f, 15) == 0
+                       && bowls::PitchLedIndex(10000.0f, 15) == 14;
+    int previous_led = -1;
+    for(int i = 0; i <= 100; ++i)
+    {
+        const float pitch
+            = 40.0f * powf(250.0f, static_cast<float>(i) / 100.0f);
+        const int led = bowls::PitchLedIndex(pitch, 15);
+        if(led < previous_led)
+            led_ordered = false;
+        previous_led = led;
+    }
+    Check(led_ordered, "M1f logarithmic LED position spans full Hz range",
+          "");
 
     Check(bowls::kModeShortcutKey[0] == 6 && bowls::kModeShortcutKey[1] == 8
               && bowls::kModeShortcutKey[2] == 10,

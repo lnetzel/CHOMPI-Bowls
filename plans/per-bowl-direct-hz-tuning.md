@@ -1,6 +1,6 @@
 # Per-Bowl Direct-Hz Tuning
 
-Status: awaiting approval.
+Status: implemented; focused host tests and firmware build pass. Hardware validation pending.
 
 ## Problem and goal
 

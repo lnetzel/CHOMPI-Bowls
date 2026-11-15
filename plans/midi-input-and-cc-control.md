@@ -1,5 +1,7 @@
 # MIDI Input and CC Control (feature plan)
 
+> Superseded for bowl tuning by [per-bowl-direct-hz-tuning.md](./per-bowl-direct-hz-tuning.md): MIDI CC 76 is unsupported; tuning is direct Hz from Encoder 1 Page 3.
+
 Status: implemented (2026-11-09). Firmware, host tests and midi.md are
 complete; the "Firmware and hardware acceptance" matrix below is NOT yet
 run on device - DIN/USB wiring, DAW interop and flood/overflow behavior

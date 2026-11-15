@@ -1,5 +1,7 @@
 # Encoder 1 — Per-Bowl Pages: Volume / Character / Tuning (plan)
 
+> Superseded for tuning behavior by [per-bowl-direct-hz-tuning.md](./per-bowl-direct-hz-tuning.md): Page 3 now uses direct Hz, with SHIFT+turn for 1 Hz fine adjustment.
+
 Status: awaiting approval. Builds on [plans/bowls-v1-first-firmware.md](plans/bowls-v1-first-firmware.md).
 
 ## Problem and goal

@@ -15,7 +15,7 @@ voices glow dim amber, and latched notes glow yellow.
 |---|---|---|---|---|
 | **Encoder 1** - page 1 (default) | Next page | Per-bowl volume of the selected bowl\* (16 = unity, 32 = +6 dB; rides ringing voices live) | Pan the selected bowl left/right (live) | LED2 green; green bar / cyan pan bar from white key 8 |
 | **Encoder 1** - page 2 | Next page | Resonance character: bowl profile 1-5 (two detent ticks per step) | - | LED2 orange; five 3-key orange sections |
-| **Encoder 1** - page 3 | Next page (wraps to 1) | Per-bowl tuning of the selected bowl\* (16 = unison, 0 = 1/2x, 32 = 2x; next strike/selection) | - | LED2 violet; violet bar from white key 8 |
+| **Encoder 1** - page 3 | Next page (wraps to 1) | Set the selected bowl's fundamental directly in Hz; normal turn ~= 1%, SHIFT+turn = 1 Hz; applies at next strike/selection | 1 Hz finer adjustment | LED2 violet; logarithmic bar from 40 to 10,000 Hz |
 | **Encoder 2** | - | Strike hardness (global; soft felt -> hard mallet) | Brightness of the selected bowl\* (high-mode content, live; also brightens rimming) | LED3 amber; amber bar / yellow-white bar |
 | **Encoder 3** | - | Decay of the selected bowl\*: 0.25x .. 3x profile decay (live; tick 16 = 0.87x) | - | LED4 blue; blue bar |
 | **Encoder 4** | - | Shimmer: paired-mode beating 0 .. 2x (16 = profile detune; live) | - | LED5 purple; centered purple bar |
@@ -29,10 +29,11 @@ voices glow dim amber, and latched notes glow yellow.
 | **LOOP** (KEY_28) | Tap to toggle the Rimming note latch (retained in Strikes, cleared on entry to Split); hold with PLAY for recording gestures | - | - | Yellow for the Rimming latch; blue while take looping is enabled |
 
 \* The selected bowl = the last played/selected key **in the current
-mode**. Pan, bowl volume, tuning, resonance character, brightness and
-decay are stored independently for each key in each mode (75 editable
-bowls in total); master volume, strike hardness, shimmer and reverb
-mix are global. The mode toggle (SW_TOG) is reserved.
+mode**. Pan, bowl volume, direct fundamental frequency, resonance
+character, brightness and decay are stored independently for each key in
+each mode (75 editable key/mode settings in total); master volume,
+strike hardness, shimmer and reverb mix are global. The mode toggle
+(SW_TOG) is reserved.
 
 ### Play modes (keyboard)
 
@@ -80,29 +81,29 @@ contain invalid `pitch_hz` values. On load, their other settings are
 preserved and the factory pitch tables are used; explicitly saving the
 slot again rewrites it as valid JSON.
 
-## Offline base-pitch editing
+## Direct-Hz tuning and preset editing
 
-Base pitches for Strikes, Rimming, and Split are stored in the `pitch_hz`
-object of each saved preset. There is no on-device pitch editor or MIDI
-CC for these base values. Existing per-key tuning remains independent:
-the played fundamental is the saved base frequency multiplied by the
-existing 0.5x-2x tuning control (tick 16 is unison). Base values must be
-40-10,000 Hz; saves round to three decimal places.
+Encoder 1 Page 3 sets the selected mode/key's final fundamental directly
+in Hz. Normal turns change it by about 1% (minimum 1 Hz); SHIFT+turn
+changes it by exactly 1 Hz. The range is 40-10,000 Hz. The LED bar maps
+that range logarithmically, so it indicates approximate position rather
+than displaying an exact number. Changes apply at the next strike, pad
+start, or rim selection. MIDI CC 76 is unsupported; tuning is adjusted
+from the panel or by editing a saved preset.
 
-To edit pitches, first save a slot, power off, and edit its
-`BOWLS/Pxx.json` file on a computer. Keep the v9 fields and all array
-lengths intact; edit only the pitch numbers if no other settings should
-change. Safely eject the card before reinserting it, then reboot. The
-saved slots are read at boot; the embedded factory template remains the
-boot sound until you explicitly load a slot with SHIFT+white key. Never
-edit the card while the instrument is on.
+Final frequencies are stored in the `pitch_hz` object in each v10 preset.
+To edit one, save a slot, power off, and edit its `BOWLS/Pxx.json` file on
+a computer. Keep all v10 fields and array lengths intact. Safely eject
+the card before reinserting it, then reboot. The saved slots are read at
+boot; the embedded factory template remains the boot sound until you
+explicitly load a slot with SHIFT+white key. Never edit the card while
+the instrument is on. Earlier schema versions are rejected and left
+untouched; save a new-format preset explicitly to replace an old slot.
 
-`strikes` and `rimming` each contain 25 frequencies, indexed by key from
-C3 (index 0) through C5 (index 24). `split` contains 13 frequencies:
-indices 0-11 are shared by rim keys 0-11 and strike keys 12-23; index 12
-is strike key 24 (C5). Only the Split base pitch is shared by each pair;
-their relative tuning and all other per-key settings remain independent.
-Keys in order are:
+`strikes`, `rimming`, and `split` each contain 25 final frequencies,
+indexed by key from C3 (index 0) through C5 (index 24). Split rim and
+strike keys start at equal factory frequencies for each pair, but are
+independently tunable and saved. Keys in order are:
 
 | Index | Key | Index | Key | Index | Key |
 |---:|---|---:|---|---:|---|
@@ -132,7 +133,7 @@ a valid slot is loaded.
 
 ### Stereo delay
 
-The volume knob cycles **Master -> Delay -> Reverb**. On the Delay page, turning the encoder moves a combined control: the first half raises the wet mix from 0 to 50% at 35% feedback; the second half holds mix at 50% and raises feedback to a bounded 120%, entering self-oscillation above 100%. Hold SHIFT and turn to change delay time from 40 to 500 ms; changes glide smoothly without clearing echoes. The delay runs at 0% mix so history survives later mix changes and preset loads. Delay positions are included in each v9 preset.
+The volume knob cycles **Master -> Delay -> Reverb**. On the Delay page, turning the encoder moves a combined control: the first half raises the wet mix from 0 to 50% at 35% feedback; the second half holds mix at 50% and raises feedback to a bounded 120%, entering self-oscillation above 100%. Hold SHIFT and turn to change delay time from 40 to 500 ms; changes glide smoothly without clearing echoes. The delay runs at 0% mix so history survives later mix changes and preset loads. Delay positions are included in each v10 preset.
 
 ### Audio routing (send-FX loop)
 

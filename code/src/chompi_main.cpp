@@ -47,9 +47,10 @@
 //                         side). Page 2: resonance character -
 //                         profile select 1-5 (LED2 orange; five 3-key
 //                         orange sections; two detent ticks per
-//                         step). Page 3: tuning (LED2 violet, violet
-//                         bar from white key 8; 16 = unison, 0 =
-//                         half, 32 = double; next strike/selection)
+//                         step). Page 3: direct bowl frequency in Hz
+//                         (LED2 violet, logarithmic LED bar from
+//                         40 to 10,000 Hz; normal turn ~= 1%, SHIFT
+//                         + turn = 1 Hz; next strike/selection)
 //   Physical encoder 2 (SW1/ENC_1): strike hardness (LED3 amber, amber
 //                         bar, GLOBAL); SHIFT+turn = brightness of the
 //                         selected bowl (yellow-white bar; rides the
@@ -246,21 +247,34 @@ enum class Overlay : int
 // later (the CHOMPI-PhaseOff overlay behavior).
 constexpr uint32_t kOverlayMs = 500;
 
+uint32_t PitchToMilliHz(float pitch_hz)
+{
+    return static_cast<uint32_t>(
+        std::lround(static_cast<double>(pitch_hz) * 1000.0));
+}
+
+float MilliHzToPitch(uint32_t pitch_millihz)
+{
+    return static_cast<float>(pitch_millihz) * 0.001f;
+}
+
 struct Params
 {
     Params()
     {
-        pitch_hz = bowls::FactoryPitchTables();
+        const bowls::PitchTables& factory = bowls::FactoryPitchTables();
         for(int m = 0; m < bowls::kPlayModeCount; ++m)
             for(int w = 0; w < bowls::kKeyCount; ++w)
             {
+                pitch_millihz[m][w].store(
+                    PitchToMilliHz(bowls::FundamentalHz(
+                        static_cast<PlayMode>(m), w, factory)),
+                    std::memory_order_relaxed);
                 pan_ticks[m][w].store(chompi::BowlsPreset::kDefaultPan,
                                       std::memory_order_relaxed);
                 bowl_vol_ticks[m][w].store(
                     chompi::BowlsPreset::kDefaultBowlVol,
                     std::memory_order_relaxed);
-                tune_ticks[m][w].store(chompi::BowlsPreset::kDefaultTune,
-                                       std::memory_order_relaxed);
                 profile_ticks[m][w].store(
                     chompi::BowlsPreset::kDefaultProfile,
                     std::memory_order_relaxed);
@@ -278,17 +292,16 @@ struct Params
     std::atomic<int>      shimmer_ticks{chompi::BowlsPreset::kDefaultShimmer};
 
     // Per-mode/per-key banks [mode][key]: pan (16 = centre), bowl
-    // volume (16 = unity), tuning (16 = unison, 1/2x..2x), resonance
-    // character (profile 0..4), brightness and decay are independent
-    // for each physical key in each mode. Encoders 1-3 edit the
-    // current mode's bank for the selected (last played) key.
+    // volume (16 = unity), direct fundamental pitch in millihertz,
+    // resonance character (profile 0..4), brightness and decay are
+    // independent for each physical key in each mode. Encoders 1-3 edit
+    // the current mode's bank for the selected (last played) key.
     std::atomic<int>      pan_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
     std::atomic<int>      bowl_vol_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
-    std::atomic<int>      tune_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
+    std::atomic<uint32_t> pitch_millihz[bowls::kPlayModeCount][bowls::kKeyCount];
     std::atomic<int>      profile_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
     std::atomic<int>      brightness_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
     std::atomic<int>      decay_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
-    bowls::PitchTables    pitch_hz;
 
     // Volume knob page 2: temple-room reverb dry/wet mix.
     std::atomic<int>      reverb_mix_ticks{
@@ -599,9 +612,16 @@ void SetDecayTicks(int m, int key, int ticks, uint32_t now)
                      [&](int v) { voices[v].SetDecayMult(mult); });
 }
 
-void SetTuneTicks(int m, int key, int ticks, uint32_t now)
+void SetPitchHz(int m, int key, int detents, bool fine)
 {
-    StoreTicks(params.tune_ticks[m][key], ticks, now);
+    if(m < 0 || m >= bowls::kPlayModeCount || key < 0
+       || key >= bowls::kKeyCount)
+        return;
+    const float current = MilliHzToPitch(
+        params.pitch_millihz[m][key].load(std::memory_order_relaxed));
+    const float updated = bowls::AdjustPitchHz(current, detents, fine);
+    params.pitch_millihz[m][key].store(PitchToMilliHz(updated),
+                                       std::memory_order_relaxed);
 }
 
 void SetProfileTicks(int m, int key, int profile, uint32_t now)
@@ -727,14 +747,15 @@ void ApplyVoiceSettings(int v, PlayMode mode, int key)
         params.bowl_vol_ticks[m][key].load(std::memory_order_relaxed)));
 }
 
-/** Bowl fundamental for (mode, key): the mode map's base pitch times
- *  the key's tuning (which scales the complete modal structure). */
+/** Direct fundamental frequency for (mode, key). */
 float KeyFundamental(PlayMode mode, int key)
 {
-    return bowls::BaseFundamentalHz(mode, key, params.pitch_hz)
-           * bowls::TuneRatioFromTicks(
-               params.tune_ticks[ModeIdx(mode)][key].load(
-                   std::memory_order_relaxed));
+    const int m = ModeIdx(mode);
+    if(m < 0 || m >= bowls::kPlayModeCount || key < 0
+       || key >= bowls::kKeyCount)
+        return 0.0f;
+    return MilliHzToPitch(
+        params.pitch_millihz[m][key].load(std::memory_order_relaxed));
 }
 
 void StrikeKey(PlayMode mode, int key, int velocity = 127,
@@ -1435,10 +1456,6 @@ void ApplyMidiCc(int src, uint8_t cc, uint8_t val, uint32_t now)
             MidiEditTarget(src, m, key);
             SetDecayTicks(m, key, ccmap::CcToTicks(val), now);
             break;
-        case ccmap::kCcTune: // CC 76
-            MidiEditTarget(src, m, key);
-            SetTuneTicks(m, key, ccmap::CcToTicks(val), now);
-            break;
         case ccmap::kCcBowlVolume: // CC 77
             MidiEditTarget(src, m, key);
             SetBowlVolTicks(m, key, ccmap::CcToTicks(val), now);
@@ -1573,8 +1590,8 @@ void ApplyControls()
     }
 
     // Physical encoder 1 press: cycle page 1 bowl volume -> page 2
-    // resonance character -> page 3 tuning. The newly active page's bar
-    // shows as confirmation.
+    // resonance character -> page 3 direct-Hz frequency. The newly
+    // active page's bar shows as confirmation.
     if(hw.EncoderClicked(0))
     {
         enc1_page_ = (enc1_page_ + 1) % 3;
@@ -1590,8 +1607,7 @@ void ApplyControls()
     // last played/selected key in the CURRENT mode). Page 1: turn =
     // per-bowl volume (rides ringing voices live), SHIFT+turn = pan.
     // Page 2: resonance character (profile 1-5). Page 3: per-bowl
-    // tuning (next strike/selection). SHIFT+turn on pages 2/3 is
-    // reserved.
+    // direct-Hz frequency (next strike/selection; SHIFT+turn is 1 Hz).
     const int enc1_inc = hw.EncoderIncrement(0);
     if(enc1_inc != 0)
     {
@@ -1635,17 +1651,11 @@ void ApplyControls()
                             now);
             ShowOverlay(Overlay::Character, now);
         }
-        else if(enc1_page_ == kEnc1PageTune && !shift)
+        else if(enc1_page_ == kEnc1PageTune)
         {
-            // Per-bowl tuning: applied at the next strike/selection
-            // (physical character); only the bar shows while a bowl
-            // rings.
-            SetTuneTicks(cur_mode, key,
-                         params.tune_ticks[cur_mode][key].load(
-                             std::memory_order_relaxed)
-                             + enc1_inc,
-                         now);
-            ShowOverlay(Overlay::Tune, now); // also at the end stops
+            // Direct fundamental pitch applies at the next excitation.
+            SetPitchHz(cur_mode, key, enc1_inc, shift);
+            ShowOverlay(Overlay::Tune, now);
         }
     }
 
@@ -2063,8 +2073,7 @@ void DrawCenterBar(int ticks, uint8_t red, uint8_t green, uint8_t blue)
 
 /** Directional centre-detent bar, centered on white key 8 (index 7):
  *  values left of centre fill the bar toward key 1, right of centre
- *  toward key 15; dead centre lights key 8 alone. Used for pan (cyan)
- *  and tuning (violet). */
+ *  toward key 15; dead centre lights key 8 alone. Used for pan (cyan). */
 void DrawPanBar(int ticks, uint8_t red, uint8_t green, uint8_t blue)
 {
     const int offset = ticks - 16; // -16 .. +16
@@ -2076,6 +2085,15 @@ void DrawPanBar(int ticks, uint8_t red, uint8_t green, uint8_t blue)
                                red,
                                green,
                                blue);
+}
+
+/** Logarithmic 40-10,000 Hz frequency position across the white keys. */
+void DrawPitchBar(float pitch_hz)
+{
+    const int lit = bowls::PitchLedIndex(pitch_hz, 15) + 1;
+    for(int white = 0; white < lit; ++white)
+        chompi_leds::SetSmtLed(chompi_leds::kWhiteKeyLeds[white],
+                               30, 0, 48);
 }
 
 /** The five bowl profiles as five 3-key sections; the active one lights. */
@@ -2156,11 +2174,8 @@ void DrawOverlayBar(uint32_t now)
                         0, 48, 0);
                 break;
             case Overlay::Tune:
-                // Violet centre-detent bar: flat to the left, sharp to
-                // the right, dead centre = unison.
-                DrawPanBar(params.tune_ticks[cur_mode][edit_key].load(
-                               std::memory_order_relaxed),
-                           30, 0, 48);
+                DrawPitchBar(
+                    KeyFundamental(static_cast<PlayMode>(cur_mode), edit_key));
                 break;
             default: break;
         }
@@ -2499,7 +2514,7 @@ void RenderLeds()
                            0);
 #endif
     // The encoder-1 LED follows the page: green = bowl volume,
-    // orange = resonance character, violet = tuning.
+    // orange = resonance character, violet = direct-Hz frequency.
     if(enc1_page_ == kEnc1PageCharacter)
         chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 20, 9, 0);
     else if(enc1_page_ == kEnc1PageTune)
@@ -2642,7 +2657,6 @@ void RenderLeds()
 chompi::BowlsPreset SnapshotParams()
 {
     chompi::BowlsPreset p;
-    p.pitch_hz = params.pitch_hz;
     p.mode = static_cast<uint8_t>(ModeIdx(play_modes.Mode()));
     p.volume = static_cast<uint8_t>(
         params.volume_ticks.load(std::memory_order_relaxed));
@@ -2654,13 +2668,19 @@ chompi::BowlsPreset SnapshotParams()
         for(int w = 0; w < bowls::kKeyCount; ++w)
         {
             const int slot = m * bowls::kKeyCount + w;
+            const float pitch_hz = MilliHzToPitch(
+                params.pitch_millihz[m][w].load(std::memory_order_relaxed));
+            if(m == ModeIdx(PlayMode::kStrikes))
+                p.pitch_hz.strikes[w] = pitch_hz;
+            else if(m == ModeIdx(PlayMode::kRimming))
+                p.pitch_hz.rimming[w] = pitch_hz;
+            else
+                p.pitch_hz.split[w] = pitch_hz;
             p.pan[slot] = static_cast<uint8_t>(
                 params.pan_ticks[m][w].load(std::memory_order_relaxed));
             p.bvol[slot] = static_cast<uint8_t>(
                 params.bowl_vol_ticks[m][w].load(
                     std::memory_order_relaxed));
-            p.tune[slot] = static_cast<uint8_t>(
-                params.tune_ticks[m][w].load(std::memory_order_relaxed));
             p.profile[slot] = static_cast<uint8_t>(
                 params.profile_ticks[m][w].load(
                     std::memory_order_relaxed));
@@ -2689,7 +2709,6 @@ void ApplyPreset(const chompi::BowlsPreset& p, bool boot)
         midi_rub_level_[bowls::kDin] = 0.0f;
         midi_rub_level_[bowls::kUsb] = 0.0f;
     }
-    params.pitch_hz = p.pitch_hz;
     params.volume_ticks.store(p.volume, std::memory_order_relaxed);
     params.strike_ticks.store(p.strike, std::memory_order_relaxed);
     params.shimmer_ticks.store(p.shimmer, std::memory_order_relaxed);
@@ -2697,12 +2716,14 @@ void ApplyPreset(const chompi::BowlsPreset& p, bool boot)
         for(int w = 0; w < bowls::kKeyCount; ++w)
         {
             const int slot = m * bowls::kKeyCount + w;
+            params.pitch_millihz[m][w].store(
+                PitchToMilliHz(bowls::FundamentalHz(
+                    static_cast<PlayMode>(m), w, p.pitch_hz)),
+                std::memory_order_relaxed);
             params.pan_ticks[m][w].store(p.pan[slot],
                                          std::memory_order_relaxed);
             params.bowl_vol_ticks[m][w].store(p.bvol[slot],
                                               std::memory_order_relaxed);
-            params.tune_ticks[m][w].store(p.tune[slot],
-                                          std::memory_order_relaxed);
             params.profile_ticks[m][w].store(p.profile[slot],
                                              std::memory_order_relaxed);
             params.brightness_ticks[m][w].store(p.bright[slot],

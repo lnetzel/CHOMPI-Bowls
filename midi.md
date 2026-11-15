@@ -12,7 +12,7 @@ notes on both enabled transports; incoming messages are never echoed or
 soft-thru'd, and no CCs are transmitted.
 Messages on other channels, Program Change, pitch bend, aftertouch,
 NRPN/RPN (CC 98-101), bank select (CC 0/32), SysEx and MIDI
-clock/transport are ignored.
+clock/transport are ignored. CC 76 is unsupported and ignored.
 
 Saved rotary parameters use the same 33 positions as the panel encoders:
 `position = (value * 32 + 63) / 127`. CC values 0, 64 and 127 select
@@ -33,7 +33,6 @@ switches (64-127 = on) use their own conversions, documented per row.
 | Resonance character | CC 70 | 0-25 = Temple, 26-51 = Deep, 52-76 = Bright, 77-102 = Wide, 103-127 = Thin; for the edit-selected bowl, applies at the next strike/pad/selection. Saved |
 | Bowl brightness | CC 74 | 0-32 positions, darkest - brightest, for the edit-selected bowl (live). Saved |
 | Bowl decay | CC 75 | 0-32 positions = 0.25x - 3x the profile decay, for the edit-selected bowl (live; tick 16 = about 0.87x). Deep profile maximum is about 45 s T60. Saved |
-| Bowl tuning | CC 76 | 0-32 positions = 1/2x - unison (16) - 2x, for the edit-selected bowl; applies at the next strike/pad/selection (no live retune). Saved |
 | Bowl volume | CC 77 | 0-32 positions (16 = unity, 32 = +6 dB), for the edit-selected bowl (live). Saved |
 | Strike hardness | CC 78 | 0-32 positions, soft - hard mallet (global; next strike). Saved |
 | Shimmer | CC 79 | 0-32 positions = 0x - 2x the profile paired-mode detune (global, live). Saved |
@@ -53,11 +52,11 @@ switches (64-127 = on) use their own conversions, documented per row.
 The active play mode decides what a note does; in Split it also decides
 the bowl frequency. Note names assume C4 = MIDI 60 (some DAWs label
 octaves differently). Frequencies below are the factory untuned
-fundamentals; the offline v9 `pitch_hz` tables can change a key's base
-frequency without changing its MIDI note. Each key's saved tuning (CC 76)
-then scales that base 0.5x-2x, and resonance character (CC 70) changes the
-modal structure. Base pitches have no MIDI CC; see the offline editing
-procedure and complete key/index mapping in [README.md](README.md#offline-base-pitch-editing).
+fundamentals; v10 `pitch_hz` values store each mode/key's final frequency
+without changing its MIDI note. Encoder 1 Page 3 changes that frequency
+directly; MIDI has no tuning CC. Resonance character (CC 70) changes the
+modal structure. See the pitch-editing procedure and complete key/index
+mapping in [README.md](README.md#direct-hz-tuning-and-preset-editing).
 
 | MIDI note | Name | Key | Factory Strikes / Rimming Hz | Split action | Factory Split Hz |
 |---|---|---|---|---|---|
@@ -100,9 +99,9 @@ Notes:
   saved bowl volume. **Split** = notes 48-59 silently select a rim bowl
   (never strike - sound starts via CC 1 or the physical wheel), notes
   60-72 strike.
-- Every saved sound parameter has a CC: the six per-bowl parameters
-  (pan 10, character 70, brightness 74, decay 75, tuning 76, bowl
-  volume 77) edit the CC 81/82-selected bank/key, and the global
+- Every saved sound parameter except direct-Hz pitch has a CC: the five
+  per-bowl parameters (pan 10, character 70, brightness 74, decay 75,
+  bowl volume 77) edit the CC 81/82-selected bank/key, and the global
   controls are CC 7/78/79/91 plus the mode on CC 80. Saved values
   autosave to BOWLS/state.json after a 1 s quiet period, exactly as
   local edits. Never saved: velocity, CC 1/84 rubbing, sustain, the
@@ -180,8 +179,8 @@ that the target board routes this signal to its 5-pin MIDI OUT connector.
   velocity 100. Note Off 48 ends its held status; the bowl keeps
   ringing.
 - **Edit that bowl without striking it:** CC 81 = 0, CC 82 = 48,
-  CC 10 = 64 (pan centre), CC 77 = 64 (unity volume), CC 76 = 64
-  (unison), CC 74 = 127 (brightest).
+  CC 10 = 64 (pan centre), CC 77 = 64 (unity volume), CC 74 = 127
+  (brightest). Set its frequency with Encoder 1 Page 3.
 - **Change another bowl's character:** CC 81 = 0, CC 82 = 60,
   CC 70 = 26 selects Deep for Strikes key 12 (465 Hz) - not Split's
   99 Hz strike slot.

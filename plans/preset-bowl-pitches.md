@@ -1,5 +1,7 @@
 # Preset Bowl Pitches
 
+> Superseded for pitch representation by [per-bowl-direct-hz-tuning.md](./per-bowl-direct-hz-tuning.md): presets store final per-mode/per-key Hz values, including independent Split pairs.
+
 Status: **planned**.
 Intended repository destination: `plans/preset-bowl-pitches.md`.
 Links below are relative to that destination.

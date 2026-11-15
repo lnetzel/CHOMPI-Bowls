@@ -11,8 +11,8 @@
 //             transport wheel adds the direction-dependent rimming
 //   Split   - the v1 layout: keys 0-11 (C3-B3) SELECT one of the 12
 //             bowls for wheel rimming (never strike), keys 12-23
-//             (C4-B4) strike the same 12 bowls, and key 24 (C5)
-//             strikes an added higher bowl
+//             (C4-B4) strike the same bowls, and key 24 (C5) strikes
+//             an added higher bowl. Each key keeps its own final Hz.
 //
 // Modes are selected with SHIFT + a lower black key: F#3 (index 6) =
 // Strikes, G#3 (8) = Rimming, A#3 (10) = Split.
@@ -44,6 +44,8 @@ constexpr int kModeShortcutKey[kPlayModeCount] = {
 };
 
 constexpr int kKeyCount = 25; // C3..C5
+constexpr float kMinPitchHz = 40.0f;
+constexpr float kMaxPitchHz = 10000.0f;
 
 // The 12 measured/reference bowls, lowest to highest. Strictly
 // ascending. (The former 15-bowl scale's top three - 1240.8 =
@@ -115,7 +117,7 @@ struct PitchTables
 {
     float strikes[kKeyCount];
     float rimming[kKeyCount];
-    float split[13];
+    float split[kKeyCount]; // pair entries start equal, then tune independently
 
     PitchTables()
     {
@@ -125,8 +127,11 @@ struct PitchTables
             rimming[i] = kFullScaleHz[i];
         }
         for(int i = 0; i < kBowlCount; ++i)
+        {
             split[i] = kBowlScaleHz[i];
-        split[12] = kSplitTopStrikeHz;
+            split[kStrikeKeyFirst + i] = kBowlScaleHz[i];
+        }
+        split[24] = kSplitTopStrikeHz;
     }
 };
 
@@ -136,8 +141,7 @@ inline const PitchTables& FactoryPitchTables()
     return tables;
 }
 
-inline float BaseFundamentalHz(PlayMode mode, int key,
-                               const PitchTables& tables)
+inline float FundamentalHz(PlayMode mode, int key, const PitchTables& tables)
 {
     if(key < 0 || key >= kKeyCount)
         return 0.0f;
@@ -146,22 +150,14 @@ inline float BaseFundamentalHz(PlayMode mode, int key,
     if(mode == PlayMode::kRimming)
         return tables.rimming[key];
     if(mode == PlayMode::kSplit)
-    {
-        if(key <= kRimKeyLast)
-            return tables.split[key];
-        if(key < kStrikeKeyLast)
-            return tables.split[key - kStrikeKeyFirst];
-        return tables.split[12];
-    }
+        return tables.split[key];
     return 0.0f;
 }
 
-/// Base (untuned) fundamental for a key in a mode; 0 for out-of-range
-/// keys. The per-key tuning control scales this complete modal
-/// structure at excitation time.
-inline float BaseFundamentalHz(PlayMode mode, int key)
+/// Factory fundamental for a key in a mode; 0 for out-of-range keys.
+inline float FundamentalHz(PlayMode mode, int key)
 {
-    return BaseFundamentalHz(mode, key, FactoryPitchTables());
+    return FundamentalHz(mode, key, FactoryPitchTables());
 }
 
 // -- compile-time checks --------------------------------------------------

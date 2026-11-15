@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include "bowl_scale.h"
 
 namespace bowls
 {
@@ -40,9 +41,47 @@ inline float DecayMultiplierFromTicks(int ticks)
     return 0.25f * powf(12.0f, static_cast<float>(ticks) * (1.0f / 32.0f));
 }
 
-inline float TuneRatioFromTicks(int ticks)
+inline float AdjustPitchHz(float pitch_hz, int detents, bool fine)
 {
-    return powf(2.0f, static_cast<float>(ticks - 16) * (1.0f / 16.0f));
+    if(!std::isfinite(pitch_hz))
+        pitch_hz = kMinPitchHz;
+    if(pitch_hz < kMinPitchHz)
+        pitch_hz = kMinPitchHz;
+    if(pitch_hz > kMaxPitchHz)
+        pitch_hz = kMaxPitchHz;
+
+    while(detents > 0)
+    {
+        const float step = fine
+                               ? 1.0f
+                               : fmaxf(1.0f, floorf(pitch_hz * 0.01f + 0.5f));
+        pitch_hz = fminf(kMaxPitchHz, pitch_hz + step);
+        --detents;
+    }
+    while(detents < 0)
+    {
+        const float step = fine
+                               ? 1.0f
+                               : fmaxf(1.0f, floorf(pitch_hz * 0.01f + 0.5f));
+        pitch_hz = fmaxf(kMinPitchHz, pitch_hz - step);
+        ++detents;
+    }
+    return pitch_hz;
+}
+
+inline int PitchLedIndex(float pitch_hz, int led_count)
+{
+    if(led_count <= 1)
+        return 0;
+    if(!std::isfinite(pitch_hz) || pitch_hz < kMinPitchHz)
+        pitch_hz = kMinPitchHz;
+    if(pitch_hz > kMaxPitchHz)
+        pitch_hz = kMaxPitchHz;
+    const float position
+        = logf(pitch_hz / kMinPitchHz) / logf(kMaxPitchHz / kMinPitchHz);
+    const int index = static_cast<int>(
+        floorf(position * static_cast<float>(led_count - 1) + 0.5f));
+    return index < 0 ? 0 : (index >= led_count ? led_count - 1 : index);
 }
 
 struct StrikeInputs
