@@ -225,10 +225,10 @@ int main()
         Check(ok, "factory pitches and brightness match defaults", "");
     }
 
-    // The first-boot template is embedded directly from the Pelog Selisir
+    // The first-boot template is embedded directly from the Slendro
     // state example.
     {
-        std::ifstream input("../state examples/default_pelog_selisir_inspired.json",
+        std::ifstream input("../state examples/default_slendro_inspired.json",
                             std::ios::binary);
         const bool opened = input.is_open();
         const std::string source((std::istreambuf_iterator<char>(input)),
@@ -245,7 +245,8 @@ int main()
            || preset.delay_time != chompi::BowlsPreset::kDefaultDelayTime
            || preset.pitch_hz.strikes[0] != 99.0f
            || preset.pitch_hz.rimming[0] != 99.0f
-           || preset.pitch_hz.split[0] != 99.0f)
+           || preset.pitch_hz.split[0] != 99.0f
+           || preset.pitch_hz.strikes[1] != 113.066f)
             ok = false;
         for(int i = 0; i < bowls::kKeyCount; ++i)
             if(preset.pitch_hz.strikes[i] != preset.pitch_hz.rimming[i]
