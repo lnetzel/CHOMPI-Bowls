@@ -422,6 +422,8 @@ class BowlsMidi
         usb_enable_ = usb_enable;
         router_.Init();
         out_router_.Init(usb_enable_);
+        for(int src = 0; src < kMidiTransportCount; ++src)
+            clock_pulses_[src] = 0;
 
         daisy::MidiUartHandler::Config uart_cfg; // defaults: USART_1, D13/D14
         uart_midi_.Init(uart_cfg);
@@ -465,6 +467,7 @@ class BowlsMidi
 
     MidiRouter&       Router() { return router_; }
     MidiOutRouter&    OutRouter() { return out_router_; }
+    uint32_t ClockPulses(int src) const { return clock_pulses_[src]; }
     /** Diagnostics: dropped-event counter per source (overflows and
      *  backlog discards), main-loop reads only. */
     uint32_t Drops(int src) const { return router_.Queue(src).Drops(); }
@@ -623,6 +626,12 @@ class BowlsMidi
         while(handler.HasEvents())
         {
             const daisy::MidiEvent ev = handler.PopEvent();
+            if(ev.type == daisy::SystemRealTime)
+            {
+                if(ev.srt_type == daisy::TimingClock)
+                    ++clock_pulses_[src];
+                continue;
+            }
             if(ev.channel != MidiCcMap::kChannel)
                 continue; // fixed channel 1; all other channels ignored
             BowlsMidiEvent n;
@@ -655,7 +664,7 @@ class BowlsMidi
                     break;
                 default:
                     break; // Program Change, pitch bend, pressure,
-                           // SysEx, clock/transport: ignored
+                           // SysEx and transport: ignored
             }
         }
     }
@@ -668,6 +677,7 @@ class BowlsMidi
     daisy::MidiUartHandler uart_midi_;
     daisy::MidiUsbHandler  usb_midi_;
     daisy::UartHandler     uart_;
+    volatile uint32_t      clock_pulses_[kMidiTransportCount] = {};
     bool                   usb_enable_ = false;
     bool                   active_notes_[kMidiTransportCount][kNoteCount] = {};
     uint8_t                din_tx_buffer_[3] = {};

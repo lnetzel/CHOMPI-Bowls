@@ -67,8 +67,8 @@
 //                         strikes; RIMMING = held or latched pads.
 //                         During a latched Strike arpeggio (not the
 //                         duration-loop pattern), clockwise increases
-//                         its 0.1-10 Hz rate and counter-clockwise
-//                         decreases it. Otherwise the wheel rims as
+//                         its free-running rate or shortens its MIDI
+//                         clock divider. Otherwise the wheel rims as
 //                         before; it never creates a strike or revives
 //                         a stolen note.
 //   Volume encoder      : press cycles page 1 master volume / page 2
@@ -131,6 +131,7 @@
 #include "delay_parameters.h"
 #include "MidiCcMap.h"
 #include "MidiHandler.h"
+#include "midi_clock.h"
 
 #include "Utility/dsp.h"
 #include "Effects/reverbsc.h"
@@ -225,6 +226,12 @@ int ModeIdx(PlayMode mode) { return static_cast<int>(mode); }
 bowls::PlayModes play_modes;
 int strike_arpeggio_rate_tenths_hz
     = bowls::kStrikeArpeggioDefaultRateTenthsHz;
+int strike_arpeggio_clock_divider_ticks
+    = bowls::StrikeArpeggioClockDividerTicks(
+        bowls::kStrikeArpeggioDefaultRateTenthsHz);
+bool midi_clock_active_ = false;
+int midi_clock_source_ = -1;
+float midi_clock_pulse_period_ms_ = 0.0f;
 
 enum class Overlay : int
 {
@@ -337,6 +344,37 @@ volatile int routing_ = bowls::kRoutingDefault;
 // transmitters are serviced in the main loop; the audio callback drains
 // bounded input queues and publishes local key notes to output queues.
 bowls::BowlsMidi midi;
+bowls::MidiClockTracker midi_clock_trackers[bowls::kMidiTransportCount];
+
+void ApplyDelayTargets();
+
+void UpdateMidiClock(uint32_t now)
+{
+    bool pulse_changed = false;
+    for(int src = 0; src < bowls::kMidiTransportCount; ++src)
+        pulse_changed = midi_clock_trackers[src].Update(
+                            midi.ClockPulses(src), now)
+                        || pulse_changed;
+
+    int source = -1;
+    if(midi_clock_trackers[bowls::kDin].HasTempo(now))
+        source = bowls::kDin;
+    else if(midi_clock_trackers[bowls::kUsb].HasTempo(now))
+        source = bowls::kUsb;
+
+    const bool active = source >= 0;
+    const float pulse_period_ms
+        = active ? midi_clock_trackers[source].PulsePeriodMs() : 0.0f;
+    if(active != midi_clock_active_ || source != midi_clock_source_
+       || (active && (pulse_changed
+                      || pulse_period_ms != midi_clock_pulse_period_ms_)))
+    {
+        midi_clock_active_ = active;
+        midi_clock_source_ = source;
+        midi_clock_pulse_period_ms_ = pulse_period_ms;
+        ApplyDelayTargets();
+    }
+}
 
 #ifdef CPU_METER
 constexpr bool kUsbMidiEnable = false; // meter build: keep USB serial
@@ -482,9 +520,17 @@ void ApplyDelayTargets()
     bbd_delay.SetMix(chompi::delay_parameters::DelayMix(mix_position));
     bbd_delay.SetFeedback(
         chompi::delay_parameters::DelayFeedback(mix_position));
-    bbd_delay.SetDelayMs(static_cast<float>(
-        chompi::delay_parameters::DelayTimeMs(
-            params.delay_time_ticks.load(std::memory_order_relaxed))));
+    const int delay_position
+        = params.delay_time_ticks.load(std::memory_order_relaxed);
+    const float delay_ms
+        = midi_clock_active_
+              ? midi_clock_pulse_period_ms_
+                    * static_cast<float>(
+                        chompi::delay_parameters::DelayClockDividerTicks(
+                            delay_position))
+              : static_cast<float>(
+                    chompi::delay_parameters::DelayTimeMs(delay_position));
+    bbd_delay.SetDelayMs(delay_ms);
 }
 
 void BumpTicks(std::atomic<int>& ticks, int inc, Overlay overlay, uint32_t now)
@@ -851,9 +897,14 @@ void RetriggerLatchedStrikes()
         StrikeKey(PlayMode::kStrikes, key, velocity > 0 ? velocity : 127,
                   false, play_modes.StrikeLatchUsesMidiVelocity(key));
         sequence_position = (sequence_position + 1) % count;
-        next_strike_at = now
-                         + bowls::StrikeArpeggioIntervalMs(
-                             strike_arpeggio_rate_tenths_hz);
+        const uint32_t interval_ms
+            = midi_clock_active_
+                  ? bowls::StrikeArpeggioClockIntervalMs(
+                        midi_clock_pulse_period_ms_,
+                        strike_arpeggio_clock_divider_ticks)
+                  : bowls::StrikeArpeggioIntervalMs(
+                        strike_arpeggio_rate_tenths_hz);
+        next_strike_at = now + interval_ms;
         return;
     }
 
@@ -1566,6 +1617,8 @@ void DispatchMidi()
 void ApplyControls()
 {
     DispatchMidi();
+    const uint32_t now = System::GetNow();
+    UpdateMidiClock(now);
     // Pad gate reconciliation runs even while the playback transport UI
     // owns this function (HandleTransport early-returns then): MIDI
     // note-offs must never leave a stuck pad gate.
@@ -1573,7 +1626,6 @@ void ApplyControls()
     if(HandleTransport())
         return;
     RetriggerLatchedStrikes();
-    const uint32_t now   = System::GetNow();
     const bool     shift = hw.ShiftHeld();
     static bool prev_shift_held = false;
     if(shift && !prev_shift_held)
@@ -1759,9 +1811,24 @@ void ApplyControls()
 
         if(has_latched_strike)
         {
-            strike_arpeggio_rate_tenths_hz
-                = bowls::AdjustStrikeArpeggioRateTenthsHz(
-                    strike_arpeggio_rate_tenths_hz, wheel_inc);
+            if(midi_clock_active_)
+            {
+                strike_arpeggio_clock_divider_ticks
+                    = bowls::AdjustStrikeArpeggioClockDivider(
+                        strike_arpeggio_clock_divider_ticks, wheel_inc);
+                strike_arpeggio_rate_tenths_hz
+                    = bowls::StrikeArpeggioRateFromClockDivider(
+                        strike_arpeggio_clock_divider_ticks);
+            }
+            else
+            {
+                strike_arpeggio_rate_tenths_hz
+                    = bowls::AdjustStrikeArpeggioRateTenthsHz(
+                        strike_arpeggio_rate_tenths_hz, wheel_inc);
+                strike_arpeggio_clock_divider_ticks
+                    = bowls::StrikeArpeggioClockDividerTicks(
+                        strike_arpeggio_rate_tenths_hz);
+            }
         }
         else
         {

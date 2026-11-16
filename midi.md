@@ -7,12 +7,21 @@ plugged into CHOMPI directly - USB requires a host (a computer, or a USB
 host adapter); use the keyboard's MIDI output or route it through the
 host.
 The USB device identifies itself to the host as **CHOMPI-BOWLS**.
-MIDI IN receives notes and supported CCs. MIDI OUT sends local keyboard
+MIDI IN receives notes, supported CCs and MIDI Timing Clock. When clock
+pulses arrive, the delay and latched Strike arpeggio follow that tempo;
+without clock they retain their normal free-running settings. MIDI OUT sends local keyboard
 notes on both enabled transports; incoming messages are never echoed or
 soft-thru'd, and no CCs are transmitted.
 Messages on other channels, Program Change, pitch bend, aftertouch,
-NRPN/RPN (CC 98-101), bank select (CC 0/32), SysEx and MIDI
-clock/transport are ignored. CC 76 is unsupported and ignored.
+NRPN/RPN (CC 98-101), bank select (CC 0/32), SysEx and MIDI transport
+messages are ignored. CC 76 is unsupported and ignored.
+
+MIDI Timing Clock is accepted regardless of channel (24 pulses per
+quarter note). After tempo is established, the delay-time control selects
+a pulse divider (its existing 40-1000 ms curve is referenced to 120 BPM),
+and the Strike arpeggio wheel selects the number of clock pulses between
+strikes. Clock sync expires after 500 ms without a pulse; DIN takes
+priority if both DIN and USB clocks are active.
 
 Saved rotary parameters use the same 33 positions as the panel encoders:
 `position = (value * 32 + 63) / 127`. CC values 0, 64 and 127 select

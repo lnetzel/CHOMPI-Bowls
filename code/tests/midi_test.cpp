@@ -22,6 +22,8 @@
 #include "MidiCcMap.h"
 #include "MidiHandler.h"
 #include "control_mappings.h"
+#include "delay_parameters.h"
+#include "midi_clock.h"
 #include "play_modes.h"
 
 #include <cstdio>
@@ -43,6 +45,35 @@ using bowls::PlayModes;
 using bowls::KeyAction;
 using bowls::Source;
 namespace ccmap = bowls::MidiCcMap;
+
+void TestMidiClock()
+{
+    bowls::MidiClockTracker tracker;
+    tracker.Update(0, 0);
+    bool ok = true;
+    for(uint32_t pulse = 1; pulse <= 48; ++pulse)
+        tracker.Update(pulse, pulse * 21);
+    ok = ok && tracker.HasTempo(48 * 21)
+         && tracker.PulsePeriodMs() > 20.9f
+         && tracker.PulsePeriodMs() < 21.1f
+         && !tracker.HasTempo(48 * 21 + bowls::kMidiClockTimeoutMs + 1);
+    tracker.Update(49, 48 * 21 + bowls::kMidiClockTimeoutMs + 2);
+    ok = ok && !tracker.HasTempo(48 * 21 + bowls::kMidiClockTimeoutMs + 2);
+    tracker.Update(50, 48 * 21 + bowls::kMidiClockTimeoutMs + 23);
+    ok = ok && tracker.HasTempo(48 * 21 + bowls::kMidiClockTimeoutMs + 23);
+
+    using chompi::delay_parameters::DelayClockDividerTicks;
+    ok = ok && DelayClockDividerTicks(0) == 2
+         && DelayClockDividerTicks(15) == 24
+         && DelayClockDividerTicks(32) == 48;
+    const int divider = bowls::StrikeArpeggioClockDividerTicks(30);
+    ok = ok && divider == 16
+         && bowls::AdjustStrikeArpeggioClockDivider(divider, 1) == 15
+         && bowls::AdjustStrikeArpeggioClockDivider(divider, -1) == 17
+         && bowls::StrikeArpeggioRateFromClockDivider(divider) == 30
+         && bowls::StrikeArpeggioClockIntervalMs(20.8333f, divider) == 333;
+    Check(ok, "T0 MIDI clock tempo and pulse dividers", "");
+}
 
 // -- T1: mapping and conversions -----------------------------------------
 
@@ -763,6 +794,7 @@ void TestArbitration()
 int main()
 {
     std::printf("CHOMPI-BOWLS MIDI host tests\n");
+    TestMidiClock();
     TestNoteMap();
     TestTickConversion();
     TestStrikeVelocityMappings();

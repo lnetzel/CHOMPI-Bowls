@@ -45,5 +45,11 @@ inline int DelayTimeMs(int position)
     return 500 + ((clamped - 15) * 500 + 8) / 17;
 }
 
+/** Clock-pulse divider matching the time control at a 120 BPM reference. */
+inline int DelayClockDividerTicks(int position)
+{
+    return (DelayTimeMs(position) * 24 + 250) / 500;
+}
+
 } // namespace delay_parameters
 } // namespace chompi

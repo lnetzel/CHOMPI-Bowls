@@ -139,7 +139,7 @@ a valid slot is loaded.
 
 ### Stereo delay
 
-The volume knob cycles **Master -> Delay -> Reverb**. On the Delay page, turning the encoder moves a combined control: the first half raises the wet mix from 0 to 50% at 35% feedback; the second half holds mix at 50% and raises feedback to a bounded 120%, entering self-oscillation above 100%. Hold SHIFT and turn to change delay time from 40 to 500 ms; changes glide smoothly without clearing echoes. The delay runs at 0% mix so history survives later mix changes and preset loads. Delay positions are included in each v11 preset.
+The volume knob cycles **Master -> Delay -> Reverb**. On the Delay page, turning the encoder moves a combined control: the first half raises the wet mix from 0 to 50% at 35% feedback; the second half holds mix at 50% and raises feedback to a bounded 120%, entering self-oscillation above 100%. Hold SHIFT and turn to change delay time from 40 to 1000 ms; changes glide smoothly without clearing echoes. With incoming MIDI Clock, this control selects a clock-pulse divider referenced to the existing delay-time curve at 120 BPM. The latched Strike arpeggio also follows MIDI Clock, and its wheel adjusts the number of pulses between strikes. Clock sync expires after 500 ms without a pulse. Without clock, the delay and arpeggio keep their usual free-running settings. The delay runs at 0% mix so history survives later mix changes and preset loads. Delay positions are included in each v11 preset.
 
 ### Audio routing (send-FX loop)
 

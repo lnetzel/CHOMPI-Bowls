@@ -58,7 +58,7 @@ routing-test: audio_routing_test.exe
 midi-test: midi_test.exe
 	./midi_test.exe
 
-midi_test.exe: midi_test.cpp ../src/MidiCcMap.h ../src/MidiHandler.h ../src/play_modes.h ../src/bowl_scale.h ../src/control_mappings.h
+midi_test.exe: midi_test.cpp ../src/MidiCcMap.h ../src/MidiHandler.h ../src/play_modes.h ../src/bowl_scale.h ../src/control_mappings.h ../src/delay_parameters.h ../src/midi_clock.h
 	$(CXX) $(CXXFLAGS) -o $@ midi_test.cpp
 
 # SD record/playback pure helpers: stereo ring, PCM/WAV format, and take order.
