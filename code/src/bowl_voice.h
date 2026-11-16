@@ -28,10 +28,12 @@
 // resonators pass straight through during the burst (ya = x + ...), so
 // both the dry strike and the reverb send splatter. Instead: a smooth
 // contact-force bump (zero value AND zero slope at both ends) over a
-// short mallet contact (~1.8-2.8 ms, hardness-scaled), plus an optional
-// subordinate contact tick: high-band noise (3-5 kHz) inside a fixed
-// ~1.2 ms initial-touch sub-burst. The tick is muted by default and can
-// be enabled through the host diagnostic hook. Both are distributed
+// short, hardness-scaled mallet contact (~1.1-1.6 ms at high pitches,
+// extended to 1.5 cycles at low pitches), plus a subtle contact tick:
+// high-passed noise above the second mode inside a ~1.2 ms initial-touch
+// sub-burst. The cutoff follows the played pitch and bowl profile. The
+// tick is enabled by default and can be isolated through the host
+// diagnostic hook. Both are distributed
 // across the modes with per-mode weights. The Strike parameter tilts the burst
 // spectrum (soft = low modes; the hardest contact is capped at a
 // medium-bright mallet). Brightness adds a strong high-mode shelf
@@ -106,7 +108,7 @@ class BowlVoice
         exc_lp1_       = 0.0f;
         exc_lp2_       = 0.0f;
         diag_force_    = 1.0f;
-        diag_noise_    = 0.0f;
+        diag_noise_    = 1.0f;
         rub_level_     = 0.0f;
         rub_smooth_    = 0.0f;
         rub_lp_        = 0.0f;
@@ -269,8 +271,8 @@ class BowlVoice
 
     /** Test hook (code/tests strike analysis): scale the strike's
      *  force-bump and contact-noise components independently for
-     *  force-only / noise-only diagnostic renders. Defaults 1/0, so
-     *  the contact tick is muted during normal firmware operation. */
+     *  force-only / noise-only diagnostic renders. Defaults 1/1, so
+     *  the subtle contact tick is present during normal operation. */
     void SetStrikeDiagnostics(float force_scale, float noise_scale)
     {
         diag_force_ = force_scale;
@@ -378,10 +380,11 @@ class BowlVoice
         // intensity_ still uses the full strike_norm range.)
         const float softness = 1.0f - 0.5f * strike_norm;
 
-        // Contact time scales with mallet hardness. Low bowls also need
-        // a longer contact relative to their period, or the force pulse
-        // ends before the fundamental has completed a full swing.
-        float contact_s = 0.002f + 0.004f * softness;
+        // Scale contact with hardness and the played pitch. Low notes
+        // need at least 1.5 cycles of force; higher or user-tuned notes
+        // get a proportionally shorter pulse so their fundamental rings
+        // instead of being under-driven by a fixed long contact.
+        float contact_s = 0.0006f + 0.0010f * softness;
         const float low_note_contact_s = 1.5f / fundamental_;
         if(contact_s < low_note_contact_s)
             contact_s = low_note_contact_s;
@@ -434,8 +437,8 @@ class BowlVoice
         ApplyPendingShimmerAtNoteStart();
         UpdateCoeffs();
 
-        // The brief initial touch: a felt mallet's tick is a soft low
-        // thud - a fixed ~1.2 ms sub-burst inside the longer contact.
+        // The brief initial touch: a subtle high-frequency mallet edge
+        // inside the longer force contact.
         noise_len_ = static_cast<int>(fs_ * 0.0012f);
         if(noise_len_ > burst_len_)
             noise_len_ = burst_len_;
@@ -488,13 +491,13 @@ class BowlVoice
             pulse_gain_ = pg;
         }
 
-        // Contact-noise lowpass (two one-poles = 12 dB/oct): the felt
-        // tick is brief (1.2 ms) and deep (600 Hz corner at softest,
-        // 1 kHz hardest) - a soft low thud that feeds the fundamental
-        // region, subordinate to the bowl's bloom. No Nyquist-flat
-        // energy, so neither the dry strike nor the reverb can
-        // splatter.
-        const float exc_cut = 600.0f + 400.0f * (1.0f - softness);
+        // A two-pole highpass (12 dB/oct) puts the short contact tick
+        // above the bowl's second mode, so its edge follows both the
+        // played pitch and the selected profile instead of a fixed Hz
+        // band. Keep the corner below the active audio band.
+        float exc_cut = fundamental_ * p.ratio[1] * 0.8f;
+        if(exc_cut > 0.35f * fs_)
+            exc_cut = 0.35f * fs_;
         exc_lp_coef_ = 1.0f - expf(-2.0f * kPi * exc_cut / fs_);
         exc_lp1_ = exc_lp2_ = 0.0f;
     }
@@ -622,10 +625,13 @@ class BowlVoice
                     const float nt
                         = static_cast<float>(n) / static_cast<float>(noise_len_);
                     const float nenv = (1.0f - nt) * (1.0f - nt);
-                    exc_lp1_ += exc_lp_coef_ * (Noise() - exc_lp1_);
+                    const float noise = Noise();
+                    exc_lp1_ += exc_lp_coef_ * (noise - exc_lp1_);
                     exc_lp2_ += exc_lp_coef_ * (exc_lp1_ - exc_lp2_);
+                    const float tick_noise
+                        = noise - 2.0f * exc_lp1_ + exc_lp2_;
                     exc += intensity_ * kStrikeNoise * nenv * attack
-                           * exc_lp2_ * diag_noise_;
+                           * tick_noise * diag_noise_;
                 }
                 --burst_pos_;
             }
@@ -807,12 +813,12 @@ class BowlVoice
     /** Ghost-fade time when a pad steals a still-ringing voice: the
      *  old ring is damped to the steal target over this span - long
      *  enough to be click-free against silence, short enough to read
-     *  as part of the note-on gesture (a stolen STRIKE damps over the
-     *  4-6 ms contact instead, masked there by the new burst). */
+     *  as part of the note-on gesture (a stolen STRIKE damps over its
+     *  pitch-scaled contact instead, masked there by the new burst). */
     static constexpr float kGhostFadeS = 0.1f;
 
-    /** Strike contact-tick gain when enabled by the diagnostic hook. */
-    static constexpr float kStrikeNoise = 0.5f;
+    /** Subtle strike contact-tick gain. */
+    static constexpr float kStrikeNoise = 0.02f;
 
     /** Strike upper-mode shelf (modes 2+): mild +5.1 dB over the
      *  plain profile x tilt x brightness weight - the felt voicing

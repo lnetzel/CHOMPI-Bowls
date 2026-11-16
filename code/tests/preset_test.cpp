@@ -1,4 +1,4 @@
-// Host-side tests for the v10 preset schema, slot bank, and direct pitches.
+// Host-side tests for the v11 preset schema, slot bank, and direct pitches.
 // Run with `make -C code/tests modes-test` from the MSYS2 UCRT64 shell.
 
 #include "BowlsPreset.h"
@@ -99,15 +99,45 @@ bool Replace(char* text, const char* old_text, const char* new_text)
     return true;
 }
 
-bool ReplacePitchArray(char* text, const char* name, const char* array_text)
+char* FindArray(char* text, const char* path)
 {
-    char marker[32];
-    std::snprintf(marker, sizeof(marker), "\"%s\":", name);
-    char* at = std::strstr(text, marker);
-    if(at == nullptr)
-        return false;
+    const char* separator = std::strchr(path, '.');
+    char marker[48];
+    char* at = text;
+    if(separator != nullptr)
+    {
+        const size_t parent_len = static_cast<size_t>(separator - path);
+        if(parent_len >= sizeof(marker) - 4)
+            return nullptr;
+        std::snprintf(marker, sizeof(marker), "\"%.*s\":{",
+                      static_cast<int>(parent_len), path);
+        at = std::strstr(text, marker);
+        if(at == nullptr)
+            return nullptr;
+        at += std::strlen(marker);
+        char* object_end = std::strchr(at, '}');
+        if(object_end == nullptr)
+            return nullptr;
+        std::snprintf(marker, sizeof(marker), "\"%s\":", separator + 1);
+        at = std::strstr(at, marker);
+        if(at == nullptr || at >= object_end)
+            return nullptr;
+    }
+    else
+    {
+        std::snprintf(marker, sizeof(marker), "\"%s\":", path);
+        at = std::strstr(text, marker);
+        if(at == nullptr)
+            return nullptr;
+    }
     at += std::strlen(marker);
-    if(*at != '[')
+    return *at == '[' ? at : nullptr;
+}
+
+bool ReplaceArray(char* text, const char* path, const char* array_text)
+{
+    char* at = FindArray(text, path);
+    if(at == nullptr)
         return false;
     char* end = std::strchr(at, ']');
     if(end == nullptr)
@@ -119,7 +149,7 @@ bool ReplacePitchArray(char* text, const char* name, const char* array_text)
     return old_len != 0;
 }
 
-bool ReplacePitchArrayWithCount(char* text, const char* name, int count)
+bool ReplaceArrayWithCount(char* text, const char* path, int count)
 {
     char array[512];
     size_t off = 0;
@@ -134,7 +164,7 @@ bool ReplacePitchArrayWithCount(char* text, const char* name, int count)
     }
     array[off++] = ']';
     array[off] = '\0';
-    return ReplacePitchArray(text, name, array);
+    return ReplaceArray(text, path, array);
 }
 
 bool BuildArrayWithFirst(char* array, size_t size, const char* first,
@@ -189,7 +219,10 @@ int main()
                 ok = false;
         if(preset.pitch_hz.split[24] != 1240.8f)
             ok = false;
-        Check(ok, "factory pitches equal existing tables", "");
+        for(int i = 0; i < chompi::BowlsPreset::kBankSlots; ++i)
+            if(preset.bright[i] != chompi::BowlsPreset::kDefaultBrightness)
+                ok = false;
+        Check(ok, "factory pitches and brightness match defaults", "");
     }
 
     // The first-boot template is embedded directly from the state example.
@@ -211,6 +244,9 @@ int main()
            || preset.delay_time != chompi::BowlsPreset::kDefaultDelayTime
            || !SamePitches(preset.pitch_hz, bowls::FactoryPitchTables()))
             ok = false;
+        for(int i = 0; i < chompi::BowlsPreset::kBankSlots; ++i)
+            if(preset.bright[i] != chompi::BowlsPreset::kDefaultBrightness)
+                ok = false;
         Check(ok, "embedded first-boot template parses", "");
     }
 
@@ -223,7 +259,23 @@ int main()
             const size_t len = chompi::Serialize(src, buf, sizeof(buf));
             chompi::BowlsPreset dst;
             dst.SetDefaults();
-            if(len == 0 || !chompi::Parse(buf, len, dst) || !Same(src, dst))
+            bool shape_ok = len > 0;
+            const char* fields[] = {"pan", "bvol", "profile", "bright",
+                                    "decay"};
+            if(shape_ok)
+                for(const char* field : fields)
+                {
+                    char marker[48];
+                    std::snprintf(marker, sizeof(marker),
+                                  "\"%s\":{\"strikes\":[", field);
+                    if(std::strstr(buf, marker) == nullptr)
+                        shape_ok = false;
+                }
+            if(shape_ok
+               && (std::strstr(buf, ",\"rimming\":[") == nullptr
+                   || std::strstr(buf, ",\"split\":[") == nullptr))
+                shape_ok = false;
+            if(!shape_ok || !chompi::Parse(buf, len, dst) || !Same(src, dst))
                 ok = false;
         }
         Check(ok, "round-trip 75 pitches, five banks, all modes", "");
@@ -392,21 +444,21 @@ int main()
         char doc[kStorageJsonSize];
         chompi::BowlsPreset sentinel = PatternPreset(2);
         const chompi::BowlsPreset before = sentinel;
-        const char* versions[] = {"7", "8", "9", "11"};
+        const char* versions[] = {"7", "8", "9", "10"};
         for(const char* version : versions)
         {
             std::memcpy(doc, buf, len + 1);
             char replacement[24];
             std::snprintf(replacement, sizeof(replacement), "\"version\":%s",
                           version);
-            if(!Replace(doc, "\"version\":10", replacement)
+            if(!Replace(doc, "\"version\":11", replacement)
                || chompi::Parse(doc, std::strlen(doc), sentinel)
                || !Same(sentinel, before))
                 ok = false;
         }
         std::memcpy(doc, buf, len + 1);
         chompi::BowlsPreset legacy_destination = before;
-        if(!Replace(doc, "\"version\":10", "\"version\":9")
+        if(!Replace(doc, "\"version\":11", "\"version\":9")
            || chompi::ParseWithPitchFallback(
                doc, std::strlen(doc), sizeof(doc), src, legacy_destination)
            || !Same(legacy_destination, before)
@@ -442,7 +494,7 @@ int main()
         {
             std::memcpy(doc, buf, len + 1);
             chompi::BowlsPreset dst = src;
-            if(!ReplacePitchArrayWithCount(doc, "strikes", count)
+            if(!ReplaceArrayWithCount(doc, "pitch_hz.strikes", count)
                || ParseCopy(doc, dst) || !Same(dst, src))
                 ok = false;
         }
@@ -450,7 +502,7 @@ int main()
         {
             std::memcpy(doc, buf, len + 1);
             chompi::BowlsPreset dst = src;
-            if(!ReplacePitchArrayWithCount(doc, "split", count)
+            if(!ReplaceArrayWithCount(doc, "pitch_hz.split", count)
                     || ParseCopy(doc, dst) || !Same(dst, src))
                 ok = false;
         }
@@ -463,7 +515,7 @@ int main()
             char array[512];
             if(!BuildArrayWithFirst(array, sizeof(array), first,
                                     bowls::kKeyCount)
-               || !ReplacePitchArray(doc, "strikes", array)
+               || !ReplaceArray(doc, "pitch_hz.strikes", array)
                || ParseCopy(doc, dst) || !Same(dst, src))
                 ok = false;
         }
@@ -472,7 +524,7 @@ int main()
         {
             std::memcpy(doc, buf, len + 1);
             chompi::BowlsPreset dst = src;
-            if(!ReplacePitchArrayWithCount(doc, "pan", count)
+            if(!ReplaceArrayWithCount(doc, "pan.strikes", count)
                || ParseCopy(doc, dst) || !Same(dst, src))
                 ok = false;
         }
@@ -496,7 +548,7 @@ int main()
                         sizeof(values) - off, ",%d", 100 + i));
         std::snprintf(values + off, sizeof(values) - off, "]");
         std::memcpy(doc, buf, len + 1);
-        if(!ReplacePitchArray(doc, "strikes", values))
+        if(!ReplaceArray(doc, "pitch_hz.strikes", values))
             ok = false;
         chompi::BowlsPreset dst;
         dst.SetDefaults();

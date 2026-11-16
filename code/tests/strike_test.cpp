@@ -11,10 +11,11 @@
 //   S6  above-band modes (highest bowl at 2x tuning) stay finite/bounded
 //   S7  register/control sweep: 12 bowls x 5 profiles, Strike/Brightness
 //       extremes, tuning endpoints - finite, bounded, no loudness blowups
-//   S10 contact tick is muted by default, but remains available to diagnostics
+//   S10 the subtle, pitch-relative contact tick is present by default
 //   S11 brightness ticks retain zero and extend to 1.5 at the maximum
 //   S12 maximum brightness substantially raises the strike's upper-mode balance
 //   S13 an idle lower-register voice clears its stale activity envelope
+//   S14 higher and user-tuned pitches build into the resonant body, not a transient
 
 #include "bowl_scale.h"
 #include "bowl_voice.h"
@@ -469,41 +470,63 @@ void S9_MaximumDecay()
           "S9 3x decay endpoint remains finite and bounded", detail);
 }
 
-void S10_DefaultContactTickMuted()
+void S10_DefaultContactTickPresent()
 {
-    std::vector<float> normal, force_only, tick_enabled;
-    for(int render = 0; render < 3; ++render)
+    const float pitches[] = {465.0f, 1100.0f, 1560.0f};
+    double      worst_tick_ratio = 0.0;
+    bool        valid = true;
+    for(float pitch : pitches)
     {
-        bowls::BowlVoice voice;
-        FreshVoice(voice);
-        if(render == 1)
-            voice.SetStrikeDiagnostics(1.0f, 0.0f);
-        else if(render == 2)
-            voice.SetStrikeDiagnostics(1.0f, 1.0f);
-        voice.Strike(465.0f, 0.7f, 1.0f, 1.0f);
-        Render(voice, 0.15,
-               render == 0 ? &normal
-               : render == 1 ? &force_only
-                             : &tick_enabled);
+        std::vector<float> normal, force_only, tick_enabled;
+        for(int render = 0; render < 3; ++render)
+        {
+            bowls::BowlVoice voice;
+            FreshVoice(voice);
+            if(render == 1)
+                voice.SetStrikeDiagnostics(1.0f, 0.0f);
+            else if(render == 2)
+                voice.SetStrikeDiagnostics(1.0f, 1.0f);
+            voice.Strike(pitch, 0.7f, 1.0f, 1.0f);
+            Render(voice, 0.15,
+                   render == 0 ? &normal
+                   : render == 1 ? &force_only
+                                 : &tick_enabled);
+        }
+
+        double tick_diff = 0.0;
+        double explicit_diff = 0.0;
+        double peak = 0.0;
+        for(size_t i = 0; i < normal.size(); ++i)
+        {
+            const double level = std::fabs(static_cast<double>(normal[i]));
+            if(level > peak)
+                peak = level;
+            const double force_diff
+                = std::fabs(static_cast<double>(normal[i] - force_only[i]));
+            const double enabled_diff
+                = std::fabs(static_cast<double>(normal[i] - tick_enabled[i]));
+            if(force_diff > tick_diff)
+                tick_diff = force_diff;
+            if(enabled_diff > explicit_diff)
+                explicit_diff = enabled_diff;
+        }
+        if(peak <= 0.0 || tick_diff <= 1.0e-8
+           || tick_diff > 0.25 * peak || explicit_diff != 0.0)
+        {
+            valid = false;
+            continue;
+        }
+        const double ratio = tick_diff / peak;
+        if(ratio > worst_tick_ratio)
+            worst_tick_ratio = ratio;
     }
 
-    double muted_diff = 0.0;
-    double enabled_diff = 0.0;
-    for(size_t i = 0; i < normal.size(); ++i)
-    {
-        muted_diff = std::max(
-            muted_diff,
-            std::fabs(static_cast<double>(normal[i] - force_only[i])));
-        enabled_diff = std::max(
-            enabled_diff,
-            std::fabs(static_cast<double>(normal[i] - tick_enabled[i])));
-    }
     char detail[96];
     std::snprintf(detail, sizeof(detail),
-                  "default-vs-force-only=%g; enabled-tick diff=%g",
-                  muted_diff, enabled_diff);
-    Check(muted_diff == 0.0 && enabled_diff > 1.0e-8,
-          "S10 contact tick muted by default; diagnostic can enable it",
+                  "worst tick/peak=%g across high and tuned pitches",
+                  worst_tick_ratio);
+    Check(valid && worst_tick_ratio < 0.25,
+          "S10 subtle pitch-relative contact tick is present by default",
           detail);
 }
 
@@ -566,6 +589,37 @@ void S13_IdleLowerVoiceClearsActivityEnvelope()
           "S13 idle lower voice clears its activity envelope", "");
 }
 
+void S14_HighRegisterAttackBuildsResonantBody()
+{
+    const float pitches[] = {927.0f, 1100.0f, 1560.0f};
+    double      worst_attack_ratio = 0.0;
+    bool        valid = true;
+    for(float pitch : pitches)
+    {
+        bowls::BowlVoice voice;
+        FreshVoice(voice);
+        voice.Strike(pitch, 0.5f, 1.0f, 1.0f);
+        std::vector<float> audio;
+        const Stats stats = Render(voice, 0.1, &audio);
+        const double attack_rms = WindowRms(audio, 0.0, 0.005);
+        const double body_rms = WindowRms(audio, 0.005, 0.020);
+        if(!stats.finite || body_rms <= 0.0)
+        {
+            valid = false;
+            continue;
+        }
+        const double ratio = attack_rms / body_rms;
+        if(ratio > worst_attack_ratio)
+            worst_attack_ratio = ratio;
+    }
+
+    char detail[80];
+    std::snprintf(detail, sizeof(detail), "worst 0-5ms / 5-20ms RMS = %.2f",
+                  worst_attack_ratio);
+    Check(valid && worst_attack_ratio < 2.0,
+          "S14 high-register attack builds into resonant body", detail);
+}
+
 } // namespace
 
 int main()
@@ -580,10 +634,11 @@ int main()
     S8_CustomPitchRange();
     S8_IndependentHardnessAndAmplitude();
     S9_MaximumDecay();
-    S10_DefaultContactTickMuted();
+    S10_DefaultContactTickPresent();
     S11_BrightnessRange();
     S12_MaxBrightnessStrengthensStrikeHighModes();
     S13_IdleLowerVoiceClearsActivityEnvelope();
+    S14_HighRegisterAttackBuildsResonantBody();
     std::printf(g_failures == 0 ? "\nALL STRIKE TESTS PASSED\n"
                                 : "\n%d STRIKE TEST(S) FAILED\n",
                 g_failures);

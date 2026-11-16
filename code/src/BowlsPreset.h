@@ -2,8 +2,9 @@
  *  @brief SD-card preset model for CHOMPI-BOWLS: 15 versioned JSON slots,
  *  host-testable (no Daisy dependencies).
  *
- *  Schema v10 stores all persistent panel parameters, including direct
- *  per-mode/per-key fundamental frequencies. Legacy schemas are rejected.
+ *  Schema v11 stores persistent panel parameters in per-mode objects,
+ *  including each mode's per-key values and direct fundamental frequencies.
+ *  Legacy schemas are rejected.
  */
 #pragma once
 #include <cstdint>
@@ -27,8 +28,9 @@ struct BowlsPreset
      * (3 modes x 25 keys = 75), profile becomes per-bowl per-mode;
     * v7: brightness and decay move from globals to per-mode/per-key
     * banks (six banks of 75); v8: delay mix and time; v9: base pitches;
-    * v10: direct per-mode/per-key pitches replace relative tune ticks. */
-    static constexpr int kVersion = 10;
+    * v10: direct per-mode/per-key pitches replace relative tune ticks;
+     * v11: per-mode values become separate JSON objects. */
+    static constexpr int kVersion = 11;
 
     /* field ranges (mirror the tick counts in chompi_main.cpp) */
     static constexpr int kMaxTicks   = 32; /* 0..32 tick parameters */
@@ -46,7 +48,7 @@ struct BowlsPreset
     static constexpr int kDefaultMode       = kModeSplit;
     static constexpr int kDefaultVolume     = 8;
     static constexpr int kDefaultStrike     = 32;
-    static constexpr int kDefaultBrightness = 32;
+    static constexpr int kDefaultBrightness = 24;
     static constexpr int kDefaultDecay      = 0;
     static constexpr int kDefaultShimmer    = 0;
     static constexpr int kDefaultProfile    = 0;
@@ -197,17 +199,15 @@ class BowlsPresetBank
     uint32_t    revision_[kNumSlots];
 };
 
-/** Append one `,"name":[v0,..,vN-1]` array at `off` (a scalar field
- *  always precedes the arrays, hence the leading comma). Returns the
- *  new offset, or 0 when the buffer is too small. */
-inline size_t AppendArray(char *         buf,
-                          size_t         size,
-                          size_t         off,
-                          const char *   name,
-                          const uint8_t *values,
-                          int            count)
+static const char *const kPresetModeKeys[BowlsPreset::kModeCount] = {
+    "strikes", "rimming", "split"};
+
+/** Append a JSON array at `off`. Returns the new offset, or 0 when the
+ *  buffer is too small. */
+inline size_t AppendArrayValues(char *buf, size_t size, size_t off,
+                                const uint8_t *values, int count)
 {
-    int n = snprintf(buf + off, size - off, ",\"%s\":[", name);
+    int n = snprintf(buf + off, size - off, "[");
     if(n < 0 || static_cast<size_t>(n) >= size - off)
         return 0;
     off += static_cast<size_t>(n);
@@ -220,6 +220,34 @@ inline size_t AppendArray(char *         buf,
         off += static_cast<size_t>(n);
     }
     n = snprintf(buf + off, size - off, "]");
+    if(n < 0 || static_cast<size_t>(n) >= size - off)
+        return 0;
+    return off + static_cast<size_t>(n);
+}
+
+/** Append one `,"name":{"strikes":[..],"rimming":[..],"split":[..]}`
+ *  bank, slicing the internal mode-major 75-value array into key banks. */
+inline size_t AppendModeArrays(char *buf, size_t size, size_t off,
+                               const char *name, const uint8_t *values)
+{
+    int n = snprintf(buf + off, size - off, ",\"%s\":{", name);
+    if(n < 0 || static_cast<size_t>(n) >= size - off)
+        return 0;
+    off += static_cast<size_t>(n);
+    for(int mode = 0; mode < BowlsPreset::kModeCount; ++mode)
+    {
+        n = snprintf(buf + off, size - off, "%s\"%s\":",
+                     mode == 0 ? "" : ",", kPresetModeKeys[mode]);
+        if(n < 0 || static_cast<size_t>(n) >= size - off)
+            return 0;
+        off += static_cast<size_t>(n);
+        off = AppendArrayValues(buf, size, off,
+                                values + mode * bowls::kKeyCount,
+                                bowls::kKeyCount);
+        if(off == 0)
+            return 0;
+    }
+    n = snprintf(buf + off, size - off, "}");
     if(n < 0 || static_cast<size_t>(n) >= size - off)
         return 0;
     return off + static_cast<size_t>(n);
@@ -309,19 +337,15 @@ inline size_t Serialize(const BowlsPreset &p, char *buf, size_t size)
     if(n < 0 || static_cast<size_t>(n) >= size)
         return 0;
     size_t off = static_cast<size_t>(n);
-    off = AppendArray(buf, size, off, "pan", p.pan, BowlsPreset::kBankSlots);
+    off = AppendModeArrays(buf, size, off, "pan", p.pan);
     if(off != 0)
-        off = AppendArray(buf, size, off, "bvol", p.bvol,
-                          BowlsPreset::kBankSlots);
+        off = AppendModeArrays(buf, size, off, "bvol", p.bvol);
     if(off != 0)
-        off = AppendArray(buf, size, off, "profile", p.profile,
-                          BowlsPreset::kBankSlots);
+        off = AppendModeArrays(buf, size, off, "profile", p.profile);
     if(off != 0)
-        off = AppendArray(buf, size, off, "bright", p.bright,
-                          BowlsPreset::kBankSlots);
+        off = AppendModeArrays(buf, size, off, "bright", p.bright);
     if(off != 0)
-        off = AppendArray(buf, size, off, "decay", p.decay,
-                          BowlsPreset::kBankSlots);
+        off = AppendModeArrays(buf, size, off, "decay", p.decay);
     if(off == 0)
         return 0;
     return AppendPitchObject(buf, size, off, p);
@@ -492,6 +516,23 @@ inline bool QueryArrayStrict(char *buf, size_t len, const char *name,
     return i + 1 == value_len && value[i] == ']';
 }
 
+inline bool QueryModeArraysStrict(char *buf, size_t len, const char *name,
+                                  uint8_t *dest, int max_value)
+{
+    char query[48];
+    for(int mode = 0; mode < BowlsPreset::kModeCount; ++mode)
+    {
+        const int n = snprintf(query, sizeof(query), "%s.%s", name,
+                               kPresetModeKeys[mode]);
+        if(n < 0 || static_cast<size_t>(n) >= sizeof(query)
+           || !QueryArrayStrict(buf, len, query,
+                                dest + mode * bowls::kKeyCount,
+                                bowls::kKeyCount, max_value))
+            return false;
+    }
+    return true;
+}
+
 inline bool QueryPitchArrayStrict(char *buf, size_t len, const char *query,
                                   float *dest, int count)
 {
@@ -581,20 +622,16 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
     tmp.delay_mix = static_cast<uint8_t>(delay_mix);
     tmp.delay_time = static_cast<uint8_t>(delay_time);
 
-    if(!QueryArrayStrict(buf, len, "pan", tmp.pan, BowlsPreset::kBankSlots,
-                         BowlsPreset::kMaxTicks)
-       || !QueryArrayStrict(buf, len, "bvol", tmp.bvol,
-                            BowlsPreset::kBankSlots,
-                            BowlsPreset::kMaxTicks)
-       || !QueryArrayStrict(buf, len, "profile", tmp.profile,
-                            BowlsPreset::kBankSlots,
-                            BowlsPreset::kMaxProfile)
-       || !QueryArrayStrict(buf, len, "bright", tmp.bright,
-                            BowlsPreset::kBankSlots,
-                            BowlsPreset::kMaxTicks)
-       || !QueryArrayStrict(buf, len, "decay", tmp.decay,
-                            BowlsPreset::kBankSlots,
-                            BowlsPreset::kMaxTicks)
+    if(!QueryModeArraysStrict(buf, len, "pan", tmp.pan,
+                              BowlsPreset::kMaxTicks)
+       || !QueryModeArraysStrict(buf, len, "bvol", tmp.bvol,
+                                 BowlsPreset::kMaxTicks)
+       || !QueryModeArraysStrict(buf, len, "profile", tmp.profile,
+                                 BowlsPreset::kMaxProfile)
+       || !QueryModeArraysStrict(buf, len, "bright", tmp.bright,
+                                 BowlsPreset::kMaxTicks)
+       || !QueryModeArraysStrict(buf, len, "decay", tmp.decay,
+                                 BowlsPreset::kMaxTicks)
        || !QueryPitchArrayStrict(buf, len, "pitch_hz.strikes",
                                  tmp.pitch_hz.strikes, bowls::kKeyCount)
        || !QueryPitchArrayStrict(buf, len, "pitch_hz.rimming",

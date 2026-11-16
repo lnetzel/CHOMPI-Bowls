@@ -94,9 +94,12 @@ than displaying an exact number. Changes apply at the next strike, pad
 start, or rim selection. MIDI CC 76 is unsupported; tuning is adjusted
 from the panel or by editing a saved preset.
 
-Final frequencies are stored in the `pitch_hz` object in each v10 preset.
-To edit one, save a slot, power off, and edit its `BOWLS/Pxx.json` file on
-a computer. Keep all v10 fields and array lengths intact. Safely eject
+Final frequencies are stored in the `pitch_hz` object in each v11 preset.
+The per-key settings (`pan`, `bvol`, `profile`, `bright`, and `decay`) use
+the same mode-keyed layout: `strikes`, `rimming`, and `split` arrays of 25
+keys each. To edit a preset, save a slot, power off, and edit its
+`BOWLS/Pxx.json` file on a computer. Keep all v11 fields and array lengths
+intact. Safely eject
 the card before reinserting it, then reboot. The saved slots are read at
 boot; the embedded factory template remains the boot sound until you
 explicitly load a slot with SHIFT+white key. Never edit the card while
@@ -136,7 +139,7 @@ a valid slot is loaded.
 
 ### Stereo delay
 
-The volume knob cycles **Master -> Delay -> Reverb**. On the Delay page, turning the encoder moves a combined control: the first half raises the wet mix from 0 to 50% at 35% feedback; the second half holds mix at 50% and raises feedback to a bounded 120%, entering self-oscillation above 100%. Hold SHIFT and turn to change delay time from 40 to 500 ms; changes glide smoothly without clearing echoes. The delay runs at 0% mix so history survives later mix changes and preset loads. Delay positions are included in each v10 preset.
+The volume knob cycles **Master -> Delay -> Reverb**. On the Delay page, turning the encoder moves a combined control: the first half raises the wet mix from 0 to 50% at 35% feedback; the second half holds mix at 50% and raises feedback to a bounded 120%, entering self-oscillation above 100%. Hold SHIFT and turn to change delay time from 40 to 500 ms; changes glide smoothly without clearing echoes. The delay runs at 0% mix so history survives later mix changes and preset loads. Delay positions are included in each v11 preset.
 
 ### Audio routing (send-FX loop)
 

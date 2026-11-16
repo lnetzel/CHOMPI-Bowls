@@ -52,7 +52,7 @@ switches (64-127 = on) use their own conversions, documented per row.
 The active play mode decides what a note does; in Split it also decides
 the bowl frequency. Note names assume C4 = MIDI 60 (some DAWs label
 octaves differently). Frequencies below are the factory untuned
-fundamentals; v10 `pitch_hz` values store each mode/key's final frequency
+fundamentals; v11 `pitch_hz` values store each mode/key's final frequency
 without changing its MIDI note. Encoder 1 Page 3 changes that frequency
 directly; MIDI has no tuning CC. Resonance character (CC 70) changes the
 modal structure. See the pitch-editing procedure and complete key/index
