@@ -87,7 +87,7 @@ constexpr int kSourceCount = 3;
 class PlayModes
 {
   public:
-    PlayModes() { Init(PlayMode::kStrikes); }
+    PlayModes() { Init(PlayMode::kSplit); }
 
     /** Boot / preset-load state: mode `mode`, nothing held, latch off
      *  (latch and performance state are never persisted). */
@@ -927,7 +927,7 @@ class PlayModes
         }
     }
 
-    PlayMode mode_         = PlayMode::kStrikes;
+    PlayMode mode_         = PlayMode::kSplit;
     int      shortcut_key_ = -1;
     // Per-source claims: the mode the press began in (-1 = not held),
     // latch/sustain deferrals, latch-toggle-muted held markers, and the

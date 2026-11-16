@@ -15,7 +15,7 @@
 //             an added higher bowl. Each key keeps its own final Hz.
 //
 // Modes are selected with SHIFT + a lower black key: F#3 (index 6) =
-// Strikes, G#3 (8) = Rimming, A#3 (10) = Split.
+// Split, G#3 (8) = Strikes, A#3 (10) = Rimming.
 //
 // Anchored on measured fundamentals from the studies cited in the spec:
 // 99 / 219.6 / 310.2 / 465 / 513 Hz (and 927 Hz). The remaining entries
@@ -38,9 +38,9 @@ constexpr int kPlayModeCount = 3;
 /** Mode shortcuts: SHIFT + lower black keys (keyboard pitch-order
  *  index), per mode. */
 constexpr int kModeShortcutKey[kPlayModeCount] = {
-    6,  // kStrikes - lower F# (F#3)
-    8,  // kRimming - lower G# (G#3)
-    10, // kSplit   - lower A# (A#3)
+    8,  // kStrikes - lower G# (G#3)
+    10, // kRimming - lower A# (A#3)
+    6,  // kSplit   - lower F# (F#3)
 };
 
 constexpr int kKeyCount = 25; // C3..C5
@@ -182,8 +182,8 @@ static_assert(FullScaleAscending(),
               "kFullScaleHz must be 25 strictly ascending pitches");
 static_assert(BowlScaleAscending(),
               "kBowlScaleHz must be strictly ascending");
-static_assert(kModeShortcutKey[0] == 6 && kModeShortcutKey[1] == 8
-                  && kModeShortcutKey[2] == 10,
+static_assert(kModeShortcutKey[0] == 8 && kModeShortcutKey[1] == 10
+                  && kModeShortcutKey[2] == 6,
               "mode shortcuts: lower F# / G# / A#");
 
 } // namespace bowls

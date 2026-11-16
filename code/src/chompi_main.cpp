@@ -13,10 +13,12 @@
 // mode. Persistent parameters are stored only in explicitly saved presets;
 // the LOOP/PLAY latches and all other performance state remain transient.
 //
-//   Play modes            : SHIFT + lower F# (key 6) = STRIKES - all 25
+//   Play modes            : SHIFT + lower F# (key 6) = SPLIT - keys 0-11
+//                         select a bowl for wheel rimming; keys 12-24
+//                         strike. SHIFT + lower G# (key 8) = STRIKES - all 25
 //                         keys strike distinct ascending bowls; the
 //                         wheel rims currently sounding, physically
-//                         held strikes. SHIFT + lower G# (key 8) =
+//                         held strikes. SHIFT + lower A# (key 10) =
 //                         RIMMING - all 25 keys hold clean sustained
 //                         bowl pads (10 s attack to 90%, 10 s release
 //                         to 10%); the wheel adds the direction-
@@ -26,12 +28,11 @@
 //                         never releases a latched note. In STRIKES, a
 //                         separate PLAY latch captures held strikes;
 //                         later key-downs toggle blue notes that retrigger
-//                         after their resonator tails end. SHIFT + lower
-//                         A# (key 10) = SPLIT - the v1 layout: keys
-//                         0-11 (C3-B3) SELECT one of the 12 bowls for
-//                         wheel rimming (never strike), keys 12-23
-//                         strike the same 12 bowls, key 24 (C5)
-//                         strikes an added higher bowl. A shortcut
+//                         after their resonator tails end. SPLIT uses
+//                         the v1 layout: keys 0-11 (C3-B3) SELECT one of
+//                         the 12 bowls for wheel rimming (never strike),
+//                         keys 12-23 strike the same 12 bowls, key 24
+//                         (C5) strikes an added higher bowl. A shortcut
 //                         consumes its key through release - it never
 //                         sounds a note or moves the edit target.
 //   Physical encoder 1 (SW4/ENC_4): per-bowl editor for the selected
@@ -225,7 +226,7 @@ int ModeIdx(PlayMode mode) { return static_cast<int>(mode); }
 
 // The play-mode state machine: mode, shortcuts, per-key press
 // provenance and the Rimming LOOP latch (play_modes.h). Boot default
-// is Strikes; a valid preset restores the saved mode at boot.
+// is Split; a valid preset restores the saved mode at boot.
 bowls::PlayModes play_modes;
 
 enum class Overlay : int

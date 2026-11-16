@@ -207,7 +207,7 @@ int main()
         chompi::BowlsPreset preset;
         preset.SetDefaults();
         if(!ok || !chompi::Parse(doc, len, preset)
-           || preset.mode != 0
+           || preset.mode != chompi::BowlsPreset::kModeSplit
            || preset.delay_time != chompi::BowlsPreset::kDefaultDelayTime
            || !SamePitches(preset.pitch_hz, bowls::FactoryPitchTables()))
             ok = false;
@@ -512,7 +512,7 @@ int main()
         chompi::BowlsPreset p;
         p.SetDefaults();
         const size_t len = chompi::Serialize(p, buf, sizeof(buf));
-        Check(p.mode == chompi::BowlsPreset::kModeStrikes
+        Check(p.mode == chompi::BowlsPreset::kModeSplit
                   && p.delay_mix == 0
                   && p.delay_time == chompi::BowlsPreset::kDefaultDelayTime
                   && len > 0 && std::strstr(buf, "\"pitch_hz\"") != nullptr

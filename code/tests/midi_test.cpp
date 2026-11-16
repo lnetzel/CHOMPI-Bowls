@@ -350,8 +350,8 @@ void TestMidiOutputQueues()
 
         output.Init(true);
         PlayModes modes;
-        modes.Init(PlayMode::kStrikes);
-        KeyAction action = modes.KeyDown(8, true); // SHIFT + lower G#: Rimming
+        modes.Init(PlayMode::kSplit);
+        KeyAction action = modes.KeyDown(8, true); // SHIFT + lower G#: Strikes
         if(action.kind != KeyAction::kModeChanged
           && modes.DownMode(Source::kLocal, 8) >= 0)
            output.PushLocalNoteOn(8);
@@ -360,6 +360,7 @@ void TestMidiOutputQueues()
             && !output.Queue(bowls::kDin).HasEvent();
         modes.KeyUp(8);
 
+        modes.SetMode(PlayMode::kRimming);
         modes.SetLatchEnabled(true);
         action = modes.KeyDown(7, false);
         const bool was_note = modes.DownMode(Source::kLocal, 7) >= 0;

@@ -45,7 +45,7 @@ Switching modes never interrupts ringing voices or the reverb: outgoing
 notes keep their sound, and the wheel only drives notes started in the
 current mode. Black keys are playable everywhere.
 
-- **Strikes** (SHIFT + lower F#): all 25 keys strike distinct,
+- **Strikes** (SHIFT + lower G#): all 25 keys strike distinct,
   ascending bowls (99 Hz .. 1560 Hz). Tap **PLAY** to toggle the Strike
   latch: enabling it captures held strikes, and later key presses toggle
   individual notes on/off. A latched bowl retriggers when its resonator
@@ -55,7 +55,7 @@ current mode. Black keys are playable everywhere.
   when the latch is off and a bright color when it is on. Latched voices
   are protected from stealing. The wheel rims currently sounding,
   physically held strikes.
-- **Rimming** (SHIFT + lower G#): all 25 keys hold clean, sustained
+- **Rimming** (SHIFT + lower A#): all 25 keys hold clean, sustained
   bowl pads - 10 s attack to ~90%, 10 s release to ~10%; the bowl's
   ring and the reverb can ring out longer. The wheel adds the
   direction-dependent rimming on top. **LOOP** toggles a note latch:
@@ -64,7 +64,7 @@ current mode. Black keys are playable everywhere.
   to Strikes preserves the latch, pad gates and yellow key feedback;
   returning to Rimming resumes them. Disabling the latch or switching
   to Split smoothly releases latched-only notes. The latch is never saved.
-- **Split** (SHIFT + lower A#): the original layout - keys C3-B3 select
+- **Split** (SHIFT + lower F#): the original layout - keys C3-B3 select
   one of the 12 bowls for wheel rimming (up to two held at once; never
   strike), keys C4-B4 strike the same 12 bowls, and key C5 strikes an
   added higher bowl (1240.8 Hz).

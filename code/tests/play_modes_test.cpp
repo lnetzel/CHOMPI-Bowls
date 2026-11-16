@@ -143,16 +143,17 @@ void TestMappings()
     Check(led_ordered, "M1f logarithmic LED position spans full Hz range",
           "");
 
-    Check(bowls::kModeShortcutKey[0] == 6 && bowls::kModeShortcutKey[1] == 8
-              && bowls::kModeShortcutKey[2] == 10,
-           "M1e shortcuts are lower F#/G#/A# (6/8/10)", "");
+    Check(bowls::kModeShortcutKey[0] == 8
+              && bowls::kModeShortcutKey[1] == 10
+              && bowls::kModeShortcutKey[2] == 6,
+           "M1e shortcut keys are Split/Strikes/Rimming = 6/8/10", "");
     Check(PlayModes::IsModeShortcut(6) && PlayModes::IsModeShortcut(8)
               && PlayModes::IsModeShortcut(10)
               && !PlayModes::IsModeShortcut(7),
           "M1f IsModeShortcut", "");
-    Check(PlayModes::ShortcutMode(6) == PlayMode::kStrikes
-              && PlayModes::ShortcutMode(8) == PlayMode::kRimming
-              && PlayModes::ShortcutMode(10) == PlayMode::kSplit,
+    Check(PlayModes::ShortcutMode(6) == PlayMode::kSplit
+              && PlayModes::ShortcutMode(8) == PlayMode::kStrikes
+              && PlayModes::ShortcutMode(10) == PlayMode::kRimming,
           "M1g ShortcutMode", "");
 }
 
@@ -162,12 +163,18 @@ void TestShortcuts()
 {
     {
         PlayModes sm;
+        Check(sm.Mode() == PlayMode::kSplit,
+              "M2 default mode is Split", "");
+    }
+    {
+        PlayModes sm;
         sm.Init(PlayMode::kSplit);
-        // SHIFT+G# (8): mode change to Rimming, nothing else.
+        // SHIFT+G# (8): mode change to Strikes, nothing else.
         KeyAction a = sm.KeyDown(8, true);
         Check(a.kind == KeyAction::kModeChanged
-                  && a.mode == PlayMode::kRimming && sm.Mode() == PlayMode::kRimming,
-              "M2a SHIFT+G# selects Rimming", "");
+                  && a.mode == PlayMode::kStrikes
+                  && sm.Mode() == PlayMode::kStrikes,
+              "M2a SHIFT+G# selects Strikes", "");
         // Release with SHIFT still held: consumed, no note-off action.
         a = sm.KeyUp(8);
         Check(a.kind == KeyAction::kNone && sm.DownMode(8) == -1,
@@ -180,8 +187,8 @@ void TestShortcuts()
         // the key releases: still consumed, must not strike.
         KeyAction a = sm.KeyDown(10, true);
         Check(a.kind == KeyAction::kModeChanged
-                  && sm.Mode() == PlayMode::kSplit,
-              "M2c SHIFT+A# selects Split", "");
+                  && sm.Mode() == PlayMode::kRimming,
+              "M2c SHIFT+A# selects Rimming", "");
         a = sm.KeyUp(10); // shift released first - still swallowed
         Check(a.kind == KeyAction::kNone, "M2d release after SHIFT-up consumed",
               "");
@@ -190,11 +197,11 @@ void TestShortcuts()
     }
     {
         PlayModes sm;
-        sm.Init(PlayMode::kStrikes);
-        // Re-selecting the active mode is idempotent (consumed, no
-        // mode-change action).
+        sm.Init(PlayMode::kSplit);
+        // Re-selecting the active mode with SHIFT+F# is idempotent
+        // (consumed, no mode-change action).
         KeyAction a = sm.KeyDown(6, true);
-        Check(a.kind == KeyAction::kNone && sm.Mode() == PlayMode::kStrikes,
+        Check(a.kind == KeyAction::kNone && sm.Mode() == PlayMode::kSplit,
               "M2f same-mode selection is idempotent", "");
         a = sm.KeyUp(6);
         Check(a.kind == KeyAction::kNone, "M2g idempotent release consumed", "");
@@ -209,14 +216,14 @@ void TestShortcuts()
               "M2h SHIFT+non-shortcut key still plays", "");
         sm.KeyUp(7);
         // A shortcut must not toggle a latched note either: in Rimming
-        // with latch on, SHIFT+G# re-selection is consumed without
+        // with latch on, SHIFT+A# re-selection is consumed without
         // touching pad state.
         PlayModes sm2;
         sm2.Init(PlayMode::kRimming);
         sm2.KeyDown(3, false);
         sm2.LoopPressed(); // capture
         sm2.KeyUp(3);      // latched
-        KeyAction b = sm2.KeyDown(8, true); // same-mode shortcut
+        KeyAction b = sm2.KeyDown(10, true); // same-mode shortcut
         Check(b.kind == KeyAction::kNone && sm2.Latched(3)
                   && sm2.PadOn(3) && sm2.LatchEnabled(),
               "M2i shortcut never toggles latch", "");
@@ -459,7 +466,7 @@ void TestModeExit()
     sm.KeyUp(1); // latched-only now
     // Leave Rimming for Strikes: latched notes persist; held notes keep
     // their existing release-on-key-up behavior.
-    KeyAction a = sm.KeyDown(6, true);
+    KeyAction a = sm.KeyDown(8, true);
     Check(a.kind == KeyAction::kModeChanged
               && sm.Mode() == PlayMode::kStrikes && sm.LatchEnabled()
               && sm.Latched(1) && sm.PadOn(1),
@@ -469,7 +476,7 @@ void TestModeExit()
         a = sm.KeyUp(4);
         Check(a.kind == KeyAction::kNone && sm.PadOn(4) && sm.Latched(4),
             "M6c key-up preserves a captured latch across modes", "");
-        sm.KeyDown(8, true); // -> Rimming
+        sm.KeyDown(10, true); // -> Rimming
         Check(sm.Mode() == PlayMode::kRimming && sm.LatchEnabled()
               && sm.Latched(1) && sm.PadOn(1),
             "M6d returning to Rimming restores the preserved latch", "");
@@ -480,14 +487,14 @@ void TestModeExit()
         sm.LoopPressed();
         sm.KeyDown(2, false);
         sm.KeyUp(2);
-        sm.KeyDown(10, true); // -> Split: existing cleanup remains
+        sm.KeyDown(6, true); // -> Split: existing cleanup remains
         Check(sm.Mode() == PlayMode::kSplit && !sm.LatchEnabled()
               && !sm.Latched(2) && !sm.PadOn(2),
             "M6f Rimming-to-Split clears latch and releases pad", "");
     // And a Strikes key held across a switch never becomes a pad.
-        sm.KeyDown(6, true); // -> Strikes
+        sm.KeyDown(8, true); // -> Strikes
     sm.KeyDown(12, false); // strike in Strikes mode
-    sm.KeyDown(8, true);   // -> Rimming
+    sm.KeyDown(10, true);  // -> Rimming
     Check(sm.Mode() == PlayMode::kRimming && !sm.PadOn(12)
               && !sm.WheelTargets(12),
             "M6g held strike is not reinterpreted as a pad", "");
@@ -628,8 +635,8 @@ void TestWheelSets()
               "M8i Rimming: wheel addresses held or latched pads", "");
         // Switching to Strikes: old pads are no longer wheel targets;
         // only new-mode notes are addressed.
-        sm.KeyDown(6 + 0, true);         // SHIFT+F#: -> Strikes
-        // (key 6 was the shortcut; the latched pad on key 6 was
+        sm.KeyDown(8, true);             // SHIFT+G#: -> Strikes
+        // (key 8 was the shortcut; the latched pad on key 6 was
         // released by the mode exit)
         Check(sm.Mode() == PlayMode::kStrikes && !sm.WheelTargets(2),
               "M8j wheel addresses current mode only", "");

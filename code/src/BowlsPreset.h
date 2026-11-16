@@ -43,7 +43,7 @@ struct BowlsPreset
     static constexpr int kModeSplit   = 2;
 
     /* boot defaults (mirror Params in chompi_main.cpp) */
-    static constexpr int kDefaultMode       = kModeStrikes;
+    static constexpr int kDefaultMode       = kModeSplit;
     static constexpr int kDefaultVolume     = 8;
     static constexpr int kDefaultStrike     = 32;
     static constexpr int kDefaultBrightness = 32;
