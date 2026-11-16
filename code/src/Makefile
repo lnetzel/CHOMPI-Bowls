@@ -25,7 +25,7 @@ endif
 
 include $(SYSTEM_FILES_DIR)/Makefile
 
-$(BUILD_DIR)/default_state.o: ../state\ examples/default.json
+$(BUILD_DIR)/default_state.o: ../state\ examples/default_pelog_selisir_inspired.json
 
 .PHONY: check-toolchain
 check-toolchain:

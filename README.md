@@ -73,11 +73,13 @@ A mode shortcut consumes its key through release - it never sounds a
 note or moves the bowl editor target. White Keys 1-15 map left to right
 to `BOWLS/P01.json` through `BOWLS/P15.json`. SHIFT+white-key loads a
 populated slot; an empty slot leaves the current sound unchanged. At
-boot, the embedded `code/state examples/default.json` template is loaded
-as the factory sound and the 15 saved slots are cached, but no slot is
+boot, the embedded `code/state examples/default_pelog_selisir_inspired.json`
+template is loaded as the factory sound and the 15 saved slots are cached, but no slot is
 automatically loaded or created. Parameter changes remain in RAM until
 you explicitly save; copying and saving also write only their selected
 destination slot.
+The original `code/state examples/default.json` remains available as the
+untuned example template.
 
 Slots written by firmware affected by the disabled float-printf issue
 contain invalid `pitch_hz` values. On load, their other settings are

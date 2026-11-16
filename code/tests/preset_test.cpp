@@ -225,9 +225,10 @@ int main()
         Check(ok, "factory pitches and brightness match defaults", "");
     }
 
-    // The first-boot template is embedded directly from the state example.
+    // The first-boot template is embedded directly from the Pelog Selisir
+    // state example.
     {
-        std::ifstream input("../state examples/default.json",
+        std::ifstream input("../state examples/default_pelog_selisir_inspired.json",
                             std::ios::binary);
         const bool opened = input.is_open();
         const std::string source((std::istreambuf_iterator<char>(input)),
@@ -242,8 +243,14 @@ int main()
         if(!ok || !chompi::Parse(doc, len, preset)
            || preset.mode != chompi::BowlsPreset::kModeSplit
            || preset.delay_time != chompi::BowlsPreset::kDefaultDelayTime
-           || !SamePitches(preset.pitch_hz, bowls::FactoryPitchTables()))
+           || preset.pitch_hz.strikes[0] != 99.0f
+           || preset.pitch_hz.rimming[0] != 99.0f
+           || preset.pitch_hz.split[0] != 99.0f)
             ok = false;
+        for(int i = 0; i < bowls::kKeyCount; ++i)
+            if(preset.pitch_hz.strikes[i] != preset.pitch_hz.rimming[i]
+               || preset.pitch_hz.strikes[i] != preset.pitch_hz.split[i])
+                ok = false;
         for(int i = 0; i < chompi::BowlsPreset::kBankSlots; ++i)
             if(preset.bright[i] != chompi::BowlsPreset::kDefaultBrightness)
                 ok = false;
