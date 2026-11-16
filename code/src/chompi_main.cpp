@@ -229,6 +229,8 @@ int strike_arpeggio_rate_tenths_hz
 int strike_arpeggio_clock_divider_ticks
     = bowls::StrikeArpeggioClockDividerTicks(
         bowls::kStrikeArpeggioDefaultRateTenthsHz);
+constexpr uint32_t kStrikeRetriggerFlashMs = 80;
+uint32_t strike_retrigger_flash_until_[bowls::kKeyCount] = {};
 bool midi_clock_active_ = false;
 int midi_clock_source_ = -1;
 float midi_clock_pulse_period_ms_ = 0.0f;
@@ -896,6 +898,7 @@ void RetriggerLatchedStrikes()
         const int velocity = play_modes.StrikeLatchVelocity(key);
         StrikeKey(PlayMode::kStrikes, key, velocity > 0 ? velocity : 127,
                   false, play_modes.StrikeLatchUsesMidiVelocity(key));
+        strike_retrigger_flash_until_[key] = now + kStrikeRetriggerFlashMs;
         sequence_position = (sequence_position + 1) % count;
         const uint32_t interval_ms
             = midi_clock_active_
@@ -920,6 +923,8 @@ void RetriggerLatchedStrikes()
         const int velocity = play_modes.StrikeLatchVelocity(key);
         StrikeKey(PlayMode::kStrikes, key, velocity > 0 ? velocity : 127,
                   false, play_modes.StrikeLatchUsesMidiVelocity(key));
+        strike_retrigger_flash_until_[key]
+            = System::GetNow() + kStrikeRetriggerFlashMs;
     }
 }
 
@@ -2345,6 +2350,14 @@ bool DrawPresetKeybed(uint32_t now)
                 blue = 48;
             }
         }
+        else if(filled && slot == preset_current_
+                && (mode == kPresetSaveSel || mode == kPresetCopySrc
+                    || mode == kPresetCopyDest))
+        {
+            red = 0;
+            green = 48;
+            blue = 48;
+        }
         else if(mode == kPresetCopyDest && slot == preset_copy_src_)
             green = 48;
         else if(slot == preset_sel_slot_)
@@ -2552,9 +2565,15 @@ void RenderLeds()
             {
                 for(int slot = 0; slot < 15; ++slot)
                     if(preset_bank.IsValid(slot))
-                        chompi_leds::SetSmtLed(
-                            chompi_leds::kWhiteKeyLeds[slot],
-                            48, 48, 48);
+                    {
+                        if(slot == preset_current_)
+                            chompi_leds::SetSmtLed(
+                                chompi_leds::kWhiteKeyLeds[slot], 0, 48, 48);
+                        else
+                            chompi_leds::SetSmtLed(
+                                chompi_leds::kWhiteKeyLeds[slot],
+                                48, 48, 48);
+                    }
             }
         }
     }
@@ -2590,6 +2609,10 @@ void RenderLeds()
         chompi_leds::SetSmtLed(8, 0, copy_led, 0);
         chompi_leds::SetSmtLed(9, 0, 0, save_led);
     }
+
+    for(int key = 0; key < bowls::kKeyCount; ++key)
+        if(static_cast<int32_t>(strike_retrigger_flash_until_[key] - now) > 0)
+            chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key], 48, 48, 48);
 
     // Panel LEDs (PTH chain).
     const bool shift = hw.ShiftHeld();
