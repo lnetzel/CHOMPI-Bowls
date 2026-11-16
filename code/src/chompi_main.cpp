@@ -63,19 +63,14 @@
 //   Transport wheel     : rimming - detents pump the PER-(MODE,KEY)
 //                         rub level of the wheel set: SPLIT = the held
 //                         rim-zone keys (max two) or the last-pressed
-//                         rim key (a bowl stays SILENT until the wheel
-//                         turns while it is selected); STRIKES = the
-//                         currently sounding held strikes; RIMMING =
-//                         the currently sounding held or latched pads
-//                         (slow = soft, fast = loud; only the two
-//                         wheel LEDs follow the level - no keyboard
-//                         bar); Split rim keys glow yellow while held
-//                         and strike keys blue. The wheel never creates
-//                         a strike or revives a stolen note. The
-//                         DIRECTION picks the sound and wheel LED color:
-//                         clockwise = purple friction, counter-clockwise
-//                         = pink clean sustained bowl tone; the last
-//                         direction sticks per (mode, key) while still.
+//                         rim key; STRIKES = currently sounding held
+//                         strikes; RIMMING = held or latched pads.
+//                         During a latched Strike arpeggio (not the
+//                         duration-loop pattern), clockwise increases
+//                         its 0.1-10 Hz rate and counter-clockwise
+//                         decreases it. Otherwise the wheel rims as
+//                         before; it never creates a strike or revives
+//                         a stolen note.
 //   Volume encoder      : press cycles page 1 master volume / page 2
 //                         stereo delay (yellow bar/LED; turn = combined
 //                         mix/feedback, SHIFT+turn = 40..500 ms time) /
@@ -228,6 +223,8 @@ int ModeIdx(PlayMode mode) { return static_cast<int>(mode); }
 // provenance and the Rimming LOOP latch (play_modes.h). Boot default
 // is Split; a valid preset restores the saved mode at boot.
 bowls::PlayModes play_modes;
+int strike_arpeggio_rate_tenths_hz
+    = bowls::kStrikeArpeggioDefaultRateTenthsHz;
 
 enum class Overlay : int
 {
@@ -805,7 +802,8 @@ void StrikeKey(PlayMode mode, int key, int velocity = 127,
 }
 
 /** Retrigger latched Strikes using the selected cadence. The duration
- *  mode follows each bowl's decay; arpeggio modes use a fixed interval. */
+ *  mode follows each bowl's decay; arpeggio modes use the wheel-selected
+ *  interval. */
 void RetriggerLatchedStrikes()
 {
     static bool arpeggio_active = false;
@@ -853,7 +851,9 @@ void RetriggerLatchedStrikes()
         StrikeKey(PlayMode::kStrikes, key, velocity > 0 ? velocity : 127,
                   false, play_modes.StrikeLatchUsesMidiVelocity(key));
         sequence_position = (sequence_position + 1) % count;
-        next_strike_at = now + 333u;
+        next_strike_at = now
+                         + bowls::StrikeArpeggioIntervalMs(
+                             strike_arpeggio_rate_tenths_hz);
         return;
     }
 
@@ -1738,36 +1738,66 @@ void ApplyControls()
             BumpTicks(params.volume_ticks, volume_inc, Overlay::Volume, now);
     }
 
-    // Transport wheel: rimming. Detents pump the PER-(MODE,KEY) rub
-    // levels of the current mode's wheel set only (the turn rate sets
-    // the level), so a note that has not been rimmed stays silent even
-    // while other notes' levels are still decaying.
+    // Transport wheel: in a latched Strike arpeggio, adjust its rate
+    // only while there are latched notes. The duration-loop latch stays
+    // tail-driven; all other wheel turns retain their rimming behavior.
     const int wheel_inc = hw.EncoderIncrement(4);
     if(wheel_inc != 0)
     {
-        const float pump = 0.06f * static_cast<float>(wheel_inc < 0
-                                                          ? -wheel_inc
-                                                          : wheel_inc);
-        // The wheel DIRECTION selects the rim character of the wheel
-        // set (the magnitude keeps pumping the level as before):
-        // clockwise = friction texture, counter-clockwise = clean
-        // sustained tone. QuadratureEncoder documents +1 detent =
-        // clockwise; if the physical wheel reads backwards, flip this
-        // one comparison. A stopped wheel changes nothing - zero
-        // movement is not a direction.
-        const bool     clean    = wheel_inc < 0;
-        const PlayMode mode     = play_modes.Mode();
-        const int      cur_mode = ModeIdx(mode);
-        if(mode == PlayMode::kSplit)
-        {
-            // The v1 wheel rules: at most two held rim-zone keys,
-            // otherwise the last-selected rim key, including
-            // reacquisition on wheel movement after a strike-steal.
-            if(play_modes.RimHeldCount() > 0)
-            {
-                for(int k = 0; k < play_modes.RimHeldCount(); ++k)
+        const PlayMode mode = play_modes.Mode();
+        const bowls::StrikeArpeggioMode arpeggio_mode
+            = play_modes.GetStrikeArpeggioMode();
+        bool has_latched_strike = false;
+        if(mode == PlayMode::kStrikes && play_modes.StrikeLatchEnabled()
+           && arpeggio_mode != bowls::StrikeArpeggioMode::kDurationLoop)
+            for(int key = 0; key < bowls::kKeyCount; ++key)
+                if(play_modes.StrikeLatched(key))
                 {
-                    const int key = play_modes.RimHeld(k);
+                    has_latched_strike = true;
+                    break;
+                }
+
+        if(has_latched_strike)
+        {
+            strike_arpeggio_rate_tenths_hz
+                = bowls::AdjustStrikeArpeggioRateTenthsHz(
+                    strike_arpeggio_rate_tenths_hz, wheel_inc);
+        }
+        else
+        {
+            const float pump = 0.06f * static_cast<float>(wheel_inc < 0
+                                                              ? -wheel_inc
+                                                              : wheel_inc);
+            // The wheel DIRECTION selects the rim character of the wheel
+            // set (the magnitude keeps pumping the level as before):
+            // clockwise = friction texture, counter-clockwise = clean
+            // sustained tone. QuadratureEncoder documents +1 detent =
+            // clockwise; if the physical wheel reads backwards, flip this
+            // one comparison. A stopped wheel changes nothing - zero
+            // movement is not a direction.
+            const bool clean    = wheel_inc < 0;
+            const int  cur_mode = ModeIdx(mode);
+            if(mode == PlayMode::kSplit)
+            {
+                // The v1 wheel rules: at most two held rim-zone keys,
+                // otherwise the last-selected rim key, including
+                // reacquisition on wheel movement after a strike-steal.
+                if(play_modes.RimHeldCount() > 0)
+                {
+                    for(int k = 0; k < play_modes.RimHeldCount(); ++k)
+                    {
+                        const int key = play_modes.RimHeld(k);
+                        wheel_level_[cur_mode][key] += pump;
+                        if(wheel_level_[cur_mode][key] > 1.0f)
+                            wheel_level_[cur_mode][key] = 1.0f;
+                        wheel_clean_[cur_mode][key] = clean;
+                        wheel_seq_[cur_mode][key]   = ++rub_seq_;
+                        EnsureRimVoice(key);
+                    }
+                }
+                else if(play_modes.RimLatch() >= 0)
+                {
+                    const int key = play_modes.RimLatch();
                     wheel_level_[cur_mode][key] += pump;
                     if(wheel_level_[cur_mode][key] > 1.0f)
                         wheel_level_[cur_mode][key] = 1.0f;
@@ -1776,34 +1806,24 @@ void ApplyControls()
                     EnsureRimVoice(key);
                 }
             }
-            else if(play_modes.RimLatch() >= 0)
+            else
             {
-                const int key = play_modes.RimLatch();
-                wheel_level_[cur_mode][key] += pump;
-                if(wheel_level_[cur_mode][key] > 1.0f)
-                    wheel_level_[cur_mode][key] = 1.0f;
-                wheel_clean_[cur_mode][key] = clean;
-                wheel_seq_[cur_mode][key]   = ++rub_seq_;
-                EnsureRimVoice(key);
-            }
-        }
-        else
-        {
-            // Full-key modes: the wheel addresses currently sounding
-            // held notes (Rimming: held or latched pads). It never
-            // creates a strike and never revives a stolen note.
-            for(int key = 0; key < bowls::kKeyCount; ++key)
-            {
-                if(!play_modes.WheelTargets(key))
-                    continue;
-                const int v = FindVoice(mode, key);
-                if(v < 0 || !voices[v].IsActive())
-                    continue;
-                wheel_level_[cur_mode][key] += pump;
-                if(wheel_level_[cur_mode][key] > 1.0f)
-                    wheel_level_[cur_mode][key] = 1.0f;
-                wheel_clean_[cur_mode][key] = clean;
-                wheel_seq_[cur_mode][key]   = ++rub_seq_;
+                // Full-key modes: the wheel addresses currently sounding
+                // held notes (Rimming: held or latched pads). It never
+                // creates a strike and never revives a stolen note.
+                for(int key = 0; key < bowls::kKeyCount; ++key)
+                {
+                    if(!play_modes.WheelTargets(key))
+                        continue;
+                    const int v = FindVoice(mode, key);
+                    if(v < 0 || !voices[v].IsActive())
+                        continue;
+                    wheel_level_[cur_mode][key] += pump;
+                    if(wheel_level_[cur_mode][key] > 1.0f)
+                        wheel_level_[cur_mode][key] = 1.0f;
+                    wheel_clean_[cur_mode][key] = clean;
+                    wheel_seq_[cur_mode][key]   = ++rub_seq_;
+                }
             }
         }
         // No keyboard overlay here: the two wheel LEDs follow the rub

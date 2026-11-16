@@ -127,6 +127,13 @@ void TestMappings()
               && bowls::AdjustPitchHz(10000.0f, -1, true) == 9999.0f
               && bowls::AdjustPitchHz(1000.0f, 2, true) == 1002.0f,
           "M1e fine tuning is exactly 1 Hz per detent", "");
+    Check(bowls::AdjustStrikeArpeggioRateTenthsHz(30, 1) == 31
+              && bowls::AdjustStrikeArpeggioRateTenthsHz(30, -1) == 29
+              && bowls::AdjustStrikeArpeggioRateTenthsHz(100, 1) == 100
+              && bowls::AdjustStrikeArpeggioRateTenthsHz(1, -1) == 1
+              && bowls::StrikeArpeggioIntervalMs(100) == 100
+              && bowls::StrikeArpeggioIntervalMs(1) == 10000,
+          "M1f Strike arpeggio rate spans 0.1-10 Hz and clamps", "");
 
     bool led_ordered = bowls::PitchLedIndex(40.0f, 15) == 0
                        && bowls::PitchLedIndex(10000.0f, 15) == 14;
@@ -140,7 +147,7 @@ void TestMappings()
             led_ordered = false;
         previous_led = led;
     }
-    Check(led_ordered, "M1f logarithmic LED position spans full Hz range",
+    Check(led_ordered, "M1g logarithmic LED position spans full Hz range",
           "");
 
     Check(bowls::kModeShortcutKey[0] == 8

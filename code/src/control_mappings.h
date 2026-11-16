@@ -1,10 +1,35 @@
 #pragma once
 
 #include <cmath>
+#include <cstdint>
 #include "bowl_scale.h"
 
 namespace bowls
 {
+constexpr int kStrikeArpeggioMinRateTenthsHz = 1;
+constexpr int kStrikeArpeggioMaxRateTenthsHz = 200;
+constexpr int kStrikeArpeggioDefaultRateTenthsHz = 30;
+
+inline int AdjustStrikeArpeggioRateTenthsHz(int rate_tenths_hz, int detents)
+{
+    int64_t adjusted
+        = static_cast<int64_t>(rate_tenths_hz) + static_cast<int64_t>(detents);
+    if(adjusted < kStrikeArpeggioMinRateTenthsHz)
+        adjusted = kStrikeArpeggioMinRateTenthsHz;
+    if(adjusted > kStrikeArpeggioMaxRateTenthsHz)
+        adjusted = kStrikeArpeggioMaxRateTenthsHz;
+    return static_cast<int>(adjusted);
+}
+
+inline uint32_t StrikeArpeggioIntervalMs(int rate_tenths_hz)
+{
+    if(rate_tenths_hz < kStrikeArpeggioMinRateTenthsHz)
+        rate_tenths_hz = kStrikeArpeggioMinRateTenthsHz;
+    if(rate_tenths_hz > kStrikeArpeggioMaxRateTenthsHz)
+        rate_tenths_hz = kStrikeArpeggioMaxRateTenthsHz;
+    return 10000u / static_cast<uint32_t>(rate_tenths_hz);
+}
+
 inline float MidiVelocityToGain(int velocity)
 {
     if(velocity < 0)
