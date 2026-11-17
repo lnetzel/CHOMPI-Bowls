@@ -15,6 +15,13 @@ notes on both enabled transports; incoming messages are never echoed or
 soft-thru'd, and no CCs are transmitted.
 Other channels and unsupported MIDI messages are ignored.
 
+## Web preset editor
+
+USB MIDI SysEx protocol v1 supports reading and writing the 15 SD-card
+preset slots. It validates schema-v11 data and saves through the staged
+storage path; it does not expose or alter the embedded factory preset.
+See the [web editor guide](web/README.md) for browser setup and deployment.
+
 MIDI Timing Clock is accepted regardless of channel (24 pulses per
 quarter note). After tempo is established, the delay-time control selects
 a pulse divider (its existing 40-1000 ms curve is referenced to 120 BPM),

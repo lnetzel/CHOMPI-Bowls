@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#201a17">
+    <title>CHOMPI-BOWLS Preset Editor</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">CHOMPI-BOWLS</p>
+          <h1>Preset Editor</h1>
+          <p class="intro">Edit a preset, audition tuning choices, and save it to an SD-card slot.</p>
+        </div>
+        <span id="draft-state" class="state-chip">No preset loaded</span>
+      </header>
+
+      <section class="panel" aria-labelledby="device-heading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">USB MIDI</p>
+            <h2 id="device-heading">Instrument connection</h2>
+          </div>
+          <span id="connection-state" class="state-chip">Not connected</span>
+        </div>
+        <div class="button-row">
+          <button id="connect-midi" type="button" class="primary">Connect to MIDI</button>
+          <button id="disconnect-midi" type="button" disabled>Disconnect</button>
+        </div>
+        <div class="port-grid">
+          <label>Instrument input
+            <select id="midi-input" disabled>
+              <option value="">Connect to MIDI first</option>
+            </select>
+          </label>
+          <label>Instrument output
+            <select id="midi-output" disabled>
+              <option value="">Connect to MIDI first</option>
+            </select>
+          </label>
+        </div>
+        <div class="button-row">
+          <button id="use-midi" type="button" disabled>Use selected device</button>
+          <button id="refresh-slots" type="button" disabled>Refresh slots</button>
+        </div>
+        <p id="device-message" class="message" aria-live="polite">Connect and grant MIDI/SysEx access to manage device presets.</p>
+        <div class="slot-row">
+          <label for="preset-slot">SD-card slot</label>
+          <select id="preset-slot" disabled>
+            <option value="0">Slot 01 — Unknown</option>
+          </select>
+          <button id="read-slot" type="button" disabled>Read slot</button>
+          <button id="save-slot" type="button" disabled>Save to slot</button>
+        </div>
+        <progress id="transfer-progress" max="1" value="0" hidden></progress>
+      </section>
+
+      <section class="panel" aria-labelledby="draft-heading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">LOCAL DRAFT</p>
+            <h2 id="draft-heading">Preset data</h2>
+          </div>
+          <div class="button-row">
+            <button id="new-preset" type="button">New from factory defaults</button>
+            <label class="file-button">Import JSON
+              <input id="import-preset" type="file" accept="application/json,.json">
+            </label>
+            <button id="export-preset" type="button" disabled>Export JSON</button>
+          </div>
+        </div>
+
+        <fieldset id="editor-controls" disabled>
+          <legend class="visually-hidden">Preset editor controls</legend>
+          <div class="editor-grid">
+            <section class="subpanel" aria-labelledby="tuning-heading">
+              <h3 id="tuning-heading">Optional tuning</h3>
+              <p>Choosing a tuning changes only this draft. Applying it fills the pitch tables for all three modes; each pitch can then be edited.</p>
+              <label for="tuning-select">Tuning set</label>
+              <select id="tuning-select">
+                <option value="">Choose a tuning (optional)</option>
+              </select>
+              <p id="tuning-description" class="muted">No tuning selected.</p>
+              <div id="tuning-preview" class="pitch-preview" aria-live="polite"></div>
+              <button id="apply-tuning" type="button" disabled>Apply to all modes</button>
+            </section>
+
+            <section class="subpanel" aria-labelledby="global-heading">
+              <h3 id="global-heading">Preset-wide controls</h3>
+              <label for="startup-mode">Startup mode</label>
+              <select id="startup-mode" data-global="mode">
+                <option value="0">Strikes</option>
+                <option value="1">Rimming</option>
+                <option value="2">Split</option>
+              </select>
+              <div class="global-controls">
+                <label>Master volume <input data-global="volume" type="range" min="0" max="32" step="1"><output></output></label>
+                <label>Strike <input data-global="strike" type="range" min="0" max="32" step="1"><output></output></label>
+                <label>Shimmer <input data-global="shimmer" type="range" min="0" max="32" step="1"><output></output></label>
+                <label>Reverb mix <input data-global="reverb_mix" type="range" min="0" max="32" step="1"><output></output></label>
+                <label>Delay mix <input data-global="delay_mix" type="range" min="0" max="32" step="1"><output></output></label>
+                <label>Delay time <input data-global="delay_time" type="range" min="0" max="32" step="1"><output></output></label>
+              </div>
+            </section>
+          </div>
+
+          <section class="subpanel key-editor" aria-labelledby="key-heading">
+            <div class="section-heading">
+              <div>
+                <h3 id="key-heading">Per-key controls</h3>
+                <p class="muted">Edit one key in one mode. Pan runs left to right.</p>
+              </div>
+              <div class="key-navigation">
+                <label for="edit-mode">Editing mode</label>
+                <select id="edit-mode">
+                  <option value="strikes">Strikes</option>
+                  <option value="rimming">Rimming</option>
+                  <option value="split">Split</option>
+                </select>
+                <label for="edit-key">Key</label>
+                <select id="edit-key"></select>
+              </div>
+            </div>
+            <div id="key-controls" class="key-control-grid"></div>
+          </section>
+        </fieldset>
+      </section>
+
+      <footer>
+        <p>Device data changes only when you explicitly save a draft to a slot. The embedded factory preset is not modified.</p>
+        <a href="./README.md">Local use and deployment guide</a>
+      </footer>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

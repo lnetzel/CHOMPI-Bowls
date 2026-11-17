@@ -12,6 +12,7 @@
 #include "voice_allocator.h"
 #include "BowlsPreset.h"
 #include "PresetStorage.h"
+#include "PresetTransfer.h"
 #include "SdRecorder.h"
 #include "SdPlayer.h"
 #include "StereoBbdDelay.h"
@@ -54,6 +55,7 @@ constexpr size_t kSdRingFrames = 1u << 18;
 chompi::ChompiHardware hw;
 chompi::BowlsPresetBank preset_bank;
 chompi::PresetStorage  preset_storage;
+chompi::PresetTransfer preset_transfer;
 chompi::sd_audio::StereoRing<kSdRingFrames> DSY_SDRAM_BSS record_ring;
 chompi::sd_audio::StereoRing<kSdRingFrames> DSY_SDRAM_BSS playback_ring;
 chompi::SdRecorder<kSdRingFrames> sd_recorder(record_ring);
@@ -3018,6 +3020,7 @@ int main()
          * recovery, USB listening and the parser drain into the fixed
          * per-source event queues (the audio ISR just pops queues). */
         midi.Service();
+        preset_transfer.Service(midi, preset_storage, preset_bank);
 
         /* CC 120 deferred reverb clear: the panic fade has muted the
          * bowl bus and the ISR skips reverb.Process while this runs,
@@ -3086,7 +3089,10 @@ int main()
 
         /* One diagnostic and SHIFT-LED flash per preset write
          * failure/recovery/completion. */
-        const auto storage_event = preset_storage.ConsumeStatusEvent();
+        int storage_event_slot = -1;
+        const auto storage_event
+            = preset_storage.ConsumeStatusEvent(&storage_event_slot);
+        preset_transfer.OnStorageEvent(storage_event, storage_event_slot, midi);
         if(storage_event == chompi::PresetStorage::kStatusFailed)
         {
             BOWLS_LOG("SD: preset write failed - slot kept in RAM, retrying");

@@ -47,6 +47,7 @@ class PresetStorage
         rescan_slot_     = kNumSlots;
         failed_          = false;
         event_           = kStatusNone;
+        event_slot_      = -1;
         json_len_        = 0;
         valid_snapshot_  = false;
         factory_preset_.SetDefaults();
@@ -281,10 +282,13 @@ class PresetStorage
 
     void ReleaseFilesystem() { fs_leased_ = false; }
 
-    StatusEvent ConsumeStatusEvent()
+    StatusEvent ConsumeStatusEvent(int *slot = nullptr)
     {
         const StatusEvent result = event_;
+        if(slot != nullptr)
+            *slot = event_slot_;
         event_ = kStatusNone;
+        event_slot_ = -1;
         return result;
     }
 
@@ -378,6 +382,7 @@ class PresetStorage
         }
         else
             event_ = kStatusSaved;
+        event_slot_ = slot_;
     }
 
     void FailCycle(uint32_t now)
@@ -389,6 +394,7 @@ class PresetStorage
         {
             failed_ = true;
             event_ = kStatusFailed;
+            event_slot_ = slot_;
         }
     }
 
@@ -439,6 +445,7 @@ class PresetStorage
     volatile bool incompatible_[kNumSlots];
     bool          failed_;
     StatusEvent   event_;
+    int           event_slot_;
     size_t        json_len_;
     alignas(32) char json_[kJsonSize];
     alignas(32) char read_buf_[kJsonSize];

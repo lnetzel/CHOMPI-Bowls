@@ -23,6 +23,7 @@
 
 #include "MidiCcMap.h"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace bowls
@@ -117,6 +118,55 @@ class MidiEventQueue
     volatile int      tail_ = 0;
     volatile bool     cleanup_requested_ = false;
     volatile uint32_t drops_ = 0;
+};
+
+constexpr size_t kMidiSysExMaxBytes = 128;
+
+struct MidiSysExMessage
+{
+    uint8_t data[kMidiSysExMaxBytes];
+    uint8_t length;
+};
+
+template <int kCapacity>
+class MidiSysExQueue
+{
+  public:
+    void Init()
+    {
+        head_ = 0;
+        tail_ = 0;
+        count_ = 0;
+    }
+
+    bool Push(const uint8_t *data, size_t length)
+    {
+        if(data == nullptr || length > kMidiSysExMaxBytes || count_ == kCapacity)
+            return false;
+        MidiSysExMessage &message = messages_[head_];
+        for(size_t i = 0; i < length; ++i)
+            message.data[i] = data[i];
+        message.length = static_cast<uint8_t>(length);
+        head_ = (head_ + 1) % kCapacity;
+        ++count_;
+        return true;
+    }
+
+    bool Pop(MidiSysExMessage &message)
+    {
+        if(count_ == 0)
+            return false;
+        message = messages_[tail_];
+        tail_ = (tail_ + 1) % kCapacity;
+        --count_;
+        return true;
+    }
+
+  private:
+    MidiSysExMessage messages_[kCapacity]{};
+    int head_ = 0;
+    int tail_ = 0;
+    int count_ = 0;
 };
 
 /** The two MIDI transports as queue/source indices. */
@@ -422,6 +472,7 @@ class BowlsMidi
         usb_enable_ = usb_enable;
         router_.Init();
         out_router_.Init(usb_enable_);
+        sysex_queue_.Init();
         for(int src = 0; src < kMidiTransportCount; ++src)
             clock_pulses_[src] = 0;
 
@@ -467,6 +518,14 @@ class BowlsMidi
 
     MidiRouter&       Router() { return router_; }
     MidiOutRouter&    OutRouter() { return out_router_; }
+    bool PopSysEx(MidiSysExMessage &message) { return sysex_queue_.Pop(message); }
+    bool SendUsbSysEx(uint8_t *message, size_t length)
+    {
+        if(!usb_enable_ || message == nullptr || length < 2
+           || message[0] != 0xf0 || message[length - 1] != 0xf7)
+            return false;
+        return usb_midi_.GetMutableTransport().Tx(message, length);
+    }
     uint32_t ClockPulses(int src) const { return clock_pulses_[src]; }
     /** Diagnostics: dropped-event counter per source (overflows and
      *  backlog discards), main-loop reads only. */
@@ -626,6 +685,13 @@ class BowlsMidi
         while(handler.HasEvents())
         {
             const daisy::MidiEvent ev = handler.PopEvent();
+            if(ev.type == daisy::SystemCommon
+               && ev.sc_type == daisy::SystemExclusive)
+            {
+                if(src == kUsb)
+                    sysex_queue_.Push(ev.sysex_data, ev.sysex_message_len);
+                continue;
+            }
             if(ev.type == daisy::SystemRealTime)
             {
                 if(ev.srt_type == daisy::TimingClock)
@@ -664,7 +730,7 @@ class BowlsMidi
                     break;
                 default:
                     break; // Program Change, pitch bend, pressure,
-                           // SysEx and transport: ignored
+                           // transport: ignored
             }
         }
     }
@@ -674,6 +740,7 @@ class BowlsMidi
 
     MidiRouter             router_;
     MidiOutRouter          out_router_;
+    MidiSysExQueue<4>      sysex_queue_;
     daisy::MidiUartHandler uart_midi_;
     daisy::MidiUsbHandler  usb_midi_;
     daisy::UartHandler     uart_;

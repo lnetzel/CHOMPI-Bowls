@@ -60,6 +60,9 @@ rimming. The panel and preset JSON are the tuning controls.
 Example factory tunings are in [`code/state examples/`](code/state%20examples/).
 The resonance profiles are Temple, Deep, Bright, Wide, and Thin.
 
+The static [web preset editor](web/README.md) can edit saved SD-card slots
+over USB MIDI and runs locally or on GitHub Pages.
+
 ## Recording, playback, and effects
 
 - Hold PLAY+LOOP for 2 s to arm recording; hold them for 1 s to stop.
@@ -103,6 +106,15 @@ make -C code/src -j4
 ```
 
 The firmware binary is `code/src/build/CHOMPI_BOWLS_v1.0.bin`.
+
+## Running the web editor
+
+Start by running
+```
+python -m http.server 8000 --directory web
+```
+
+
 
 The CHOMPI name and marks are separate from the software license; see
 [`TRADEMARKS.md`](TRADEMARKS.md).
