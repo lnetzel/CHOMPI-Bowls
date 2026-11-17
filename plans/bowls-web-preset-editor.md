@@ -33,7 +33,7 @@ source in `web/` and publish its contents at the Pages artifact root.
   clear save/read feedback. Warn before overwriting a populated slot.
 - Store tuning definitions as explicit data, not UI logic. Seed the Tibetan
   bowl set from `code/state examples/default.json`; include Sléndro, Pélog,
-  harmonic series, 12-TET, Arabic 24-TET, Thai 7-TET, and Indian 22-Shruti.
+  harmonic series, 12-TET, and Indian 22-Shruti.
   Anchor at 99 Hz where appropriate and keep generated pitches within the
   firmware's 40-10,000 Hz range. Tuning selection is optional and does not
   alter the embedded factory preset.
@@ -43,10 +43,10 @@ source in `web/` and publish its contents at the Pages artifact root.
   workflow. Use relative asset paths that work under `/CHOMPI-Bowls/`.
   Include a plain-language setup and deployment guide.
 
-The page can detect an authorized device automatically after the user has
-granted browser MIDI/SysEx permission. Browsers require a user gesture for
-initial access, so retain explicit Connect and Disconnect controls and show
-permission, connection, transfer, and error states.
+After the user grants browser MIDI/SysEx permission, the page polls for
+CHOMPI-BOWLS and connects automatically. Browsers require a user gesture
+for initial access; show permission, connection, transfer, and error states.
+Load the slot list on connection and refresh it while idle and after writes.
 
 ## Affected files and components
 
@@ -93,13 +93,14 @@ permission, connection, transfer, and error states.
      preset-slot operations, dirty-state indication, and import/export
      backup as a recovery path.
 5. **Add tuning selection.**
-   - Implement the eight requested tuning sets as data and show the
+   - Implement the six requested tuning sets as data and show the
      resulting pitches before applying them.
    - Applying a selected tuning fills all three mode pitch tables.
    - Keep manual per-key pitch editing available after a tuning is applied.
 6. **Connect the editor to the device.**
-   - Add device discovery, permission/error guidance, Connect/Disconnect,
-     reconnect after authorization, slot listing, progress, and
+   - Add automatic device discovery after the MIDI/SysEx permission action,
+     reconnect after authorization, automatic slot listing and polling,
+     progress, and
      recoverable transfer errors.
    - Gate write operations until the expected CHOMPI-BOWLS firmware
      handshake succeeds.
@@ -119,8 +120,7 @@ permission, connection, transfer, and error states.
 
 - Web MIDI and SysEx require a supported browser, a secure HTTPS origin,
   and user permission. Automatic connection cannot bypass the initial
-  permission prompt; document the supported desktop browsers and provide
-  manual controls.
+  permission prompt; document the supported desktop browsers.
 - Direct SD access requires a custom firmware protocol. Older firmware
   will not support the editor and must fail with a clear compatibility
   message.
@@ -146,7 +146,7 @@ permission, connection, transfer, and error states.
 - Extend firmware preset/MIDI tests and run the relevant existing targets:
   `make -C code/tests midi-test` and
   `make -C code/tests modes-test`.
-- Test all eight tuning sets, pitch bounds, 99 Hz anchoring, applying to
+- Test all six tuning sets, pitch bounds, 99 Hz anchoring, applying to
   all mode tables, and subsequent individual pitch edits.
 - Test browser-side schema round trips and validation without hardware.
 - Manually test device discovery and every read/write path on the supported

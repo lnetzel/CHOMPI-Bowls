@@ -3,22 +3,19 @@ import {
   createFactoryPreset,
   setPresetValue,
   validatePreset,
+  setBankValueForAllModes,
 } from "./preset-model.js";
 import { TUNINGS } from "./tunings.js";
 import { PresetTransferClient } from "./preset-transfer.js";
 
 const byId = (id) => document.getElementById(id);
 const elements = {
-  connect: byId("connect-midi"),
-  disconnect: byId("disconnect-midi"),
-  inputPort: byId("midi-input"),
-  outputPort: byId("midi-output"),
-  useMidi: byId("use-midi"),
-  refreshSlots: byId("refresh-slots"),
+  connectMidi: byId("connect-midi"),
+  disconnectMidi: byId("disconnect-midi"),
   deviceMessage: byId("device-message"),
   connectionState: byId("connection-state"),
-  slot: byId("preset-slot"),
-  readSlot: byId("read-slot"),
+  slotButtons: byId("slot-buttons"),
+  slotStatus: byId("slot-status"),
   saveSlot: byId("save-slot"),
   progress: byId("transfer-progress"),
   newPreset: byId("new-preset"),
@@ -31,6 +28,7 @@ const elements = {
   tuningPreview: byId("tuning-preview"),
   applyTuning: byId("apply-tuning"),
   startupMode: byId("startup-mode"),
+  globalBowlControls: byId("global-bowl-controls"),
   editMode: byId("edit-mode"),
   editKey: byId("edit-key"),
   keyControls: byId("key-controls"),
@@ -39,7 +37,19 @@ const elements = {
 const state = {
   client: null,
   slots: { valid: 0, incompatible: 0, dirty: 0, busy: false },
+  slotsLoaded: false,
   connected: false,
+  connecting: false,
+  accessEnabled: false,
+  manualDisconnect: false,
+  midiPermission: null,
+  deviceKey: null,
+  lastAttemptKey: null,
+  lastAttemptTime: 0,
+  lastSlotRefresh: 0,
+  refreshingSlots: false,
+  transferBusy: false,
+  pollTimer: null,
   preset: null,
   selectedSlot: 0,
   mode: "strikes",
@@ -47,7 +57,6 @@ const state = {
   dirty: false,
 };
 
-const MODE_NAMES = { strikes: "Strikes", rimming: "Rimming", split: "Split" };
 const FIELD_CONFIG = [
   { field: "pan", label: "Pan", kind: "range", min: 0, max: 32, step: 1 },
   { field: "bvol", label: "Bowl volume", kind: "range", min: 0, max: 32, step: 1 },
@@ -62,9 +71,9 @@ function setMessage(message, type = "info") {
   elements.deviceMessage.dataset.state = type;
 }
 
-function setConnectionLabel(message, connected = false) {
+function setConnectionLabel(message, status = "") {
   elements.connectionState.textContent = message;
-  elements.connectionState.dataset.state = connected ? "connected" : "";
+  elements.connectionState.dataset.state = status;
 }
 
 function setDraftDirty(dirty) {
@@ -73,115 +82,291 @@ function setDraftDirty(dirty) {
     ? "No preset loaded"
     : dirty ? "Unsaved changes" : "Draft ready";
   elements.draftState.dataset.state = dirty ? "dirty" : "";
-  elements.exportPreset.disabled = !state.preset;
-  elements.saveSlot.disabled = !state.connected || !state.preset;
+  updateEditorAvailability();
 }
 
 function updateEditorAvailability() {
   elements.editor.disabled = !state.preset;
-  elements.readSlot.disabled = !state.connected || state.slots.busy
-    || (state.slots.valid & (1 << state.selectedSlot)) === 0;
-  elements.saveSlot.disabled = !state.connected || !state.preset || state.slots.busy;
+  const slotsUnavailable = !state.connected || !state.slotsLoaded
+    || state.slots.busy || state.refreshingSlots || state.transferBusy;
+  for (const button of elements.slotButtons.querySelectorAll("[data-slot]")) {
+    button.disabled = slotsUnavailable;
+  }
+  elements.saveSlot.disabled = !state.connected || !state.slotsLoaded
+    || !state.preset || state.slots.busy || state.refreshingSlots || state.transferBusy;
   elements.exportPreset.disabled = !state.preset;
 }
 
-function renderPorts(access) {
-  const inputs = [...access.inputs.values()];
-  const outputs = [...access.outputs.values()];
-  fillPortSelect(elements.inputPort, inputs, "No MIDI inputs found");
-  fillPortSelect(elements.outputPort, outputs, "No MIDI outputs found");
-  elements.inputPort.disabled = inputs.length === 0;
-  elements.outputPort.disabled = outputs.length === 0;
-  elements.useMidi.disabled = inputs.length === 0 || outputs.length === 0;
-}
-
-function fillPortSelect(select, ports, emptyText) {
-  const previous = select.value;
-  select.replaceChildren();
-  if (ports.length === 0) {
-    select.add(new Option(emptyText, ""));
-    return;
+async function connectToMidi({ automatic = false } = {}) {
+  if (!automatic) {
+    state.manualDisconnect = false;
+    state.lastAttemptKey = null;
+    state.lastAttemptTime = 0;
   }
-  for (const port of ports) {
-    select.add(new Option(port.name || port.manufacturer || port.id, port.id));
-  }
-  if (ports.some((port) => port.id === previous)) select.value = previous;
-}
-
-async function connectToMidi() {
+  const alreadyEnabled = state.accessEnabled;
   try {
-    const access = await state.client.openAccess();
-    renderPorts(access);
-    setMessage("MIDI access granted. Select the instrument input and output.");
+    if (!alreadyEnabled) {
+      elements.connectMidi.disabled = true;
+      await state.client.openAccess();
+      state.accessEnabled = true;
+      elements.disconnectMidi.disabled = false;
+      setConnectionLabel("Waiting for CHOMPI-BOWLS");
+      setMessage("MIDI/SysEx access granted. Searching for CHOMPI-BOWLS. Check USB and close other MIDI apps if it is not found.");
+    } else if (!state.connected) {
+      setConnectionLabel("Waiting for CHOMPI-BOWLS");
+      setMessage("Searching for CHOMPI-BOWLS. Check USB and close other MIDI apps if it is not found.");
+    }
+    elements.connectMidi.disabled = false;
+    startPolling();
+    await scanForChompi();
   } catch (error) {
-    setMessage(error.message, "error");
-  }
-}
-
-async function useSelectedDevice() {
-  try {
-    state.client.selectPorts(elements.inputPort.value, elements.outputPort.value);
-    setMessage("Checking firmware compatibility…");
-    await state.client.handshake();
-    state.connected = true;
-    setConnectionLabel("Connected · protocol v1", true);
-    elements.disconnect.disabled = false;
-    elements.refreshSlots.disabled = false;
-    elements.slot.disabled = false;
-    await refreshSlots();
-    setMessage("Connected. Presets are read or written only when you choose a slot action.");
-  } catch (error) {
-    state.connected = false;
-    setConnectionLabel("Not connected");
-    updateEditorAvailability();
-    setMessage(error.message, "error");
+    if (!state.accessEnabled) {
+      setConnectionLabel("MIDI access required");
+      setMessage(automatic
+        ? `Could not enable MIDI/SysEx automatically: ${error.message} Select Connect to retry.`
+        : error.message, "error");
+    } else {
+      setMessage(error.message, "error");
+    }
+  } finally {
+    elements.connectMidi.disabled = false;
   }
 }
 
 function disconnectFromMidi() {
-  state.client?.disconnect();
-  state.client = new PresetTransferClient((message) => setMessage(message));
+  if (state.pollTimer !== null) {
+    window.clearInterval(state.pollTimer);
+    state.pollTimer = null;
+  }
+  state.client.disconnect();
+  state.accessEnabled = false;
+  state.manualDisconnect = true;
   state.connected = false;
+  state.connecting = false;
+  state.deviceKey = null;
+  state.lastAttemptKey = null;
+  state.slotsLoaded = false;
   state.slots = { valid: 0, incompatible: 0, dirty: 0, busy: false };
-  elements.disconnect.disabled = true;
-  elements.refreshSlots.disabled = true;
-  elements.slot.disabled = true;
-  elements.inputPort.disabled = true;
-  elements.outputPort.disabled = true;
-  elements.useMidi.disabled = true;
-  setConnectionLabel("Not connected");
-  renderSlotOptions();
-  updateEditorAvailability();
-  setMessage("Disconnected.");
+  elements.connectMidi.disabled = false;
+  elements.disconnectMidi.disabled = true;
+  setConnectionLabel("Disconnected");
+  renderSlotKeybed();
+  setMessage("Disconnected. Connect when you are ready to use CHOMPI-BOWLS.");
 }
 
-async function refreshSlots() {
-  if (!state.connected) return;
+async function checkMidiPermission() {
+  if (!navigator.permissions?.query) {
+    await connectToMidi({ automatic: true });
+    return;
+  }
+  let permission;
+  try {
+    permission = await navigator.permissions.query({ name: "midi", sysex: true });
+  } catch (error) {
+    setMessage(`Could not check MIDI/SysEx permission: ${error.message} Trying to connect automatically.`, "error");
+    await connectToMidi({ automatic: true });
+    return;
+  }
+
+  state.midiPermission = permission;
+  permission.onchange = () => {
+    if (permission.state === "granted" && !state.accessEnabled && !state.manualDisconnect) {
+      void connectToMidi({ automatic: true });
+    } else if (permission.state === "denied") {
+      if (state.accessEnabled) {
+        disconnectFromMidi();
+        state.manualDisconnect = false;
+      }
+      setConnectionLabel("MIDI/SysEx access blocked", "error");
+      setMessage("Allow MIDI/SysEx access in browser settings, then select Connect.", "error");
+    }
+  };
+
+  if (permission.state === "denied") {
+    setConnectionLabel("MIDI/SysEx access blocked", "error");
+    setMessage("Allow MIDI/SysEx access in browser settings, then select Connect.", "error");
+    return;
+  }
+  await connectToMidi({ automatic: true });
+}
+
+function startPolling() {
+  if (state.pollTimer !== null) return;
+  state.pollTimer = window.setInterval(() => {
+    void scanForChompi();
+    if (state.connected && !state.transferBusy
+        && Date.now() - state.lastSlotRefresh >= 10000) {
+      void refreshSlots({ quiet: true });
+    }
+  }, 2000);
+}
+
+async function scanForChompi() {
+  if (!state.accessEnabled || state.connecting) return;
+  const ports = state.client.findChompiPorts();
+  if (!ports) {
+    if (state.connected) {
+      state.client.clearPorts();
+      state.connected = false;
+      state.deviceKey = null;
+      state.slotsLoaded = false;
+      state.slots = { valid: 0, incompatible: 0, dirty: 0, busy: false };
+      renderSlotKeybed();
+      setMessage("CHOMPI-BOWLS disconnected. Waiting for the device to return.");
+    }
+    setConnectionLabel("Waiting for CHOMPI-BOWLS");
+    return;
+  }
+
+  const deviceKey = `${ports.input.id}:${ports.output.id}`;
+  if (state.connected && state.deviceKey === deviceKey) return;
+  if (state.lastAttemptKey === deviceKey
+      && Date.now() - state.lastAttemptTime < 5000) return;
+
+  state.connecting = true;
+  state.lastAttemptKey = deviceKey;
+  state.lastAttemptTime = Date.now();
+  elements.disconnectMidi.disabled = true;
+  try {
+    state.client.selectPorts(ports.input.id, ports.output.id);
+    setConnectionLabel("CHOMPI-BOWLS found");
+    setMessage("Checking firmware compatibility…");
+    await state.client.handshake();
+    state.connected = true;
+    state.deviceKey = deviceKey;
+    state.slotsLoaded = false;
+    state.slots = { valid: 0, incompatible: 0, dirty: 0, busy: false };
+    setConnectionLabel("Connected · protocol v1", "connected");
+    renderSlotKeybed();
+    if (await refreshSlots({ quiet: true })) {
+      setMessage("Connected. Select a saved slot to load it, or select an empty slot as the save destination.");
+    }
+  } catch (error) {
+    state.client.clearPorts();
+    state.connected = false;
+    state.deviceKey = null;
+    state.slotsLoaded = false;
+    setConnectionLabel("CHOMPI-BOWLS connection failed", "error");
+    renderSlotKeybed();
+    const message = error.message === "The instrument did not respond."
+      ? `${error.message} Check USB and other MIDI apps; the editor will keep retrying.`
+      : error.message;
+    setMessage(message, "error");
+  } finally {
+    state.connecting = false;
+    elements.disconnectMidi.disabled = !state.accessEnabled;
+  }
+}
+
+async function refreshSlots({ quiet = false } = {}) {
+  if (!state.connected || state.transferBusy || state.refreshingSlots) return false;
+  state.refreshingSlots = true;
+  state.lastSlotRefresh = Date.now();
+  updateEditorAvailability();
   try {
     state.slots = await state.client.listSlots();
-    renderSlotOptions();
-    elements.readSlot.disabled = state.slots.busy
-      || (state.slots.valid & (1 << state.selectedSlot)) === 0;
-    setMessage(state.slots.busy ? "Instrument storage is busy; try again shortly." : "Slot list updated.");
+    state.slotsLoaded = true;
+    renderSlotKeybed();
+    if (!quiet) {
+      setMessage(state.slots.busy
+        ? "Instrument storage is busy; try again shortly."
+        : "Slot list updated.");
+    }
+    return true;
   } catch (error) {
-    setMessage(error.message, "error");
+    setMessage(quiet ? `Could not refresh slots: ${error.message}` : error.message, "error");
+    return false;
+  } finally {
+    state.refreshingSlots = false;
+    updateEditorAvailability();
   }
 }
 
-function renderSlotOptions() {
-  const current = state.selectedSlot;
-  elements.slot.replaceChildren();
+function setSlotStatus(message, stateName = "") {
+  elements.slotStatus.textContent = message;
+  elements.slotStatus.dataset.state = stateName;
+}
+
+function renderSlotKeybed() {
+  elements.slotButtons.replaceChildren();
+  let occupiedCount = 0;
   for (let slot = 0; slot < 15; slot += 1) {
     const bit = 1 << slot;
-    const label = (state.slots.incompatible & bit) !== 0
-      ? "Incompatible"
-      : (state.slots.valid & bit) !== 0
-        ? (state.slots.dirty & bit) !== 0 ? "Pending save" : "Saved"
-        : "Empty";
-    elements.slot.add(new Option(`Slot ${String(slot + 1).padStart(2, "0")} — ${label}`, slot));
+    const incompatible = (state.slots.incompatible & bit) !== 0;
+    const valid = (state.slots.valid & bit) !== 0;
+    if (incompatible || valid) occupiedCount += 1;
+    const status = !state.slotsLoaded
+      ? "unknown"
+      : incompatible
+        ? "incompatible"
+        : valid
+          ? (state.slots.dirty & bit) !== 0 ? "pending" : "saved"
+          : "empty";
+    const statusLabel = {
+      unknown: "Unknown",
+      incompatible: "Incompatible",
+      pending: "Pending save",
+      saved: "Saved",
+      empty: "Empty",
+    }[status];
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "slot-key";
+    button.dataset.slot = String(slot);
+    button.dataset.state = status;
+    button.setAttribute("aria-label", `Slot ${slot + 1}, ${statusLabel}`);
+    button.setAttribute("aria-pressed", String(state.selectedSlot === slot));
+    button.title = `Slot ${String(slot + 1).padStart(2, "0")} · ${statusLabel}`;
+    button.disabled = !state.connected || !state.slotsLoaded
+      || state.slots.busy || state.refreshingSlots || state.transferBusy;
+    const indicator = document.createElement("span");
+    indicator.className = "slot-key-indicator";
+    indicator.dataset.state = status;
+    indicator.setAttribute("aria-hidden", "true");
+    const number = document.createElement("span");
+    number.className = "slot-key-number";
+    number.textContent = String(slot + 1).padStart(2, "0");
+    button.append(indicator, number);
+    elements.slotButtons.append(button);
   }
-  elements.slot.value = String(current);
+
+  if (!state.connected) {
+    setSlotStatus("Waiting for CHOMPI-BOWLS", "disconnected");
+  } else if (!state.slotsLoaded) {
+    setSlotStatus("Loading preset slots…", "loading");
+  } else if (state.slots.busy) {
+    setSlotStatus(`Storage busy · ${occupiedCount} of 15 slots occupied`, "busy");
+  } else {
+    setSlotStatus(`${occupiedCount} of 15 slots occupied · Slot ${String(state.selectedSlot + 1).padStart(2, "0")} selected`, "ready");
+  }
   updateEditorAvailability();
+}
+
+function selectSlot(slot) {
+  const slotBit = 1 << slot;
+  const incompatible = (state.slots.incompatible & slotBit) !== 0;
+  const canRead = (state.slots.valid & slotBit) !== 0
+    && !incompatible && !state.slots.busy;
+  if (canRead && state.dirty
+      && !window.confirm(`Discard your unsaved draft and load slot ${slot + 1}?`)) {
+    return;
+  }
+
+  state.selectedSlot = slot;
+  renderSlotKeybed();
+  if (incompatible) {
+    setSlotStatus(`Slot ${slot + 1} is incompatible`, "error");
+    setMessage(`Slot ${slot + 1} is incompatible and cannot be loaded.`);
+  } else if (canRead) {
+    setSlotStatus(`Loading slot ${slot + 1}…`, "loading");
+    void readSelectedSlot();
+  } else if (state.slots.busy) {
+    setSlotStatus("Instrument storage is busy", "busy");
+    setMessage("Instrument storage is busy; try again shortly.");
+  } else {
+    setSlotStatus(`Slot ${slot + 1} is empty`, "empty");
+    setMessage(`Slot ${slot + 1} is empty. Select an empty slot as the save destination.`);
+  }
 }
 
 function prepareEditor() {
@@ -194,6 +379,15 @@ function prepareEditor() {
     const octave = Math.floor(note / 12) - 1;
     elements.editKey.add(new Option(`Key ${key + 1} · ${noteName}${octave}`, key));
   }
+  elements.globalBowlControls.innerHTML = FIELD_CONFIG
+    .filter((config) => config.field !== "pitch_hz")
+    .map((config) => {
+      const control = config.kind === "select"
+        ? `<select data-bank-global="${config.field}"><option value="" disabled>Mixed values</option>${config.values.map((value) => `<option value="${value}">${value}</option>`).join("")}</select>`
+        : `<input data-bank-global="${config.field}" type="${config.kind}" min="${config.min}" max="${config.max}" step="${config.step}">`;
+      const output = config.kind === "select" ? "" : "<output></output>";
+      return `<label>${config.label}${control}${output}</label>`;
+    }).join("");
   elements.keyControls.innerHTML = FIELD_CONFIG.map((config) => {
     const control = config.kind === "select"
       ? `<select data-key-field="${config.field}">${config.values.map((value) => `<option value="${value}">${value}</option>`).join("")}</select>`
@@ -216,8 +410,22 @@ function renderPreset() {
   }
   elements.editMode.value = state.mode;
   elements.editKey.value = String(state.key);
+  renderGlobalBowlValues();
   renderKeyValues();
   updateEditorAvailability();
+}
+
+function renderGlobalBowlValues() {
+  if (!state.preset) return;
+  for (const input of elements.globalBowlControls.querySelectorAll("[data-bank-global]")) {
+    const field = input.dataset.bankGlobal;
+    const values = ["strikes", "rimming", "split"].flatMap((mode) => state.preset[field][mode]);
+    const firstValue = values[0];
+    const uniform = values.every((value) => value === firstValue);
+    input.value = input.tagName === "SELECT" && !uniform ? "" : String(firstValue);
+    const output = input.parentElement.querySelector("output");
+    if (output) output.value = uniform ? String(firstValue) : "Mixed";
+  }
 }
 
 function renderKeyValues() {
@@ -236,10 +444,11 @@ function markChanged() {
 }
 
 async function readSelectedSlot() {
-  if (!state.connected) return;
-  if (state.dirty && !window.confirm("Discard your unsaved draft and read this slot?")) return;
+  if (!state.connected || state.refreshingSlots || state.transferBusy) return;
   elements.progress.hidden = false;
   elements.progress.value = 0;
+  state.transferBusy = true;
+  updateEditorAvailability();
   setMessage("Reading preset…");
   try {
     const preset = validatePreset(await state.client.readPreset(state.selectedSlot));
@@ -247,37 +456,53 @@ async function readSelectedSlot() {
     state.mode = ["strikes", "rimming", "split"][preset.mode];
     setDraftDirty(false);
     renderPreset();
+    setSlotStatus(`Slot ${state.selectedSlot + 1} loaded`, "ready");
     setMessage(`Read slot ${state.selectedSlot + 1}.`);
   } catch (error) {
+    setSlotStatus(`Could not read slot ${state.selectedSlot + 1}`, "error");
     setMessage(error.message, "error");
   } finally {
+    state.transferBusy = false;
+    updateEditorAvailability();
     elements.progress.hidden = true;
   }
 }
 
 async function saveToSelectedSlot() {
-  if (!state.connected || !state.preset) return;
+  if (!state.connected || !state.preset || state.refreshingSlots) return;
   const slot = state.selectedSlot;
   const occupied = ((state.slots.valid | state.slots.incompatible) & (1 << slot)) !== 0;
   if (occupied && !window.confirm(`Overwrite existing data in slot ${slot + 1}?`)) return;
+  let written = false;
   try {
     validatePreset(state.preset);
     elements.progress.hidden = false;
     elements.progress.value = 0;
+    state.transferBusy = true;
+    updateEditorAvailability();
     setMessage("Sending preset to the instrument…");
     await state.client.writePreset(slot, state.preset, (progress) => {
       elements.progress.value = progress;
       setMessage(progress < 1 ? `Writing preset… ${Math.round(progress * 100)}%` : "Waiting for SD-card save…");
     });
-    await refreshSlots();
-    setDraftDirty(false);
-    elements.draftState.textContent = "Saved to instrument";
-    elements.draftState.dataset.state = "saved";
-    setMessage(`Saved preset to slot ${slot + 1}.`);
+    written = true;
   } catch (error) {
     setMessage(error.message, "error");
   } finally {
+    state.transferBusy = false;
+    updateEditorAvailability();
     elements.progress.hidden = true;
+  }
+  if (written) {
+    const refreshed = await refreshSlots({ quiet: true });
+    setDraftDirty(false);
+    elements.draftState.textContent = "Saved to instrument";
+    elements.draftState.dataset.state = "saved";
+    if (refreshed && (state.slots.valid & (1 << slot)) !== 0) {
+      setMessage(`Saved preset to slot ${slot + 1}.`);
+    } else {
+      setMessage(`Preset saved to slot ${slot + 1}, but the slot list did not confirm it. Retrying automatically.`, "error");
+    }
   }
 }
 
@@ -342,11 +567,8 @@ function applySelectedTuning() {
   setMessage(`${tuning.name} applied to Strikes, Rimming, and Split. Individual pitches remain editable.`);
 }
 
-elements.connect.addEventListener("click", connectToMidi);
-elements.disconnect.addEventListener("click", disconnectFromMidi);
-elements.useMidi.addEventListener("click", useSelectedDevice);
-elements.refreshSlots.addEventListener("click", refreshSlots);
-elements.readSlot.addEventListener("click", readSelectedSlot);
+elements.connectMidi.addEventListener("click", connectToMidi);
+elements.disconnectMidi.addEventListener("click", disconnectFromMidi);
 elements.saveSlot.addEventListener("click", saveToSelectedSlot);
 elements.newPreset.addEventListener("click", createDraft);
 elements.exportPreset.addEventListener("click", exportPreset);
@@ -354,13 +576,10 @@ elements.importPreset.addEventListener("change", (event) => {
   const [file] = event.target.files;
   if (file) importPreset(file);
 });
-elements.slot.addEventListener("change", (event) => {
-  if (state.dirty && !window.confirm("Keep this draft while changing the destination slot?")) {
-    event.target.value = String(state.selectedSlot);
-    return;
-  }
-  state.selectedSlot = Number(event.target.value);
-  updateEditorAvailability();
+elements.slotButtons.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-slot]");
+  if (!button || button.disabled) return;
+  selectSlot(Number(button.dataset.slot));
 });
 elements.tuningSelect.addEventListener("change", () => {
   const tuning = TUNINGS.find((item) => item.id === elements.tuningSelect.value);
@@ -379,6 +598,18 @@ elements.editKey.addEventListener("change", (event) => {
 
 document.addEventListener("input", (event) => {
   const input = event.target;
+  if (input.matches("[data-bank-global]") && state.preset) {
+    const value = Number(input.value);
+    if (!Number.isFinite(value)) return;
+    try {
+      state.preset = setBankValueForAllModes(state.preset, input.dataset.bankGlobal, value);
+      renderGlobalBowlValues();
+      renderKeyValues();
+      markChanged();
+    } catch (error) {
+      setMessage(error.message, "error");
+    }
+  }
   if (input.matches("[data-global]") && state.preset) {
     const value = Number(input.value);
     if (!Number.isFinite(value)) return;
@@ -399,6 +630,7 @@ document.addEventListener("input", (event) => {
       state.preset = setPresetValue(state.preset, field, state.mode, state.key, value);
       const output = input.parentElement.querySelector("output");
       if (output) output.value = field === "pitch_hz" ? `${value.toFixed(3)} Hz` : String(value);
+      renderGlobalBowlValues();
       markChanged();
     } catch (error) {
       setMessage(error.message, "error");
@@ -406,9 +638,13 @@ document.addEventListener("input", (event) => {
   }
 });
 
-state.client = new PresetTransferClient((message) => {
-  if (!state.connected) setMessage(message);
-});
+state.client = new PresetTransferClient(
+  (message) => {
+    if (!state.connected) setMessage(message);
+  },
+  () => { void scanForChompi(); },
+);
 prepareEditor();
-renderSlotOptions();
+renderSlotKeybed();
 setDraftDirty(false);
+void checkMidiPermission();

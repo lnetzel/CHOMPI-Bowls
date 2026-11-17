@@ -142,5 +142,19 @@ inline uint16_t Decode14(const uint8_t input[2])
            | static_cast<uint16_t>(input[1] << 7);
 }
 
+inline void Encode21(uint32_t value, uint8_t output[3])
+{
+    output[0] = static_cast<uint8_t>(value & 0x7f);
+    output[1] = static_cast<uint8_t>((value >> 7) & 0x7f);
+    output[2] = static_cast<uint8_t>((value >> 14) & 0x7f);
+}
+
+inline uint32_t Decode21(const uint8_t input[3])
+{
+    return static_cast<uint32_t>(input[0])
+           | (static_cast<uint32_t>(input[1]) << 7)
+           | (static_cast<uint32_t>(input[2]) << 14);
+}
+
 } // namespace preset_transfer
 } // namespace chompi

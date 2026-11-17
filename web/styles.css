@@ -18,9 +18,15 @@
 body {
   margin: 0;
   min-width: 320px;
-  background:
+  background-color: #171310;
+  background-image:
     radial-gradient(ellipse at 85% 0%, #382a1e 0, transparent 38rem),
-    #171310;
+    linear-gradient(rgba(23, 19, 16, 0.91), rgba(23, 19, 16, 0.91)),
+    url("./images/Tibet%20_%20Original.jpg");
+  background-position: center top, center, center top;
+  background-size: auto, auto, 840px auto;
+  background-repeat: no-repeat, no-repeat, repeat;
+  background-attachment: scroll, scroll, fixed;
 }
 
 button, select, input { font: inherit; }
@@ -52,7 +58,7 @@ input[type="range"] { accent-color: var(--accent); }
 input[type="file"] { display: none; }
 
 .page-shell { width: min(1120px, calc(100% - 2rem)); margin: 0 auto; padding: 2rem 0 3rem; }
-.page-header, .section-heading, .button-row, .slot-row, .key-navigation {
+.page-header, .section-heading, .button-row, .key-navigation {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -91,9 +97,96 @@ h3 { font-size: 1.05rem; margin-bottom: 0.7rem; }
 .port-grid, .editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 label { display: grid; gap: 0.4rem; color: #e4d8cb; font-size: 0.9rem; }
 .message { min-height: 1.4rem; color: var(--muted); margin: 0.75rem 0 0; }
-.slot-row { justify-content: flex-start; flex-wrap: wrap; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
-.slot-row label { display: inline; }
-.slot-row select { min-width: min(22rem, 100%); }
+.slot-picker { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.slot-keybed {
+  padding: 0.8rem;
+  border: 1px solid #66523e;
+  border-radius: 0.8rem;
+  background: linear-gradient(155deg, #302820, #211b16);
+  box-shadow: inset 0 0 0 1px #e4ad6814, 0 1rem 2rem #0004;
+}
+.slot-display {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-height: 3.2rem;
+  padding: 0.7rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: #191512;
+  color: #e4d8cb;
+  font: 600 0.9rem/1.35 "Cascadia Code", Consolas, monospace;
+  box-shadow: inset 0 2px 6px #0005;
+}
+.slot-display::before {
+  content: "";
+  width: 0.62rem;
+  height: 0.62rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #71665a;
+}
+.slot-display[data-state="ready"]::before { background: #9cad83; }
+.slot-display[data-state="loading"]::before, .slot-display[data-state="busy"]::before { background: var(--accent); }
+.slot-display[data-state="error"]::before { background: var(--danger); }
+.slot-buttons {
+  display: grid;
+  grid-template-columns: repeat(15, minmax(0, 1fr));
+  gap: 0.45rem;
+  padding: 0.9rem 0.1rem 0.65rem;
+}
+.slot-key {
+  display: flex;
+  min-width: 0;
+  min-height: 3.65rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.15rem 0.45rem;
+  border: 1px solid #685743;
+  border-radius: 0.45rem;
+  background: linear-gradient(#3a3128, #2b241d);
+  color: #e4d8cb;
+  box-shadow: 0 3px 0 #1a1511, 0 5px 8px #0003;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.slot-key:disabled { opacity: 1; cursor: not-allowed; }
+.slot-key:hover:not(:disabled) { transform: translateY(-1px); }
+.slot-key[data-state="saved"],
+.slot-key[data-state="incompatible"] {
+  background: linear-gradient(#514232, #403226);
+}
+.slot-key[aria-pressed="true"] {
+  outline: 2px solid #c08c50;
+  outline-offset: 1px;
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.slot-key-indicator {
+  display: inline-block;
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: 50%;
+  background: #71665a;
+}
+.slot-key-indicator[data-state="saved"] { background: #9cad83; }
+.slot-key-indicator[data-state="pending"] { background: var(--accent); }
+.slot-key-indicator[data-state="incompatible"] { background: #c8796c; }
+.slot-key-number { font: 700 0.82rem/1 "Cascadia Code", Consolas, monospace; }
+.slot-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem 1.2rem;
+  margin: 0;
+  padding: 0.15rem 0 0.1rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  list-style: none;
+}
+.slot-legend li { display: inline-flex; align-items: center; gap: 0.4rem; }
+.slot-legend .slot-key-indicator { width: 0.5rem; height: 0.5rem; }
+.slot-actions { display: flex; justify-content: flex-end; padding-top: 0.75rem; }
 progress { display: block; width: 100%; height: 0.55rem; margin-top: 1rem; accent-color: var(--accent); }
 
 fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
@@ -102,6 +195,7 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .global-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.8rem 1rem; margin-top: 1rem; }
 .global-controls label { display: grid; grid-template-columns: 1fr auto; align-items: center; }
 .global-controls input { grid-column: 1 / -1; width: 100%; }
+.global-controls select { grid-column: 1 / -1; width: 100%; }
 .global-controls output { color: var(--accent); font-variant-numeric: tabular-nums; }
 .pitch-preview { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.35rem; margin: 0.8rem 0 1rem; }
 .pitch-cell { border: 1px solid #4d4034; border-radius: 0.3rem; padding: 0.35rem; color: var(--muted); font-size: 0.72rem; font-variant-numeric: tabular-nums; text-align: center; }
@@ -125,11 +219,15 @@ footer a { color: var(--accent); }
   .key-control-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .key-navigation { justify-content: flex-start; }
   .pitch-preview { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .slot-buttons { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.55rem; }
   footer { flex-direction: column; }
 }
 
 @media (max-width: 440px) {
   .page-shell { width: min(100% - 1rem, 1120px); }
   .key-control-grid { grid-template-columns: 1fr; }
-  .slot-row { align-items: stretch; flex-direction: column; }
+  .slot-keybed { padding: 0.6rem; }
+  .slot-display { font-size: 0.78rem; }
+  .slot-buttons { gap: 0.4rem; padding: 0.75rem 0.1rem 0.55rem; }
+  .slot-legend { gap: 0.45rem 0.8rem; font-size: 0.72rem; }
 }

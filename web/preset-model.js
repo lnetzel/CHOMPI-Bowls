@@ -119,3 +119,14 @@ export function setPresetValue(preset, field, mode, key, value) {
   }
   return validatePreset(updated);
 }
+
+export function setBankValueForAllModes(preset, field, value) {
+  if (!Object.prototype.hasOwnProperty.call(BANK_RANGES, field)) {
+    throw new Error(`Unknown per-key field: ${field}.`);
+  }
+  const updated = clonePreset(preset);
+  for (const mode of MODES) {
+    updated[field][mode] = Array(KEY_COUNT).fill(value);
+  }
+  return validatePreset(updated);
+}

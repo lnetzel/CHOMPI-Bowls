@@ -168,18 +168,18 @@ class PresetTransfer
                 return;
             }
             uint8_t status[kMaxFramePayload - 1];
-            uint8_t bits[2];
-            Encode14(SlotBitmap(bank, false), bits);
-            status[0] = bits[0];
-            status[1] = bits[1];
-            Encode14(IncompatibleBitmap(storage), bits);
-            status[2] = bits[0];
-            status[3] = bits[1];
-            Encode14(SlotBitmap(bank, true), bits);
-            status[4] = bits[0];
-            status[5] = bits[1];
-            status[6] = static_cast<uint8_t>(storage.Busy());
-            Reply(midi, request.command, request.sequence, kOk, status, 7);
+            uint8_t bits[3];
+            Encode21(SlotBitmap(bank, false), bits);
+            for(int i = 0; i < 3; ++i)
+                status[i] = bits[i];
+            Encode21(IncompatibleBitmap(storage), bits);
+            for(int i = 0; i < 3; ++i)
+                status[i + 3] = bits[i];
+            Encode21(SlotBitmap(bank, true), bits);
+            for(int i = 0; i < 3; ++i)
+                status[i + 6] = bits[i];
+            status[9] = static_cast<uint8_t>(storage.Busy());
+            Reply(midi, request.command, request.sequence, kOk, status, 10);
             return;
         }
         if(request.command == kReadBegin)

@@ -33,13 +33,22 @@ int main()
     assert(!Encode(kWriteData, 0, payload, kMaxFramePayload + 1, encoded,
                    sizeof(encoded), encoded_length));
 
-    const uint16_t values[] = {0, 127, 128, 4095, 16383};
-    for(uint16_t value : values)
+    const uint16_t values14[] = {0, 127, 128, 4095, 16383};
+    for(uint16_t value : values14)
     {
         uint8_t bytes[2];
         Encode14(value, bytes);
         assert(bytes[0] <= 0x7f && bytes[1] <= 0x7f);
         assert(Decode14(bytes) == value);
+    }
+
+    const uint32_t values21[] = {0, 127, 128, 16383, 16384, 32767, 0x1fffff};
+    for(uint32_t value : values21)
+    {
+        uint8_t bytes[3];
+        Encode21(value, bytes);
+        assert(bytes[0] <= 0x7f && bytes[1] <= 0x7f && bytes[2] <= 0x7f);
+        assert(Decode21(bytes) == value);
     }
 
     return 0;

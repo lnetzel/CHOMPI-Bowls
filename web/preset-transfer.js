@@ -74,6 +74,17 @@ function decode14(low, high) {
   return low | (high << 7);
 }
 
+export function encode21(value) {
+  if (!Number.isInteger(value) || value < 0 || value > 0x1fffff) {
+    throw new Error("Invalid 21-bit value.");
+  }
+  return [value & 0x7f, (value >> 7) & 0x7f, (value >> 14) & 0x7f];
+}
+
+export function decode21(low, middle, high) {
+  return low | (middle << 7) | (high << 14);
+}
+
 function toSysExText(value) {
   return JSON.stringify(value).replace(/[\u007f-\uffff]/g, (character) => (
     `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`
@@ -81,9 +92,11 @@ function toSysExText(value) {
 }
 
 export class PresetTransferClient {
-  constructor(onMessage = () => {}) {
+  constructor(onMessage = () => {}, onPortsChanged = () => {}) {
     this.onMessage = onMessage;
+    this.onPortsChanged = onPortsChanged;
     this.access = null;
+    this.accessPromise = null;
     this.input = null;
     this.output = null;
     this.sequence = 0;
@@ -91,12 +104,35 @@ export class PresetTransferClient {
   }
 
   async openAccess() {
+    if (this.access) return this.access;
+    if (this.accessPromise) return this.accessPromise;
     if (!navigator.requestMIDIAccess) {
       throw new Error("Web MIDI is unavailable. Use desktop Chrome or Edge.");
     }
-    this.access = await navigator.requestMIDIAccess({ sysex: true });
-    this.access.onstatechange = () => this.onMessage("MIDI devices changed.");
-    return this.access;
+    this.accessPromise = navigator.requestMIDIAccess({ sysex: true })
+      .then((access) => {
+        this.access = access;
+        this.access.onstatechange = () => this.onPortsChanged();
+        return access;
+      })
+      .finally(() => {
+        this.accessPromise = null;
+      });
+    return this.accessPromise;
+  }
+
+  findChompiPorts() {
+    if (!this.access) return null;
+    const isChompi = (port) => {
+      if (port.state === "disconnected") return false;
+      const description = `${port.name || ""} ${port.manufacturer || ""}`.toLowerCase();
+      return description.includes("chompi") && description.includes("bowl");
+    };
+    const input = [...this.access.inputs.values()].find(isChompi);
+    if (!input) return null;
+    const outputs = [...this.access.outputs.values()].filter(isChompi);
+    const output = outputs.find((port) => port.name === input.name) || outputs[0];
+    return output ? { input, output } : null;
   }
 
   selectPorts(inputId, outputId) {
@@ -110,12 +146,20 @@ export class PresetTransferClient {
     this.input.onmidimessage = (event) => this.receive(event.data);
   }
 
-  disconnect() {
+  clearPorts() {
     if (this.input) this.input.onmidimessage = null;
     this.input = null;
     this.output = null;
+    for (const key of [...this.pending.keys()]) {
+      this.finishPending(key, new Error("The MIDI device disconnected."));
+    }
+  }
+
+  disconnect() {
+    this.clearPorts();
+    if (this.access) this.access.onstatechange = null;
     this.access = null;
-    this.pending.clear();
+    this.accessPromise = null;
   }
 
   receive(message) {
@@ -213,11 +257,14 @@ export class PresetTransferClient {
   async listSlots() {
     const frame = await this.request(COMMANDS.listSlots);
     const values = await this.checkResponse(frame);
+    if (values.length !== 10) {
+      throw new Error("This firmware returned an unsupported slot-list response.");
+    }
     return {
-      valid: decode14(values[0], values[1]),
-      incompatible: decode14(values[2], values[3]),
-      dirty: decode14(values[4], values[5]),
-      busy: values[6] === 1,
+      valid: decode21(values[0], values[1], values[2]),
+      incompatible: decode21(values[3], values[4], values[5]),
+      dirty: decode21(values[6], values[7], values[8]),
+      busy: values[9] === 1,
     };
   }
 

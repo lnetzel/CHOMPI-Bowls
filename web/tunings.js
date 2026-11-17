@@ -26,49 +26,38 @@ const shrutiRatios = [
 
 const fromGenerator = (generator) => Array.from({ length: 25 }, (_, key) => generator(key));
 const anchorHz = 99;
+const c3Hz = 440 * (2 ** (-21 / 12));
 
 export const TUNINGS = [
   {
     id: "tibetan",
     name: "Tibetan bowls",
-    description: "Pitch set from the bundled default.json example.",
+    description: "Custom selected pitches for Tibetan Bowls",
     pitches: tibetanBowls,
   },
   {
     id: "slendro",
-    name: "Sléndro",
-    description: "Pitch set from the bundled Sléndro-inspired example.",
+    name: "Indonesian Sléndro",
+    description: "Indonesian/Balinese Sléndro inspired tuning",
     pitches: slendro,
   },
   {
     id: "pelog",
-    name: "Pélog Selisir",
+    name: "Indonesian Pélog Selisir",
     description: "Pitch set from the bundled Pélog Selisir-inspired example.",
     pitches: pelogSelisir,
   },
   {
     id: "harmonic",
-    name: "Harmonic series",
+    name: "Harmonic series (overtones)",
     description: "Harmonics 1–25, anchored at 99 Hz.",
     pitches: fromGenerator((key) => anchorHz * (key + 1)),
   },
   {
     id: "12tet",
     name: "12-TET",
-    description: "Equal semitones, anchored at 99 Hz.",
-    pitches: fromGenerator((key) => anchorHz * (2 ** (key / 12))),
-  },
-  {
-    id: "arabic-24tet",
-    name: "Arabic 24-TET",
-    description: "24 equal divisions of the octave, anchored at 99 Hz.",
-    pitches: fromGenerator((key) => anchorHz * (2 ** (key / 24))),
-  },
-  {
-    id: "thai-7tet",
-    name: "Thai 7-TET",
-    description: "Seven equal divisions of the octave, anchored at 99 Hz.",
-    pitches: fromGenerator((key) => anchorHz * (2 ** (key / 7))),
+    description: "Equal semitones, rooted at C3 (A4 = 440 Hz).",
+    pitches: fromGenerator((key) => c3Hz * (2 ** (key / 12))),
   },
   {
     id: "indian-22-shruti",

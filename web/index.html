@@ -11,9 +11,9 @@
     <main class="page-shell">
       <header class="page-header">
         <div>
-          <p class="eyebrow">CHOMPI-BOWLS</p>
-          <h1>Preset Editor</h1>
-          <p class="intro">Edit a preset, audition tuning choices, and save it to an SD-card slot.</p>
+          <p class="eyebrow">CHOMPI Open Source Community</p>
+          <h1>BOWLS Preset Editor</h1>
+          <p class="intro">Edit preset values and select from different tuning options.</p>
         </div>
         <span id="draft-state" class="state-chip">No preset loaded</span>
       </header>
@@ -24,36 +24,27 @@
             <p class="eyebrow">USB MIDI</p>
             <h2 id="device-heading">Instrument connection</h2>
           </div>
-          <span id="connection-state" class="state-chip">Not connected</span>
+          <span id="connection-state" class="state-chip">MIDI access required</span>
         </div>
         <div class="button-row">
-          <button id="connect-midi" type="button" class="primary">Connect to MIDI</button>
+          <button id="connect-midi" type="button" class="primary">Connect</button>
           <button id="disconnect-midi" type="button" disabled>Disconnect</button>
         </div>
-        <div class="port-grid">
-          <label>Instrument input
-            <select id="midi-input" disabled>
-              <option value="">Connect to MIDI first</option>
-            </select>
-          </label>
-          <label>Instrument output
-            <select id="midi-output" disabled>
-              <option value="">Connect to MIDI first</option>
-            </select>
-          </label>
-        </div>
-        <div class="button-row">
-          <button id="use-midi" type="button" disabled>Use selected device</button>
-          <button id="refresh-slots" type="button" disabled>Refresh slots</button>
-        </div>
-        <p id="device-message" class="message" aria-live="polite">Connect and grant MIDI/SysEx access to manage device presets.</p>
-        <div class="slot-row">
-          <label for="preset-slot">SD-card slot</label>
-          <select id="preset-slot" disabled>
-            <option value="0">Slot 01 — Unknown</option>
-          </select>
-          <button id="read-slot" type="button" disabled>Read slot</button>
-          <button id="save-slot" type="button" disabled>Save to slot</button>
+        <p id="device-message" class="message" aria-live="polite">Trying to connect automatically. The browser may ask for MIDI/SysEx permission.</p>
+        <div class="slot-picker">
+          <div class="slot-keybed" role="group" aria-label="CHOMPI-BOWLS preset keybed: the slots">
+            <div id="slot-status" class="slot-display" data-state="disconnected" role="status" aria-live="polite">Waiting for CHOMPI-BOWLS</div>
+            <div id="slot-buttons" class="slot-buttons"></div>
+            <ul class="slot-legend" aria-label="Slot status">
+              <li><span class="slot-key-indicator" data-state="saved" aria-hidden="true"></span>Saved</li>
+              <li><span class="slot-key-indicator" data-state="empty" aria-hidden="true"></span>Empty</li>
+              <li><span class="slot-key-indicator" data-state="pending" aria-hidden="true"></span>Pending save</li>
+              <li><span class="slot-key-indicator" data-state="incompatible" aria-hidden="true"></span>Incompatible</li>
+            </ul>
+          </div>
+          <div class="slot-actions">
+            <button id="save-slot" type="button" disabled>Save to slot</button>
+          </div>
         </div>
         <progress id="transfer-progress" max="1" value="0" hidden></progress>
       </section>
@@ -76,20 +67,8 @@
         <fieldset id="editor-controls" disabled>
           <legend class="visually-hidden">Preset editor controls</legend>
           <div class="editor-grid">
-            <section class="subpanel" aria-labelledby="tuning-heading">
-              <h3 id="tuning-heading">Optional tuning</h3>
-              <p>Choosing a tuning changes only this draft. Applying it fills the pitch tables for all three modes; each pitch can then be edited.</p>
-              <label for="tuning-select">Tuning set</label>
-              <select id="tuning-select">
-                <option value="">Choose a tuning (optional)</option>
-              </select>
-              <p id="tuning-description" class="muted">No tuning selected.</p>
-              <div id="tuning-preview" class="pitch-preview" aria-live="polite"></div>
-              <button id="apply-tuning" type="button" disabled>Apply to all modes</button>
-            </section>
-
             <section class="subpanel" aria-labelledby="global-heading">
-              <h3 id="global-heading">Preset-wide controls</h3>
+              <h3 id="global-heading">Global preset values</h3>
               <label for="startup-mode">Startup mode</label>
               <select id="startup-mode" data-global="mode">
                 <option value="0">Strikes</option>
@@ -104,6 +83,24 @@
                 <label>Delay mix <input data-global="delay_mix" type="range" min="0" max="32" step="1"><output></output></label>
                 <label>Delay time <input data-global="delay_time" type="range" min="0" max="32" step="1"><output></output></label>
               </div>
+            </section>
+
+            <section class="subpanel" aria-labelledby="global-bowl-heading">
+              <h3 id="global-bowl-heading">Global bowl values</h3>
+              <p>Changing a value applies it to all 25 keys in Strikes, Rimming, and Split. You can then edit individual bowls below. Mixed values are shown when the preset differs between bowls.</p>
+              <div id="global-bowl-controls" class="global-controls"></div>
+            </section>
+
+            <section class="subpanel" aria-labelledby="tuning-heading">
+              <h3 id="tuning-heading">Optional tuning</h3>
+              <p>Choosing a tuning changes only this draft. Applying it fills the pitch tables for all three modes; each pitch can then be edited.</p>
+              <label for="tuning-select">Tuning set</label>
+              <select id="tuning-select">
+                <option value="">Choose a tuning (optional)</option>
+              </select>
+              <p id="tuning-description" class="muted">No tuning selected.</p>
+              <div id="tuning-preview" class="pitch-preview" aria-live="polite"></div>
+              <button id="apply-tuning" type="button" disabled>Apply to all modes</button>
             </section>
           </div>
 
