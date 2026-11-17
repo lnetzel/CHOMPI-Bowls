@@ -1,0 +1,30 @@
+I want a static but interactive web page (with actions to successfully deploy on lnetzel.github.io/bowls-editor as well).
+
+Pagename: BOWLS Preset Editor
+
+The page should connect to this firmware via USB mid and find the Chompi device (when bootes with this firmware). Then it should be possible to read, edit and write presets to the SD card.
+There should be a clear visual indication that the device can be conneted to and also when not. It should connect automatically but in case that's not posisble there should be a a button for Connect and Disconnect. For inspiration, check https://ugrossek.github.io/CHOMPI/
+
+All parameters existing in the preset should be possible to edit with intuitive controls (e.g panning should be a slider from right to left).
+
+Pitches should be possible to edit for each key in each mode but there should also be a way to select from a list of well known tunings.
+
+1. Set of Tibetan Bowls (the pitches from out first default.json
+2. Indonesian Sléndro
+3. Indonesian Pélog
+4. The Harmonic Series (overtones)
+5. 12-Tone Equal Temperament
+6. Arabic 24-Tone Quarter-Tone System
+7. Thai 7-Tone Equal Temperament (7-TET)
+8. Indian 22-Shruti System
+
+The lowest pitch should always start at 99 Hz if possible (adjust if the pitch demands it)
+
+Visual Style: 
+Don't go new age crazy but since these are "bowls" it's ok to use a "warm" tone with suitable " patterns" or symbols Unon political or religious).
+
+Important: 
+I some knowledge about how to deploy web pages but that knowledge comes from asp.net 1.1 times and is not up to day. So you cannot assume I will know anything about dependencies or scripts to deploy or get eg React to work. You need to fix all that, and also write the deploy scripts needed to actually set up actions in gutHub to deploy. Plus you need to give me an easy step by step guide I can follow when I need to deploy.
+
+
+

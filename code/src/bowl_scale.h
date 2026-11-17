@@ -1,7 +1,6 @@
 #pragma once
 
-// Bowl scale, keyboard layouts and play modes for CHOMPI-BOWLS (plans:
-// plans/split-strike-and-rimming-plan.md, plans/improve-play-modes.md).
+// Bowl scale, keyboard layouts and play modes for CHOMPI-BOWLS.
 //
 // Three performance modes share the 25-key bed (keyboard pitch-order
 // index 0 = C3 .. 24 = C5, the order of kKeySwitches / kKeyLeds):
@@ -9,7 +8,7 @@
 //   Strikes - every key strikes a distinct bowl (25 ascending pitches)
 //   Rimming - every key holds a sustained clean bowl pad; the
 //             transport wheel adds the direction-dependent rimming
-//   Split   - the v1 layout: keys 0-11 (C3-B3) SELECT one of the 12
+//   Split   - keys 0-11 (C3-B3) SELECT one of the 12
 //             bowls for wheel rimming (never strike), keys 12-23
 //             (C4-B4) strike the same bowls, and key 24 (C5) strikes
 //             an added higher bowl. Each key keeps its own final Hz.
@@ -47,10 +46,7 @@ constexpr int kKeyCount = 25; // C3..C5
 constexpr float kMinPitchHz = 40.0f;
 constexpr float kMaxPitchHz = 10000.0f;
 
-// The 12 measured/reference bowls, lowest to highest. Strictly
-// ascending. (The former 15-bowl scale's top three - 1240.8 =
-// 310.2 x 4, 1395.0 = 465 x 3, 1560.0 = 390 x 4 - now live in the
-// full-key table; 1240.8 is also Split's added top strike.)
+// The 12 Split-mode bowls, lowest to highest.
 constexpr int kBowlCount = 12;
 constexpr float kBowlScaleHz[kBowlCount] = {
     99.0f,   // B1  - measured (23 cm bowl)
@@ -74,8 +70,7 @@ constexpr int kRimKeyLast     = 11;
 constexpr int kStrikeKeyFirst = 12;
 constexpr int kStrikeKeyLast  = 24;
 
-/// Split's added highest strike: 310.2 x 4, retained from the former
-/// 15-bowl scale.
+/// Split-mode's highest strike.
 constexpr float kSplitTopStrikeHz = 1240.8f;
 
 /// The 25 distinct, ascending starting fundamentals of the full-key

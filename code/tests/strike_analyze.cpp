@@ -1,7 +1,5 @@
-// Strike-vs-reference analysis for the striking-character work
-// (plans/improve_striking_character_plan.md). Host tool, not part of
-// the firmware build; run via `make -C code/tests analyze` (compare
-// mode) from the MSYS2 UCRT64 shell.
+// Strike-vs-reference analysis tool. Run with `make -C code/tests analyze`
+// from the MSYS2 UCRT64 shell.
 //
 // Usage:
 //   ./strike_analyze.exe compare

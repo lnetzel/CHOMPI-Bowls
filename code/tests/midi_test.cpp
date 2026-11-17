@@ -1,6 +1,4 @@
-// Host-side tests for the CHOMPI-BOWLS MIDI input feature
-// (plans/midi-input-and-cc-control.md). Not part of the firmware
-// build; run with `make -C code/tests midi-test` from the MSYS2
+// Host-side tests for MIDI input. Run with `make -C code/tests midi-test` from the MSYS2
 // UCRT64 shell.
 //
 //   T1  MidiCcMap: note map 48..72, tick conversion (endpoints,
@@ -202,7 +200,7 @@ void TestSelectorConversions()
     for(uint8_t cc : unsupported)
         if(ccmap::IsSupportedCc(cc))
             ok = false;
-    Check(ok, "T1h supported-CC filter (CC 76 and reserved CCs ignored)",
+    Check(ok, "T1h supported-CC filter rejects unassigned and reserved CCs",
           "");
 
     ok = ccmap::CcToLevel(0) == 0.0f && ccmap::CcToLevel(127) == 1.0f

@@ -7,14 +7,13 @@ plugged into CHOMPI directly - USB requires a host (a computer, or a USB
 host adapter); use the keyboard's MIDI output or route it through the
 host.
 The USB device identifies itself to the host as **CHOMPI-BOWLS**.
+USB MIDI is unavailable in CPU_METER diagnostic builds.
 MIDI IN receives notes, supported CCs and MIDI Timing Clock. When clock
 pulses arrive, the delay and latched Strike arpeggio follow that tempo;
 without clock they retain their normal free-running settings. MIDI OUT sends local keyboard
 notes on both enabled transports; incoming messages are never echoed or
 soft-thru'd, and no CCs are transmitted.
-Messages on other channels, Program Change, pitch bend, aftertouch,
-NRPN/RPN (CC 98-101), bank select (CC 0/32), SysEx and MIDI transport
-messages are ignored. CC 76 is unsupported and ignored.
+Other channels and unsupported MIDI messages are ignored.
 
 MIDI Timing Clock is accepted regardless of channel (24 pulses per
 quarter note). After tempo is established, the delay-time control selects
@@ -156,15 +155,6 @@ Notes:
   parameter bars (the bars follow local encoders only). Held MIDI notes
   light their keys like physical keys, ringing voices glow dim amber,
   and the wheel LEDs follow the effective (wheel vs CC 1) rub level.
-- The USB serial diagnostic log is disabled in MIDI firmware builds:
-  the USB device stack presents MIDI on the panel port. (Diagnostic
-  CPU-meter builds keep the serial log and have USB MIDI disabled; DIN
-  MIDI works in all builds.)
-- A DIN cable pull is not detectable without Active Sensing: if notes
-  could have been lost, recover with CC 123 or CC 120. UART receive
-  errors (e.g. plug wobble) are recovered automatically and release
-  that input's notes.
-
 ## MIDI Out
 
 The physical keyboard sends Note On (0x90) and Note Off (0x80) on fixed
@@ -177,10 +167,8 @@ shortcuts are not sent as notes.
 
 Only local physical key gestures are transmitted. MIDI received on DIN
 or USB is not forwarded, and panel parameter changes, CCs, mode changes,
-clock, and program changes are not transmitted. USB MIDI is disabled in
-CPU_METER diagnostic builds to retain USB serial logging; DIN output
-remains enabled. Firmware uses UART1 TX on D14 for DIN output; confirm
-that the target board routes this signal to its 5-pin MIDI OUT connector.
+clock, and program changes are not transmitted. Firmware uses UART1 TX
+on D14 for DIN output.
 
 ## Examples (all channel 1)
 

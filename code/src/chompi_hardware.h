@@ -1,10 +1,9 @@
 #pragma once
 
-// CHOMPI hardware layer for the Bowls firmware (ported from
-// CHOMPI-PhaseOff: the hardware is identical).
+// CHOMPI hardware layer for the Bowls firmware.
 // Covers: dual-codec audio (SAI1 + SAI2), the six rotary encoders, the
 // 25-key keyboard switch chain and the AUX jack detect.
-// Pin and chain assignments follow HARDWARE_UI_MAP.md / TAPE hardware.h.
+// Pin and chain assignments are listed in hardware_ui_map.md.
 
 #include "daisy_seed.h"
 #include "dev/sr_4021.h"
@@ -101,9 +100,7 @@ class ChompiHardware
         seed.Init(true);
         InitAudio();
 
-        // MP2722 USB-C power/data switch. CHOMPI-PIPES configures this
-        // path before USB MIDI can reach the host; without it the MCU's
-        // USB peripheral starts but the panel connector stays isolated.
+        // Initialize the USB-C power/data switch for the panel port.
         I2CHandle::Config i2c_cfg;
         i2c_cfg.mode              = I2CHandle::Config::Mode::I2C_MASTER;
         i2c_cfg.periph            = I2CHandle::Config::Peripheral::I2C_1;
@@ -143,8 +140,7 @@ class ChompiHardware
         jack_detect_.Init(seed::D21, GPIO::Mode::INPUT, GPIO::Pull::NOPULL);
     }
 
-    /** Connect the panel USB-C port to the Seed's USB device peripheral.
-     *  Mirrors the known-working CHOMPI-PIPES MP2722 sequence. */
+    /** Connect the panel USB-C port to the Seed's USB device peripheral. */
     void ConfigureUsbDevicePath()
     {
         usb_sw_.Write(false);

@@ -1,42 +1,10 @@
 #pragma once
 
-// Hardware-independent play-mode state machine for CHOMPI-BOWLS
-// (plans/improve-play-modes.md, plans/midi-input-and-cc-control.md).
-// Owns the performance mode, the SHIFT + lower-black-key mode
-// shortcuts, per-source per-key press provenance (which input source
-// holds which key, and in which mode the press began, so a release
-// after a mode switch still releases the right note) and the Rimming
-// LOOP / Strike PLAY latches. No audio, no hardware: chompi_main.cpp
-// feeds debounced key/transport/MIDI events in and executes the returned
-// KeyAction on the voice pool; pad gate-offs are reconciled from PadOn()
-// every block, so a single event can never lose a release.
-//
-// Ownership: every held note is a per-SOURCE claim (local keyboard,
-// MIDI DIN, MIDI USB). A Rimming pad gate stays open while ANY source
-// owns the (mode, key) identity - one sender's Note Off never
-// releases another sender's pad. Latch and sustain (CC 64) deferrals
-// are source-aware too, so CC 123 cleans one sender without erasing
-// the others.
-//
-// Rimming latch rules (preserved but inert in Strikes):
-//   - latch off: note-on opens the pad gate, note-off releases it
-//   - LOOP on captures the currently held, sounding pad notes (any
-//     source); a later note-on toggles that SOURCE's claim on
-//     (latched) or off (released immediately, even while the note
-//     stays held); note-off alone never releases a latched note
-//   - LOOP off clears all latch flags; latched-only notes enter the
-//     10 s release, held notes keep their gate to note-off
-//   - Rimming -> Strikes preserves latch, gates and deferred claims;
-//     Rimming -> Split clears them, releasing latched-only notes
-//   - a stolen latched or held note is unlatched and never restarts
-//     by itself
-// Strike latch rules (enabled in Strikes; preserved but inert elsewhere):
-//   - PLAY on captures held strikes; later key-downs toggle a latch that
-//     retriggers after the resonator tail ends
-//   - Strike arpeggio modes order latched strikes; the duration-loop
-//     mode preserves the tail-driven retrigger behavior
-// Latch, held-key, sustain and pad state are transient - never
-// persisted.
+// Hardware-independent play-mode state machine. Tracks local, DIN and
+// USB note claims, mode shortcuts, and the Rimming LOOP / Strike PLAY
+// latches. chompi_main.cpp applies returned actions to the voice pool.
+// Note ownership and sustain deferrals are per source; latch and
+// performance state are transient and are not saved.
 
 #include "bowl_scale.h"
 

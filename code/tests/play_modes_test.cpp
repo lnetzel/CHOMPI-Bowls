@@ -1,8 +1,7 @@
-// Host-side tests for the play-mode state machine and the 25-key mode
-// maps (plans/improve-play-modes.md). Not part of the firmware build;
-// run with `make -C code/tests modes-test` from the MSYS2 UCRT64 shell.
+// Host-side tests for the play-mode state machine and 25-key maps.
+// Run with `make -C code/tests modes-test` from the MSYS2 UCRT64 shell.
 //
-//   M1  mappings: Split keeps the original 24 pitches + the added
+//   M1  mappings: Split uses 12 rim bowls and 13 strike keys
 //       1240.8 Hz top strike; Strikes/Rimming share 25 distinct,
 //       ascending fundamentals; shortcuts are lower F#/G#/A# (6/8/10)
 //   M2  shortcut consumption: press/release in both SHIFT orders,

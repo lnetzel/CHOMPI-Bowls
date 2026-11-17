@@ -1,6 +1,6 @@
 #pragma once
 
-// Bowl profile data for CHOMPI-BOWLS (spec: plans/CHOMPI-BOWLS-plan.md).
+// Bowl profile data for CHOMPI-BOWLS.
 //
 // A BowlProfile is pure data - modal frequency ratios, paired-mode detune
 // offsets, per-mode T60 decay times and excitation weights - so new bowl

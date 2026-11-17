@@ -1,8 +1,8 @@
 /** @file MidiHandler.h
  *  @brief MIDI transport for CHOMPI-BOWLS: DIN/UART and USB MIDI
- *  input plus local-key note output (plans/midi-output-to-daw.md).
+ *  input plus local-key note output.
  *
- *  Two-layer design, per the plan's realtime rules:
+ *  Two-layer design:
  *    - The PURE layer (BowlsMidiEvent, MidiEventQueue, MidiRouter,
  *      ArbitrateRub) has no Daisy dependencies and is exercised by the
  *      host tests (code/tests/midi_test.cpp, `make midi-test`).

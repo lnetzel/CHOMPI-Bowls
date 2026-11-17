@@ -1,6 +1,4 @@
-# Host-side DSP regression tests for the platform-independent BowlVoice
-# header (plans/rimming_texture_direction_plan.md). NOT part of the
-# firmware build. Run from the MSYS2 UCRT64 shell:
+# Host-side DSP tests for BowlVoice. Run from the MSYS2 UCRT64 shell:
 #   make -C code/tests test
 # The UCRT64 bin dir must be on PATH (export PATH=/c/msys64/ucrt64/bin:$PATH).
 
@@ -15,8 +13,7 @@ test: render_test.exe
 cal: render_test.exe
 	./render_test.exe cal
 
-# Strike work (plans/improve_striking_character_plan.md): analyze the
-# two reference recordings vs current-engine renders at matched pitches.
+# Compare current-engine renders with the two reference recordings.
 analyze: strike_analyze.exe
 	./strike_analyze.exe compare
 
@@ -30,16 +27,11 @@ strike-test: strike_test.exe
 strike_test.exe: strike_test.cpp ../src/bowl_voice.h ../src/bowl_profile.h ../src/bowl_scale.h ../src/control_mappings.h
 	$(CXX) $(CXXFLAGS) -o $@ strike_test.cpp
 
-# Regenerate .baseline/baseline.raw from the PRE-CHANGE header snapshot
-# in .baseline/. The snapshot was copied before the rim-texture change;
-# do not refresh it from a post-change tree (that defeats T0).
+# Regenerate the stored reference render.
 baseline: baseline_gen.exe
 	./baseline_gen.exe
 
-# Play-modes feature tests (plans/improve-play-modes.md): the
-# hardware-independent mode/key/latch state machine, the clean-pad
-# envelope DSP, and the v11 preset schema (needs coreJSON, compiled as
-# C99 like the firmware does).
+# Play-mode, clean-pad envelope and preset schema tests.
 modes-test: play_modes_test.exe pad_test.exe preset_test.exe
 	./play_modes_test.exe
 	./pad_test.exe

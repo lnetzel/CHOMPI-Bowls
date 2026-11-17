@@ -1,6 +1,4 @@
-// Host-side strike regressions for the improved striking character
-// (plans/improve_striking_character_plan.md). Not part of the firmware
-// build; run with `make -C code/tests strike-test`.
+// Host-side strike tests. Run with `make -C code/tests strike-test`.
 //
 //   S1  determinism: identical fresh-voice renders are bit-identical
 //   S2  block-size equivalence: ProcessBlock(24) vs ProcessBlock(1)

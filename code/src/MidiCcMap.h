@@ -1,12 +1,11 @@
 /** @file MidiCcMap.h
  *  @brief Note/CC number map and value conversions for the CHOMPI-BOWLS
- *  MIDI input (plans/midi-input-and-cc-control.md; user reference:
- *  midi.md at the repository root).
+ *  MIDI input (see midi.md for the full protocol reference).
  *
  *  Header-only with no Daisy dependencies, so the host tests can include
- *  it (same convention as BowlsPreset.h / play_modes.h). Conventions
- *  follow the sibling CHOMPI-PIPES firmware: fixed channel 1, velocity-0
- *  Note On treated as Note Off, and the 33-position tick conversion
+ *  it (same convention as BowlsPreset.h / play_modes.h). MIDI uses
+ *  fixed channel 1, velocity-0 Note On as Note Off, and a 33-position
+ *  tick conversion.
  *  `t = (v * 32 + 63) / 127` for every saved rotary parameter.
  *
  *  Every preset-saved rotary parameter has a CC. All CCs
@@ -93,7 +92,7 @@ namespace MidiCcMap
 
      * CC value -> panel ticks 0..32 (the shared 33-position grid):
      * values 0 / 32 / 64 / 95 / 127 select ticks 0 / 8 / 16 / 24 / 32.
-     * Same formula as CHOMPI-PIPES ParameterSteps::CcToPosition. */
+     */
     inline int CcToTicks(uint8_t v)
     {
         return (static_cast<int>(v) * 32 + 63) / 127;

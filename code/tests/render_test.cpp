@@ -1,12 +1,10 @@
-// Host-side regression renderer for the direction-selected rim texture
-// (plans/rimming_texture_direction_plan.md). Not part of the firmware
-// build; run with `make -C code/tests test` from the MSYS2 UCRT64 shell.
+// Host-side DSP tests for direction-selected rim texture.
+// Run with `make -C code/tests test` from the MSYS2 UCRT64 shell.
 //
 // Settings for every render: 48 kHz, 24-sample blocks (the firmware's
 // control/audio quantum), deterministic voices (same Init seed).
 //
-//   T0  rub path (both rimming characters + crossfade) is
-//       sample-identical to the hardware-accepted baseline
+//   T0  rub path (both rimming characters + crossfade) matches the saved render
 //       (.baseline/baseline.raw; skipped with a note when absent)
 //   T1  textured sustained RMS matches the recorded anchor (<= 1 dB)
 //   T2  clean from silence: blooms, sustains at the friction path's

@@ -6,13 +6,13 @@ argument-hint: '[clean] [cpu-meter]'
 
 # Build CHOMPI-BOWLS Firmware
 
-Builds the firmware per the "Building on Windows" section of the repo README and, after **every** build, presents a memory-usage table for the SRAM, SRAM_EXEC and SDRAM regions.
+Builds the firmware per the README's Build section and, after **every** build, presents a memory-usage table for the SRAM, SRAM_EXEC and SDRAM regions.
 
 ## Prerequisites (from README)
 
 - **MSYS2** with an **UCRT64** shell and GNU Make (`pacman -S --needed make`).
 - **Arm GNU Toolchain 10.3-2021.10** (`arm-none-eabi-gcc` 10.3.1) installed at `C:\armgnu\10.3-2021.10`. Exactly this version — the prebuilt libs and the SRAM budget are tuned to it.
-- Everything else (libDaisy, DaisySP, coreJSON, prebuilt `.a` files) is vendored in `code/libs/`.
+- Library dependencies must be available under `code/libs/`; see the README.
 
 ## Procedure
 
@@ -58,12 +58,12 @@ Parse those lines and present **exactly this table** (only these three regions, 
 | SRAM (data/bss)  | ... B | 280 KB | ...% |
 | SDRAM            | ... B | 64 MB  | ...% |
 
-Add a one-line note if any region exceeds 90% used (SRAM is the usual bottleneck — "CHOMPI-PHASEOFF runs out of SRAM, not flash").
+Add a one-line note if any region exceeds 90% used.
 
 **Fallback** if the memory-usage lines are missing from the output: run
 
 ```powershell
-C:\msys64\usr\bin\bash.exe -lc 'export PATH="/c/armgnu/10.3-2021.10/bin:$PATH"; arm-none-eabi-size -A /c/Dev/CHOMPI-PHASEOFF/code/src/build/CHOMPI_BOWLS_v1.0.elf'
+C:\msys64\usr\bin\bash.exe -lc 'export PATH="/c/armgnu/10.3-2021.10/bin:$PATH"; arm-none-eabi-size -A /c/Dev/CHOMPI-Bowls/code/src/build/CHOMPI_BOWLS_v1.0.elf'
 ```
 
 and sum section sizes by load address (per `code/src/chompi_sram.lds`):
@@ -77,5 +77,5 @@ and sum section sizes by load address (per `code/src/chompi_sram.lds`):
 ## Notes
 
 - Output binary: `code/src/build/CHOMPI_BOWLS_v1.0.bin` — install by copying it to the SD card root (delete other `.bin` files); do not flash the bootloader.
-- Do **not** rebuild the vendored libDaisy/DaisySP libraries unless asked; the build links the committed prebuilt `.a` files.
+- For routine firmware builds, use the existing library archives. Rebuild the library targets only when setting up or updating dependencies.
 - Native DSP tests are a separate target (`make -C code/tests test`); run them only when the user explicitly requests tests alongside the build. Never do this on your own initiative.

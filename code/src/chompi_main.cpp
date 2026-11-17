@@ -1,118 +1,5 @@
-// CHOMPI-BOWLS.
-//
-// A five-voice modal singing-bowl instrument with three play modes
-// (plans: plans/bowls-v1-first-firmware.md,
-// plans/split-strike-and-rimming-plan.md, plans/improve-play-modes.md).
-// Each strike excites eight paired resonant modes (16 resonators per
-// voice) with per-mode decay, paired-mode beating (shimmer) and a
-// finite-contact mallet excitation. The five voices are shared by all
-// modes; a sixth simultaneous note steals the quietest unprotected voice
-// (preserved Rimming and Strike latches are protected across modes).
-// never interrupts ringing voices or reverb tails: outgoing voices keep
-// their sound, and the wheel only drives notes started in the current
-// mode. Persistent parameters are stored only in explicitly saved presets;
-// the LOOP/PLAY latches and all other performance state remain transient.
-//
-//   Play modes            : SHIFT + lower F# (key 6) = SPLIT - keys 0-11
-//                         select a bowl for wheel rimming; keys 12-24
-//                         strike. SHIFT + lower G# (key 8) = STRIKES - all 25
-//                         keys strike distinct ascending bowls; the
-//                         wheel rims currently sounding, physically
-//                         held strikes. SHIFT + lower A# (key 10) =
-//                         RIMMING - all 25 keys hold clean sustained
-//                         bowl pads (10 s attack to 90%, 10 s release
-//                         to 10%); the wheel adds the direction-
-//                         dependent rimming; LOOP toggles a note
-//                         latch: enabling captures the held sounding
-//                         pads, key-down toggles a note on/off, key-up
-//                         never releases a latched note. In STRIKES, a
-//                         separate PLAY latch captures held strikes;
-//                         later key-downs toggle blue notes that retrigger
-//                         after their resonator tails end. SPLIT uses
-//                         the v1 layout: keys 0-11 (C3-B3) SELECT one of
-//                         the 12 bowls for wheel rimming (never strike),
-//                         keys 12-23 strike the same 12 bowls, key 24
-//                         (C5) strikes an added higher bowl. A shortcut
-//                         consumes its key through release - it never
-//                         sounds a note or moves the edit target.
-//   Physical encoder 1 (SW4/ENC_4): per-bowl editor for the selected
-//                         bowl (the last played/selected key IN THE
-//                         CURRENT MODE; pan, bowl volume, tuning,
-//                         resonance character, brightness and decay
-//                         are independent per key per mode); press
-//                         cycles three pages. Page 1:
-//                         bowl volume (LED2 green, green bar; 16 =
-//                         unity, 32 = +6 dB; rides ringing voices
-//                         live); SHIFT+turn = pan the bowl left/right
-//                         (cyan bar from white key 8 toward the panned
-//                         side). Page 2: resonance character -
-//                         profile select 1-5 (LED2 orange; five 3-key
-//                         orange sections; two detent ticks per
-//                         step). Page 3: direct bowl frequency in Hz
-//                         (LED2 violet, logarithmic LED bar from
-//                         40 to 10,000 Hz; normal turn ~= 1%, SHIFT
-//                         + turn = 1 Hz; next strike/selection)
-//   Physical encoder 2 (SW1/ENC_1): strike hardness (LED3 amber, amber
-//                         bar, GLOBAL); SHIFT+turn = brightness of the
-//                         selected bowl (yellow-white bar; rides the
-//                         ringing voice live)
-//   Physical encoder 3 (SW2/ENC_2): decay of the selected bowl (LED4
-//                         blue, blue bar; rides the ringing voice live)
-//   Physical encoder 4 (SW3/ENC_3): shimmer - paired-mode detune (LED5
-//                         purple, centered purple bar)
-//   Transport wheel     : rimming - detents pump the PER-(MODE,KEY)
-//                         rub level of the wheel set: SPLIT = the held
-//                         rim-zone keys (max two) or the last-pressed
-//                         rim key; STRIKES = currently sounding held
-//                         strikes; RIMMING = held or latched pads.
-//                         During a latched Strike arpeggio (not the
-//                         duration-loop pattern), clockwise increases
-//                         its free-running rate or shortens its MIDI
-//                         clock divider. Otherwise the wheel rims as
-//                         before; it never creates a strike or revives
-//                         a stolen note.
-//   Volume encoder      : press cycles page 1 master volume / page 2
-//                         stereo delay (yellow bar/LED; turn = combined
-//                         mix/feedback, SHIFT+turn = 40..500 ms time) /
-//                         page 3 temple-room reverb mix (pale ice)
-//   SHIFT (KEY_26)      : modifier + mode shortcuts; while held, the
-//                         active mode's shortcut key glows blue
-//                         (Strikes), yellow (Rimming) or pink (Split);
-//                         the active audio routing's selection key
-//                         glows pink. SHIFT + Black 6 (C#4) = Normal
-//                         audio routing, SHIFT + Black 7 (D#4) =
-//                         Send FX routing (audio_routing.h); the
-//                         combo is consumed - it never sounds a note
-//                         or moves the bowl editor target.
-//                         SHIFT + White Key 1-15 loads that preset;
-//                         SHIFT + Black F#4/G#4/A#4 enters erase/copy/save
-//                         selection, confirmed with a fresh SHIFT press.
-//                         LOOP (KEY_28)       : tap toggles the Rimming note latch (yellow);
-//                         retained in Strikes, cleared on entry to Split;
-//                         hold with PLAY for recording arm/stop; in
-//                         playback, tap toggles take looping (blue).
-//   PLAY (KEY_27)       : in Strikes, tap toggles the Strike note latch;
-//                         SHIFT+PLAY cycles its pattern (dim/bright blue =
-//                         Duration Loop, green = Bottom Pair, orange = Top
-//                         Pair, purple = Middle Pair);
-//                         hold alone 2 s to enter/exit playback;
-//                         in playback, tap pauses/resumes. SW_TOG is reserved.
-//
-// Every encoder turn shows its bar on the 15 white keys for ~500 ms (the
-// CHOMPI-PhaseOff overlay pattern); with no bar up, held Strike notes
-// light blue, held Rimming notes yellow and ringing voices glow dim amber.
-//
-// Audio: 48 kHz, block 24, dual codec - headphones are outputs 0/1 and
-// the master line out is outputs 2/3 (per the TAPE firmware channel
-// map); AUX IN is inputs 2/3. Two selectable routings
-// (audio_routing.h): Normal (boot default) sends the same bowl bus x
-// master gain to both output pairs; Send FX sends the dry bowl bus at
-// fixed unity (pre-master-gain) to the line out - an external-effects
-// send - and the AUX IN return x master gain to the headphones (the
-// volume knob is the return level). The return never leaves through
-// the line out, so a feedback loop is impossible. The SD recorder
-// taps the performed signal pre-master-gain: the bowl bus in Normal,
-// the AUX IN return in Send FX.
+// CHOMPI-BOWLS firmware entry point. Connects the hardware, voice
+// engine, play modes, presets, MIDI, and SD recording/playback.
 
 #include "chompi_hardware.h"
 #include "leds.h"
@@ -252,8 +139,7 @@ enum class Overlay : int
     Tune,
 };
 
-// White-key bars are temporary: refreshed while turning, gone 500 ms
-// later (the CHOMPI-PhaseOff overlay behavior).
+// White-key bars disappear 500 ms after turning.
 constexpr uint32_t kOverlayMs = 500;
 
 uint32_t PitchToMilliHz(float pitch_hz)
@@ -339,7 +225,7 @@ volatile int  vol_page_      = kVolPageVolume;
 volatile int routing_ = bowls::kRoutingDefault;
 
 // ---------------------------------------------------------------------------
-// MIDI input (plans/midi-input-and-cc-control.md; user docs: midi.md)
+// MIDI input.
 // ---------------------------------------------------------------------------
 
 // DIN (UART) + USB MIDI device, fixed channel 1. Input parsers and output
@@ -2956,7 +2842,7 @@ void PresetShiftConfirm()
     }
 }
 
-/** Match the CHOMPI-PIPES preset gestures while keeping note releases
+/** Handle preset gestures while keeping note releases
  *  for notes that began before a selection view was entered. */
 bool PresetKeyEvent(int key, bool down, bool shift)
 {
@@ -3061,13 +2947,8 @@ void BootBlink(int count, uint8_t r, uint8_t g, uint8_t b)
 int main()
 {
     hw.Init();
-    // MIDI in/out: DIN (UART RX/TX D13/D14) + the panel USB-C device
-    // port, channel 1 (plans/midi-output-to-daw.md).
-    // Initialized first, right after the hardware - the same boot order
-    // as the known-good CHOMPI-PIPES firmware. USB MIDI owns the shared
-    // USB device-mode descriptor, so the USB serial diagnostics are
-    // compiled out of MIDI builds (BOWLS_LOG); CPU_METER builds keep
-    // the serial log and skip USB MIDI instead.
+    // MIDI uses DIN (UART RX/TX D13/D14) and the panel USB-C port.
+    // The USB device mode is reserved for MIDI except in CPU_METER builds.
     midi.Init(kUsbMidiEnable);
     hw.ConfigureUsbDevicePath();
     bbd_delay.Init(kSampleRate, delay_buffer_l, delay_buffer_r);

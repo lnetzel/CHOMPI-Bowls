@@ -3,9 +3,6 @@
 // CHOMPI addressable LED driver.
 // 25 SMT keyboard LEDs on D18 (PA7, TIM3_CH2, GRB order) and
 // 10 PTH panel LEDs on D16 (PA3, TIM5_CH4, RGB order).
-// Timing and mapping follow the CHOMPI-pitch-quiz keyboard_leds.h driver,
-// which in turn derives from TAPE temp_led_stuff.h.
-//
 // Usage: SetSmtLed / SetPthLed write to shadow buffers, Flush() encodes the
 // WS2812 bitstream and pushes both chains out with polled DMA transfers.
 

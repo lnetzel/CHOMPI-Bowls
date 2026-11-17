@@ -1,6 +1,5 @@
-// Host-side tests for the clean-pad gate/envelope in bowl_voice.h
-// (plans/improve-play-modes.md). Not part of the firmware build; run
-// with `make -C code/tests modes-test` from the MSYS2 UCRT64 shell.
+// Host-side tests for the clean-pad gate/envelope in bowl_voice.h.
+// Run with `make -C code/tests modes-test` from the MSYS2 UCRT64 shell.
 //
 //   P1  pad attack: from silence the pad-drive envelope reaches
 //       0.90 +/- 0.005 after exactly 10 s

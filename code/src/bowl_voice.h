@@ -1,77 +1,9 @@
 #pragma once
 
-// Modal singing-bowl voice for CHOMPI-BOWLS (spec: plans/CHOMPI-BOWLS-plan.md).
-//
-// One voice = one independently struck bowl: eight vibration modes, each
-// realised as a PAIR of second-order resonators (16 total). The pair
-// members are detuned by a few Hz, which produces the characteristic
-// beating/shimmer of real bowls without any LFO.
-//
-//   y[n] = g * x[n] + c1 * y[n-1] - c2 * y[n-2]
-//   c1 = 2 r cos(w), c2 = r^2, w = 2 pi f / fs
-//   r   = exp(-6.9078 / (T60 * fs))   (-60 dB at T60 seconds)
-//   g   = sin(w)                      (equal peak response across modes: a
-//                                      strike puts the same energy into a
-//                                      mode no matter how long it rings;
-//                                      the level comes from the excitation
-//                                      weight, the sustain from T60)
-//
-// Every mode decays independently (no global amplitude envelope), so the
-// tone evolves naturally after the strike. Coefficients are computed only
-// at strike time or when a live parameter changes - no trig in the audio
-// path. A re-strike's contact briefly damps the still-ringing state (the
-// mallet rests on the bowl), so re-hits stay consistent instead of
-// phase-cancelling the old ring; the state is never hard-reset.
-//
-// Excitation = a finite-contact mallet model, not a raw impulse. A
-// single-sample impulse is flat to Nyquist - a digital click that the
-// resonators pass straight through during the burst (ya = x + ...), so
-// both the dry strike and the reverb send splatter. Instead: a smooth
-// contact-force bump (zero value AND zero slope at both ends) over a
-// short, hardness-scaled mallet contact (~1.1-1.6 ms at high pitches,
-// extended to 1.5 cycles at low pitches), plus a subtle contact tick:
-// high-passed noise above the second mode inside a ~1.2 ms initial-touch
-// sub-burst. The cutoff follows the played pitch and bowl profile. The
-// tick is enabled by default and can be isolated through the host
-// diagnostic hook. Both are distributed
-// across the modes with per-mode weights. The Strike parameter tilts the burst
-// spectrum (soft = low modes; the hardest contact is capped at a
-// medium-bright mallet). Brightness adds a strong high-mode shelf
-// (applied at the next strike) and also opens up the rubbed modes live.
-// Rim rubbing feeds a low-level continuous excitation into the voice
-// for as long as the wheel is turned, in two characters selected by
-// the wheel direction (chompi_main.cpp):
-//   clockwise         = friction noise, two-pole lowpassed to a narrow
-//                       band (~3x the fundamental, capped at 750 Hz),
-//                       driving mainly the lowest modes - a real rubbed
-//                       rim sings the fundamental, and wideband noise
-//                       reads as hiss (worst on high bowls)
-//   counter-clockwise = a CLEAN sustained tone: phase-continuous
-//                       rotation oscillators at each pair's (wandering)
-//                       modal frequencies drive the same resonators in
-//                       place of the noise. The drive is normalized by
-//                       sqrt(1-r): a sustained sine at resonance builds
-//                       to A/(2(1-r)), so the sustained level scales
-//                       with 1/sqrt(1-r) - the same Decay-knob law as
-//                       broadband friction noise - and stays bounded at
-//                       the longest decays.
-// The characters crossfade over ~100 ms on a reversal (no re-strike,
-// no phase reset, no doubled drive); in full clean mode the friction
-// path is skipped outright, so its contribution is exactly zero.
-// The Rimming play mode adds a clean-pad gate: while a key is held (or
-// LOOP-latched), the same phase-continuous rotation oscillators are
-// driven by a slow pad envelope (10 s attack to 90%, 10 s release to
-// 10% of the note-off level), mixed into the wheel's clean drive with
-// a bounded sum that can never exceed the wheel path's own maximum.
-// With the pad gate off the wheel DSP path is bit-identical to the
-// accepted regression baseline.
-//
-// Stereo: pair member A sits slightly left, member B slightly right, the
-// spread widening for higher modes; the fundamental stays ~centred. A
-// per-bowl pan (-1..+1, encoder 1 page 1 SHIFT+turn) tilts the whole
-// voice, and a per-bowl volume trim (0..2, encoder 1 page 1 turn) scales
-// its output; pan and gain are smoothed per sample, so live edits never
-// zipper-noise.
+// Modal singing-bowl voice for CHOMPI-BOWLS. Each voice has eight pairs
+// of detuned resonators with per-mode decay and excitation. Strikes use
+// finite-contact excitation; wheel rubbing and sustained pads drive the
+// same resonators. See bowl_profile.h for modal data.
 
 #include "bowl_profile.h"
 
@@ -356,7 +288,7 @@ class BowlVoice
     }
 
     /** Strike with independent timbral hardness and excitation amplitude.
-     *  The legacy Strike() entry point retains the local keyboard level curve. */
+     *  Strike() applies the local keyboard level curve. */
     void StrikeWithAmplitude(float fundamental_hz,
                              float strike_norm,
                              float strike_amplitude,
@@ -367,17 +299,13 @@ class BowlVoice
         fundamental_     = fundamental_hz;
         detune_jitter_   = detune_jitter;
         intensity_       = strike_amplitude * amp_jitter;
-        // A strike takes the voice over completely: a leftover pad
-        // gate/envelope (a stolen Rimming voice) ends here. The old
-        // ring itself is handled by the contact damping below.
+        // A strike closes any pad gate; contact damping handles the ring.
         pad_gate_ = false;
         pad_env_  = 0.0f;
 
         const BowlProfile& p = GetBowlProfile(profile_);
-        // The strike spectral tilt is capped at half range: the hardest
-        // strike sounds like the former 50% position - harder contact
-        // than that stops sounding like a bowl. (Loudness is unaffected:
-        // intensity_ still uses the full strike_norm range.)
+        // Cap spectral tilt at half range; strike loudness still uses
+        // the full strike_norm range.
         const float softness = 1.0f - 0.5f * strike_norm;
 
         // Scale contact with hardness and the played pitch. Low notes
@@ -393,10 +321,7 @@ class BowlVoice
             burst_len_ = 12;
         burst_pos_ = burst_len_;
 
-        // Brightness blends the dark strike voicing into the same
-        // per-mode shelf used by the rim path. At maximum, compensate
-        // for the contact pulse's frequency rolloff; at zero, the
-        // original strike voicing is unchanged.
+        // Brightness blends strike voicing into the per-mode rim shelf.
         const float brightness_blend
             = brightness_ <= 0.0f ? 0.0f
               : brightness_ >= 1.5f
@@ -668,10 +593,7 @@ class BowlVoice
             {
                 // Bounded pad/wheel mix: the pad fills only the
                 // headroom the wheel's clean drive leaves, so the sum
-                // can never exceed the wheel path's own maximum drive
-                // (no doubling, no click). With no pad this branch is
-                // skipped and the wheel DSP path is bit-identical to
-                // the accepted baseline.
+                // can never exceed the wheel path's maximum drive.
                 clean_lvl += kPadDrive * pad_env_ * (1.0f - clean_lvl);
             }
 
@@ -710,9 +632,7 @@ class BowlVoice
                 // what radiates is the bowl's response, not the raw
                 // mallet force - the references show no direct-force
                 // transient at all (first 2 ms are 40-60 dB down).
-                // The rub paths keep their direct term: the friction /
-                // clean feedthrough is part of their established
-                // texture (and their regression baseline).
+                // The rub paths include their direct feedthrough.
                 const float x_rub = rub_exc * pair_in_[m] * rub_weight_[m]
                                         * rub_bright
                                     + clean_exc;

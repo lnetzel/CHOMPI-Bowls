@@ -4,7 +4,7 @@
  *
  *  Schema v11 stores persistent panel parameters in per-mode objects,
  *  including each mode's per-key values and direct fundamental frequencies.
- *  Legacy schemas are rejected.
+ *  Only the current schema is accepted.
  */
 #pragma once
 #include <cstdint>
@@ -578,8 +578,8 @@ inline bool QueryPitchArrayStrict(char *buf, size_t len, const char *query,
     return i + 1 == value_len && value[i] == ']';
 }
 
-/** Parse a complete current-schema preset document. Legacy, malformed,
- *  truncated and partially valid documents are rejected without
+/** Parse a complete current-schema preset document. Unsupported,
+ *  malformed, truncated and partially valid documents are rejected without
  *  changing the destination. */
 inline bool Parse(char *buf, size_t len, BowlsPreset &p)
 {
@@ -643,8 +643,8 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
     return true;
 }
 
-/** Recover slots written by firmware without newlib-nano float printf
- *  support. Their non-pitch fields are intact, but pitch values were NULs. */
+/** Restore factory pitch values for a malformed stored pitch table while
+ *  preserving the preset's other parameters. */
 inline bool ParseWithPitchFallback(char *buf, size_t len, size_t capacity,
                                    const BowlsPreset &fallback,
                                    BowlsPreset &p)

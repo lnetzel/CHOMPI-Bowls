@@ -63,8 +63,7 @@ class PresetStorage
         no_sd_card_ = disk_status(0) != RES_OK;
     }
 
-    /** Parse the embedded factory template. This is used on every boot,
-     *  whether or not an SD card or any saved slot is present. */
+    /** Parse the embedded factory preset on every boot. */
     bool LoadFactoryDefaults(BowlsPreset &preset)
     {
         const std::uintptr_t begin

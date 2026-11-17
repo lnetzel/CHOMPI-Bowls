@@ -1,10 +1,9 @@
 #pragma once
 
-// Audio routing selection for CHOMPI-BOWLS: normal monitoring or an
-// external stereo send-FX loop. Adapted from the CHOMPI-PIPES plan
-// (plans/audio_routing_plan.md there) - same hardware, same key combo.
+// Audio routing selection for normal monitoring or an external stereo
+// send-FX loop.
 //
-//   Normal  (boot default, the v1 behavior, bit-exact): the bowl bus
+//   Normal  (boot default): the bowl bus
 //           x master gain goes to BOTH the headphones (out 0/1) and
 //           the master line out (out 2/3). AUX IN is not monitored.
 //   Send FX: the line out carries only the bowl bus, pre-master-gain,
@@ -16,16 +15,11 @@
 //           into AUX IN the headphones are silent - by design: the
 //           line out keeps sending the dry bowls.
 //
-// Selection: SHIFT + Black 6 (C#4, key 13) = Normal, SHIFT + Black 7
-// (D#4, key 15) = Send FX. Those are the black keys the play-mode
-// shortcuts (the lower black keys 6/8/10) do not use, so there is no
-// conflict. Session-only: boots to Normal, never stored in the SD
-// preset. Switching is instantaneous, like flipping a hardware
-// routing switch; a brief click is possible when switching mid-note.
+// Selection: SHIFT + Black 6 (C#4, key 13) = Normal; SHIFT + Black 7
+// (D#4, key 15) = Send FX. Routing is session-only and resets to Normal
+// at boot.
 //
-// Hardware-independent, like play_modes.h: no Daisy includes, so the
-// native tests (code/tests/audio_routing_test.cpp) exercise the exact
-// production logic.
+// Hardware-independent; the host tests use this same implementation.
 
 #include "bowl_scale.h" // kModeShortcutKey / kKeyCount for the guards
 
@@ -94,9 +88,7 @@ constexpr float kRoutingColorB = 0.5f;
  *  reverb dry/wet mix, BEFORE the master gain; `aux_*` is the AUX IN
  *  return sample; `master_gain` is the smoothed volume-knob gain. The
  *  four results are pre-softclip levels - the caller applies the
- *  codec-boundary SoftClip, so the Normal path stays bit-exact with
- *  the v1 firmware and the Send FX line send equals the Normal-mode
- *  line out with the volume knob at maximum. */
+ *  codec-boundary SoftClip. */
 inline void RouteOutputs(int   routing,
                          float bus_l,
                          float bus_r,
