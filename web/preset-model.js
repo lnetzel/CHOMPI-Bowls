@@ -31,7 +31,7 @@ export function createFactoryPreset() {
     Object.keys(BANK_RANGES).map((field) => [
       field,
       Object.fromEntries(MODES.map((mode) => [mode, Array(KEY_COUNT).fill(
-        field === "pan" ? 16 : field === "bvol" ? 8 : field === "bright" ? 24 : 0,
+        field === "pan" ? 16 : field === "bvol" ? 16 : field === "bright" ? 16 : 0,
       )])),
     ]),
   );
@@ -104,9 +104,16 @@ export function applyTuning(preset, pitches) {
     throw new Error("A tuning must contain 25 pitches from 40 to 10,000 Hz.");
   }
   const updated = clonePreset(preset);
-  updated.pitch_hz = Object.fromEntries(
-    MODES.map((mode) => [mode, [...pitches]]),
-  );
+  const splitPitches = [
+    ...pitches.slice(0, 12),
+    ...pitches.slice(0, 12),
+    pitches[12],
+  ];
+  updated.pitch_hz = {
+    strikes: [...pitches],
+    rimming: [...pitches],
+    split: splitPitches,
+  };
   return updated;
 }
 

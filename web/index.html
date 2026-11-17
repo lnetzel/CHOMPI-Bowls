@@ -14,6 +14,7 @@
           <p class="eyebrow">CHOMPI Open Source Community</p>
           <h1>BOWLS Preset Editor</h1>
           <p class="intro">Edit preset values and select from different tuning options.</p>
+          <p>TIPS: It's possible to store presets while playing in latch modes. Since it's possible to load presets one can try things out very quick.</p>
         </div>
         <span id="draft-state" class="state-chip">No preset loaded</span>
       </header>
@@ -99,8 +100,13 @@
                 <option value="">Choose a tuning (optional)</option>
               </select>
               <p id="tuning-description" class="muted">No tuning selected.</p>
+            </section>
+
+            <section class="subpanel tuning-preview-panel" aria-labelledby="tuning-preview-heading">
+              <h3 id="tuning-preview-heading">Tuning pitch preview</h3>
+              <p id="tuning-preview-note" class="muted">The first 12 pitches are reused in Split Play mode for both rimming and strike</p>
               <div id="tuning-preview" class="pitch-preview" aria-live="polite"></div>
-              <button id="apply-tuning" type="button" disabled>Apply to all modes</button>
+              <button id="apply-tuning" class="apply-tuning-button" type="button" disabled>Apply to all bowls</button>
             </section>
           </div>
 

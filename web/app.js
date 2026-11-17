@@ -57,14 +57,29 @@ const state = {
   dirty: false,
 };
 
+const BOWL_PROFILES = [
+  { value: 0, name: "Temple", description: "Measured 180 mm bowl ratios; balanced resonance with a long fundamental ring." },
+  { value: 1, name: "Deep", description: "Tighter resonance ratios, gentler beating, and the longest ring." },
+  { value: 2, name: "Bright", description: "Wider resonance ratios, quicker decay, and stronger upper partials." },
+  { value: 3, name: "Wide", description: "Temple-like resonance with stronger detuning for pronounced beating." },
+  { value: 4, name: "Thin", description: "Shorter decay and stronger upper partials for a thin, bright tone." },
+];
+
 const FIELD_CONFIG = [
   { field: "pan", label: "Pan", kind: "range", min: 0, max: 32, step: 1 },
   { field: "bvol", label: "Bowl volume", kind: "range", min: 0, max: 32, step: 1 },
-  { field: "profile", label: "Bowl profile", kind: "select", values: [0, 1, 2, 3, 4] },
+  { field: "profile", label: "Bowl profile", kind: "select", options: BOWL_PROFILES },
   { field: "bright", label: "Brightness", kind: "range", min: 0, max: 32, step: 1 },
   { field: "decay", label: "Decay", kind: "range", min: 0, max: 32, step: 1 },
   { field: "pitch_hz", label: "Pitch (Hz)", kind: "number", min: 40, max: 10000, step: 0.001 },
 ];
+
+function getProfileDescription(value) {
+  const profile = BOWL_PROFILES.find((item) => item.value === Number(value));
+  return profile
+    ? profile.description
+    : "Different profiles are used across the preset.";
+}
 
 function setMessage(message, type = "info") {
   elements.deviceMessage.textContent = message;
@@ -383,16 +398,23 @@ function prepareEditor() {
     .filter((config) => config.field !== "pitch_hz")
     .map((config) => {
       const control = config.kind === "select"
-        ? `<select data-bank-global="${config.field}"><option value="" disabled>Mixed values</option>${config.values.map((value) => `<option value="${value}">${value}</option>`).join("")}</select>`
+        ? `<select data-bank-global="${config.field}" aria-label="${config.label}" aria-describedby="global-profile-description">${config.options.map((option) => `<option value="${option.value}">${option.name}</option>`).join("")}<option value="" disabled>Mixed values</option></select>`
         : `<input data-bank-global="${config.field}" type="${config.kind}" min="${config.min}" max="${config.max}" step="${config.step}">`;
       const output = config.kind === "select" ? "" : "<output></output>";
-      return `<label>${config.label}${control}${output}</label>`;
+      const description = config.field === "profile"
+        ? `<span id="global-profile-description" class="profile-description" data-profile-description>${BOWL_PROFILES[0].description}</span>`
+        : "";
+      return `<label>${config.label}${control}${description}${output}</label>`;
     }).join("");
   elements.keyControls.innerHTML = FIELD_CONFIG.map((config) => {
     const control = config.kind === "select"
-      ? `<select data-key-field="${config.field}">${config.values.map((value) => `<option value="${value}">${value}</option>`).join("")}</select>`
+      ? `<select data-key-field="${config.field}" aria-label="${config.label}" aria-describedby="key-profile-description">${config.options.map((option) => `<option value="${option.value}">${option.name}</option>`).join("")}</select>`
       : `<input data-key-field="${config.field}" type="${config.kind}" min="${config.min}" max="${config.max}" step="${config.step}">`;
-    return `<label>${config.label}${control}<output></output></label>`;
+    const description = config.field === "profile"
+      ? `<span id="key-profile-description" class="profile-description" data-profile-description>${BOWL_PROFILES[0].description}</span>`
+      : "";
+    const output = config.field === "profile" ? "" : "<output></output>";
+    return `<label>${config.label}${control}${description}${output}</label>`;
   }).join("");
 }
 
@@ -425,6 +447,12 @@ function renderGlobalBowlValues() {
     input.value = input.tagName === "SELECT" && !uniform ? "" : String(firstValue);
     const output = input.parentElement.querySelector("output");
     if (output) output.value = uniform ? String(firstValue) : "Mixed";
+    const description = input.parentElement.querySelector("[data-profile-description]");
+    if (description) {
+      description.textContent = uniform
+        ? getProfileDescription(firstValue)
+        : "Different profiles are used across the preset.";
+    }
   }
 }
 
@@ -436,6 +464,8 @@ function renderKeyValues() {
     input.value = String(value);
     const output = input.parentElement.querySelector("output");
     if (output) output.value = field === "pitch_hz" ? `${Number(value).toFixed(3)} Hz` : String(value);
+    const description = input.parentElement.querySelector("[data-profile-description]");
+    if (description) description.textContent = getProfileDescription(value);
   }
 }
 
@@ -564,7 +594,7 @@ function applySelectedTuning() {
   state.preset = applyTuning(state.preset, tuning.pitches);
   markChanged();
   renderKeyValues();
-  setMessage(`${tuning.name} applied to Strikes, Rimming, and Split. Individual pitches remain editable.`);
+  setMessage(`${tuning.name} applied to all 25 bowls in Strikes, Rimming, and Split. Individual pitches remain editable.`);
 }
 
 elements.connectMidi.addEventListener("click", connectToMidi);
@@ -630,6 +660,8 @@ document.addEventListener("input", (event) => {
       state.preset = setPresetValue(state.preset, field, state.mode, state.key, value);
       const output = input.parentElement.querySelector("output");
       if (output) output.value = field === "pitch_hz" ? `${value.toFixed(3)} Hz` : String(value);
+      const description = input.parentElement.querySelector("[data-profile-description]");
+      if (description) description.textContent = getProfileDescription(value);
       renderGlobalBowlValues();
       markChanged();
     } catch (error) {

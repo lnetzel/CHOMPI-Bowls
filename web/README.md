@@ -26,7 +26,7 @@ The 15-key slot bed shows saved, empty, pending, and incompatible slots.
 It loads on connection and refreshes automatically while idle and after a
 successful write. Selecting a saved slot loads its preset;
 selecting an empty slot sets the destination for **Save to slot**. Select a tuning and
-choose **Apply to all modes** to replace the 25 pitch values in Strikes,
+choose **Apply to all bowls** to replace the 25 pitch values in Strikes,
 Rimming, and Split. This action never changes the firmware's embedded
 factory preset. The global bowl controls apply pan, bowl volume, profile,
 brightness, or decay to all 25 keys in all three modes; individual bowl

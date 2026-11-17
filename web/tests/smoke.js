@@ -34,9 +34,13 @@ assert.ok(Math.abs(twelveTet.pitches[21] - 440) < 1e-9);
 const unchanged = JSON.stringify(factory);
 const tuned = applyTuning(factory, TUNINGS[2].pitches);
 assert.equal(JSON.stringify(factory), unchanged);
-for (const mode of ["strikes", "rimming", "split"]) {
-  assert.deepEqual(tuned.pitch_hz[mode], TUNINGS[2].pitches);
-}
+assert.deepEqual(tuned.pitch_hz.strikes, TUNINGS[2].pitches);
+assert.deepEqual(tuned.pitch_hz.rimming, TUNINGS[2].pitches);
+assert.deepEqual(tuned.pitch_hz.split, [
+  ...TUNINGS[2].pitches.slice(0, 12),
+  ...TUNINGS[2].pitches.slice(0, 12),
+  TUNINGS[2].pitches[12],
+]);
 const edited = setPresetValue(tuned, "pitch_hz", "rimming", 4, 444.125);
 assert.equal(edited.pitch_hz.rimming[4], 444.125);
 assert.equal(edited.pitch_hz.strikes[4], TUNINGS[2].pitches[4]);
