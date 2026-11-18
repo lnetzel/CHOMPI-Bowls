@@ -311,6 +311,11 @@ constexpr int kEnc1PageCharacter = 1;
 constexpr int kEnc1PageTune      = 2;
 volatile int  enc1_page_         = kEnc1PageVolume;
 
+// Encoder-4 pages (press cycles): global strike hardness -> global shimmer.
+constexpr int kEnc4PageStrike  = 0;
+constexpr int kEnc4PageShimmer = 1;
+volatile int  enc4_page_       = kEnc4PageStrike;
+
 enum PresetUiMode : int
 {
     kPresetNone = 0,
@@ -1608,28 +1613,37 @@ void ApplyControls()
         }
     }
 
-    // Physical encoder 2: strike hardness (GLOBAL); SHIFT+turn =
-    // brightness of the SELECTED bowl (per-(mode,key)). Brightness is
-    // pushed to the voice live: it brightens rubbing immediately and
-    // the next strike.
-    const int strike_inc = hw.EncoderIncrement(1);
-    if(shift)
+    // Physical encoder 2, page 1: brightness of the SELECTED bowl
+    // (per-(mode,key)); pushed to its voice live.
+    const int brightness_inc = hw.EncoderIncrement(1);
+    if(brightness_inc != 0)
     {
-        if(strike_inc != 0)
-        {
-            const int cur_mode = ModeIdx(play_modes.Mode());
-            const int key      = last_key_[cur_mode];
-            SetBrightnessTicks(cur_mode, key,
-                               params.brightness_ticks[cur_mode][key].load(
-                                   std::memory_order_relaxed)
-                                   + strike_inc,
-                               now);
-            ShowOverlay(Overlay::Brightness, now); // also at the end stops
-        }
+        const int cur_mode = ModeIdx(play_modes.Mode());
+        const int key      = last_key_[cur_mode];
+        SetBrightnessTicks(cur_mode, key,
+                           params.brightness_ticks[cur_mode][key].load(
+                               std::memory_order_relaxed)
+                               + brightness_inc,
+                           now);
+        ShowOverlay(Overlay::Brightness, now);
     }
-    else
+
+    // Physical encoder 4: press to select page 1 strike hardness or
+    // page 2 shimmer; both controls are global.
+    if(hw.EncoderClicked(3))
     {
-        BumpTicks(params.strike_ticks, strike_inc, Overlay::Strike, now);
+        enc4_page_ = enc4_page_ == kEnc4PageStrike
+                         ? kEnc4PageShimmer
+                         : kEnc4PageStrike;
+        ShowOverlay(enc4_page_ == kEnc4PageStrike ? Overlay::Strike
+                                                  : Overlay::Shimmer,
+                    now);
+    }
+
+    const int enc4_inc = hw.EncoderIncrement(3);
+    if(enc4_page_ == kEnc4PageStrike)
+    {
+        BumpTicks(params.strike_ticks, enc4_inc, Overlay::Strike, now);
     }
 
     // Physical encoder 3: decay of the SELECTED bowl (per-(mode,key));
@@ -1647,11 +1661,9 @@ void ApplyControls()
         ShowOverlay(Overlay::Decay, now); // also at the end stops
     }
 
-    // Physical encoder 4: shimmer / paired-mode detune (GLOBAL, live).
-    const int shimmer_inc = hw.EncoderIncrement(3);
-    if(shimmer_inc != 0)
+    if(enc4_page_ == kEnc4PageShimmer && enc4_inc != 0)
     {
-        BumpTicks(params.shimmer_ticks, shimmer_inc, Overlay::Shimmer, now);
+        BumpTicks(params.shimmer_ticks, enc4_inc, Overlay::Shimmer, now);
         ApplyShimmerToVoices();
     }
 
@@ -2106,15 +2118,15 @@ void DrawOverlayBar(uint32_t now)
                 DrawVolumeBar(params.volume_ticks.load(std::memory_order_relaxed));
                 break;
             case Overlay::Strike:
-                // Amber bar, matching the encoder 2 LED.
+                // Yellow bar, matching encoder 4 page 1.
                 DrawBar(params.strike_ticks.load(std::memory_order_relaxed),
                         48, 26, 0);
                 break;
             case Overlay::Brightness:
-                // Yellow-white bar: brightness of the selected bowl.
+                // Pink-white bar: brightness of the selected bowl.
                 DrawBar(params.brightness_ticks[cur_mode][edit_key].load(
                             std::memory_order_relaxed),
-                        44, 44, 8);
+                        48, 20, 36);
                 break;
             case Overlay::Decay:
                 // Blue bar: decay of the selected bowl, matching the
@@ -2124,7 +2136,7 @@ void DrawOverlayBar(uint32_t now)
                         0, 20, 48);
                 break;
             case Overlay::Shimmer:
-                // Purple center-out bar, matching the encoder 4 LED.
+                // Pink center-out bar, matching encoder 4 page 2.
                 DrawCenterBar(params.shimmer_ticks.load(std::memory_order_relaxed),
                               34, 0, 48);
                 break;
@@ -2529,9 +2541,12 @@ void RenderLeds()
         chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 14, 0, 20);
     else
         chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 0, 20, 0);
-    chompi_leds::SetPthLed(chompi_leds::kPthEncoder2, 20, 11, 0); // strike / brightness (shift turn)
+    chompi_leds::SetPthLed(chompi_leds::kPthEncoder2, 48, 20, 36); // brightness
     chompi_leds::SetPthLed(chompi_leds::kPthEncoder3, 0, 8, 20);  // decay
-    chompi_leds::SetPthLed(chompi_leds::kPthEncoder4, 34, 0, 48); // shimmer
+    if(enc4_page_ == kEnc4PageStrike)
+        chompi_leds::SetPthLed(chompi_leds::kPthEncoder4, 20, 11, 0); // strike
+    else
+        chompi_leds::SetPthLed(chompi_leds::kPthEncoder4, 34, 0, 48); // shimmer
 #ifdef CPU_METER
     // Steal witness: encoder 4 LED goes white for ~300 ms when a strike
     // steals a still-ringing voice - correlate it with audible chokes.

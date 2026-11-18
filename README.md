@@ -9,9 +9,9 @@ delay and reverb, and SD-card recording/playback.
 | Control | Action |
 |---|---|
 | Encoder 1 | Press to change page. Page 1: selected bowl volume; SHIFT+turn pans it. Page 2: resonance profile. Page 3: fundamental frequency. |
-| Encoder 2 | Strike hardness; SHIFT+turn changes the selected bowl's brightness. |
+| Encoder 2 | Page 1: selected bowl brightness. |
 | Encoder 3 | Selected bowl decay. |
-| Encoder 4 | Paired-mode shimmer. |
+| Encoder 4 | Press to change page. Page 1: strike hardness; page 2: paired-mode shimmer. |
 | Transport wheel | Rims the active wheel set. Clockwise adds friction texture; counter-clockwise gives a clean sustained tone. |
 | Volume encoder | Press to select master volume, delay, or reverb. On the delay page, SHIFT+turn changes time. |
 | SHIFT + lower F# / G# / A# | Select Split / Strikes / Rimming. |
