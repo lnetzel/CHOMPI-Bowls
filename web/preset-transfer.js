@@ -248,7 +248,7 @@ export class PresetTransferClient {
   async handshake() {
     const frame = await this.request(COMMANDS.hello);
     const [protocol, schema, slots, sdPresent] = await this.checkResponse(frame);
-    if (protocol !== 1 || schema !== 11 || slots !== 15) {
+    if (protocol !== 1 || schema !== 12 || slots !== 15) {
       throw new Error("This firmware does not support preset editor protocol v1.");
     }
     if (!sdPresent) throw new Error("No SD card is available in the instrument.");

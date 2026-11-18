@@ -327,6 +327,7 @@ volatile int      preset_sel_slot_ = -1;
 volatile int      preset_copy_src_ = -1;
 volatile int      preset_current_ = -1;
 volatile uint32_t preset_anim_t_ = 0;
+volatile uint32_t preset_copy_error_until_ = 0;
 
 // SD save-status flash on the SHIFT LED (persistence diagnostic): a
 // short green pulse = a save completed; 1 s red = a save failed.
@@ -2238,6 +2239,12 @@ bool DrawPresetKeybed(uint32_t now)
                 blue = 48;
             }
         }
+        else if(mode == kPresetCopyDest && slot == preset_sel_slot_
+                && static_cast<int32_t>(preset_copy_error_until_ - now) > 0)
+        {
+            if(pre_blink)
+                red = 48;
+        }
         else if(filled && slot == preset_current_
                 && (mode == kPresetSaveSel || mode == kPresetCopySrc
                     || mode == kPresetCopyDest))
@@ -2659,9 +2666,13 @@ void RenderLeds()
                     || preset_mode_ == kPresetEraseSel
                     || preset_mode_ == kPresetCopyDest))
         {
-            const uint8_t level = (now / 250u) % 2u == 0 ? 48 : 0;
-            chompi_leds::SetPthLed(chompi_leds::kPthShift,
-                                   level, 0, 0);
+            const bool copy_error
+                = preset_mode_ == kPresetCopyDest
+                  && static_cast<int32_t>(preset_copy_error_until_ - now) > 0;
+            const uint8_t level = (now / (copy_error ? 100u : 250u)) % 2u == 0
+                                      ? 48
+                                      : 0;
+            chompi_leds::SetPthLed(chompi_leds::kPthShift, level, 0, 0);
         }
     }
     if(shift)
@@ -2677,6 +2688,7 @@ void RenderLeds()
 chompi::BowlsPreset SnapshotParams()
 {
     chompi::BowlsPreset p;
+    p.SetDefaults();
     p.mode = static_cast<uint8_t>(ModeIdx(play_modes.Mode()));
     p.volume = static_cast<uint8_t>(
         params.volume_ticks.load(std::memory_order_relaxed));
@@ -2791,6 +2803,7 @@ void PresetEnterMode(int mode)
     preset_mode_ = mode;
     preset_sel_slot_ = -1;
     preset_copy_src_ = -1;
+    preset_copy_error_until_ = 0;
     params.overlay_until.store(0, std::memory_order_relaxed);
 }
 
@@ -2812,7 +2825,10 @@ void PresetShiftConfirm()
         case kPresetSaveSel:
             if(preset_sel_slot_ >= 0)
             {
-                preset_bank.Save(preset_sel_slot_, SnapshotParams());
+                chompi::BowlsPreset preset = SnapshotParams();
+                if(preset_bank.IsValid(preset_sel_slot_))
+                    preset.CopyMetadataFrom(preset_bank.Get(preset_sel_slot_));
+                preset_bank.Save(preset_sel_slot_, preset);
                 preset_storage.ClearIncompatibleSlot(preset_sel_slot_);
                 preset_current_ = preset_sel_slot_;
                 preset_mode_ = kPresetSaving;
@@ -2834,9 +2850,17 @@ void PresetShiftConfirm()
             if(preset_sel_slot_ >= 0
                && preset_bank.Copy(preset_copy_src_, preset_sel_slot_))
             {
+                preset_copy_error_until_ = 0;
                 preset_storage.ClearIncompatibleSlot(preset_sel_slot_);
                 preset_mode_ = kPresetCopying;
                 preset_anim_t_ = System::GetNow();
+            }
+            else if(preset_copy_src_ >= 0
+                    && preset_bank.IsValid(preset_copy_src_)
+                    && !preset_bank.Get(preset_copy_src_).CanAppendCopySuffix())
+            {
+                preset_copy_error_until_ = System::GetNow() + 1500;
+                BOWLS_LOG("Preset copy failed: name cannot fit -copy suffix");
             }
             break;
         default:

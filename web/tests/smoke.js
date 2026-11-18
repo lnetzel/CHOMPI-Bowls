@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   applyTuning,
   createFactoryPreset,
+  METADATA_BYTE_LIMITS,
   setBankValueForAllModes,
   setPresetValue,
   validatePreset,
@@ -17,7 +18,9 @@ import {
 
 const factory = createFactoryPreset();
 assert.equal(validatePreset(factory), factory);
-assert.equal(factory.version, 11);
+assert.equal(factory.version, 12);
+assert.equal(factory.name, "");
+assert.equal(factory.comment, "");
 assert.deepEqual(factory.pitch_hz.strikes, factory.pitch_hz.rimming);
 assert.deepEqual(factory.pitch_hz.strikes, factory.pitch_hz.split);
 
@@ -73,7 +76,34 @@ assert.throws(
   () => applyTuning(factory, Array(25).fill(10001)),
   /40 to 10,000 Hz/,
 );
-assert.throws(() => validatePreset({ ...factory, version: 10 }), /version 11/);
+assert.throws(() => validatePreset({ ...factory, version: 10 }), /version 12/);
+
+const legacyPreset = { ...factory, version: 11 };
+delete legacyPreset.name;
+delete legacyPreset.comment;
+const migratedPreset = validatePreset(legacyPreset);
+assert.equal(migratedPreset.version, 12);
+assert.equal(migratedPreset.name, "");
+assert.equal(migratedPreset.comment, "");
+assert.equal(legacyPreset.version, 11);
+
+let namedPreset = setPresetValue(factory, "name", null, null, 'Bowl "One" \\copy');
+namedPreset = setPresetValue(namedPreset, "comment", null, null, "Line one\nCafé 🥣");
+namedPreset = setPresetValue(namedPreset, "volume", null, null, 9);
+const metadataRoundTrip = validatePreset(JSON.parse(JSON.stringify(namedPreset)));
+assert.equal(metadataRoundTrip.name, 'Bowl "One" \\copy');
+assert.equal(metadataRoundTrip.comment, "Line one\nCafé 🥣");
+assert.equal(metadataRoundTrip.volume, 9);
+assert.throws(
+  () => setPresetValue(factory, "name", null, null, "🥣".repeat(13)),
+  /48 UTF-8 bytes/,
+);
+const maxLengthName = setPresetValue(factory, "name", null, null, "🥣".repeat(12));
+assert.equal(new TextEncoder().encode(maxLengthName.name).length, METADATA_BYTE_LIMITS.name);
+assert.throws(
+  () => setPresetValue(factory, "comment", null, null, "c".repeat(METADATA_BYTE_LIMITS.comment + 1)),
+  /128 UTF-8 bytes/,
+);
 
 const packet = encodeFrame(6, 42, [0, 3, 127, 65, 66]);
 const decoded = decodeFrame(packet);
@@ -105,6 +135,12 @@ client.access.inputs.set("removed", { id: "removed", name: "CHOMPI-BOWLS", state
 client.access.inputs.delete(input.id);
 client.access.outputs.set(output.id, output);
 assert.equal(client.findChompiPorts(), null);
+
+const compatibleClient = new PresetTransferClient();
+compatibleClient.request = async () => ({ payload: [0, 1, 12, 15, 1] });
+await compatibleClient.handshake();
+compatibleClient.request = async () => ({ payload: [0, 1, 11, 15, 1] });
+await assert.rejects(compatibleClient.handshake(), /protocol v1/);
 
 const slotClient = new PresetTransferClient();
 slotClient.request = async () => ({

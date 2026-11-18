@@ -1,5 +1,10 @@
 export const MODES = ["strikes", "rimming", "split"];
 export const KEY_COUNT = 25;
+export const PRESET_VERSION = 12;
+export const METADATA_BYTE_LIMITS = Object.freeze({
+  name: 48,
+  comment: 128,
+});
 
 const GLOBAL_RANGES = {
   mode: [0, 2],
@@ -36,7 +41,9 @@ export function createFactoryPreset() {
     ]),
   );
   return {
-    version: 11,
+    version: PRESET_VERSION,
+    name: "",
+    comment: "",
     mode: 2,
     volume: 8,
     strike: 32,
@@ -54,20 +61,49 @@ export function clonePreset(preset) {
 }
 
 export function validatePreset(preset) {
-  if (!preset || typeof preset !== "object" || preset.version !== 11) {
-    throw new Error("Preset must use schema version 11.");
+  if (!preset || typeof preset !== "object") {
+    throw new Error(`Preset must use schema version ${PRESET_VERSION}.`);
   }
+  const normalized = preset.version === 11
+    ? { ...preset, version: PRESET_VERSION, name: "", comment: "" }
+    : preset;
+  if (normalized.version !== PRESET_VERSION) {
+    throw new Error(`Preset must use schema version ${PRESET_VERSION}.`);
+  }
+  validateMetadata(normalized.name, "name", METADATA_BYTE_LIMITS.name);
+  validateMetadata(normalized.comment, "comment", METADATA_BYTE_LIMITS.comment);
   for (const [field, [min, max]] of Object.entries(GLOBAL_RANGES)) {
-    const value = preset[field];
+    const value = normalized[field];
     if (!Number.isInteger(value) || value < min || value > max) {
       throw new Error(`Invalid ${field} value.`);
     }
   }
   for (const field of Object.keys(BANK_RANGES)) {
-    validateModeArrays(preset[field], field);
+    validateModeArrays(normalized[field], field);
   }
-  validateModeArrays(preset.pitch_hz, "pitch_hz", true);
-  return preset;
+  validateModeArrays(normalized.pitch_hz, "pitch_hz", true);
+  return normalized;
+}
+
+function validateMetadata(value, field, maxBytes) {
+  if (typeof value !== "string" || value.includes("\0")) {
+    throw new Error(`Invalid preset ${field}.`);
+  }
+  for (let i = 0; i < value.length; i += 1) {
+    const unit = value.charCodeAt(i);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = value.charCodeAt(i + 1);
+      if (next < 0xdc00 || next > 0xdfff) {
+        throw new Error(`Preset ${field} contains invalid Unicode.`);
+      }
+      i += 1;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      throw new Error(`Preset ${field} contains invalid Unicode.`);
+    }
+  }
+  if (new TextEncoder().encode(value).length > maxBytes) {
+    throw new Error(`Preset ${field} must be ${maxBytes} UTF-8 bytes or less.`);
+  }
 }
 
 function validateModeArrays(value, field, pitch = false) {

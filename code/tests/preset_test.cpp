@@ -1,4 +1,4 @@
-// Host-side tests for the v11 preset schema, slot bank, and direct pitches.
+// Host-side tests for the v12 preset schema, slot bank, and direct pitches.
 // Run with `make -C code/tests modes-test` from the MSYS2 UCRT64 shell.
 
 #include "BowlsPreset.h"
@@ -38,6 +38,8 @@ chompi::BowlsPreset PatternPreset(int mode)
     p.reverb_mix = 21;
     p.delay_mix = 27;
     p.delay_time = 5;
+    std::strcpy(p.name, "Preset \"One\" \\ copy");
+    std::strcpy(p.comment, "line one\nline two \xc3\xa9 \xf0\x9f\x8e\xb5");
     for(int i = 0; i < chompi::BowlsPreset::kBankSlots; ++i)
     {
         p.pan[i] = static_cast<uint8_t>(i % 33);
@@ -61,6 +63,8 @@ bool SameTicks(const chompi::BowlsPreset& a, const chompi::BowlsPreset& b)
     return a.mode == b.mode && a.volume == b.volume && a.strike == b.strike
            && a.shimmer == b.shimmer && a.reverb_mix == b.reverb_mix
            && a.delay_mix == b.delay_mix && a.delay_time == b.delay_time
+           && std::strcmp(a.name, b.name) == 0
+           && std::strcmp(a.comment, b.comment) == 0
            && std::memcmp(a.pan, b.pan, sizeof(a.pan)) == 0
            && std::memcmp(a.bvol, b.bvol, sizeof(a.bvol)) == 0
            && std::memcmp(a.profile, b.profile, sizeof(a.profile)) == 0
@@ -268,6 +272,10 @@ int main()
             chompi::BowlsPreset dst;
             dst.SetDefaults();
             bool shape_ok = len > 0;
+            if(shape_ok)
+                for(size_t i = 0; i < len; ++i)
+                    if(static_cast<unsigned char>(buf[i]) > 0x7f)
+                        shape_ok = false;
             const char* fields[] = {"pan", "bvol", "profile", "bright",
                                     "decay"};
             if(shape_ok)
@@ -283,10 +291,118 @@ int main()
                && (std::strstr(buf, ",\"rimming\":[") == nullptr
                    || std::strstr(buf, ",\"split\":[") == nullptr))
                 shape_ok = false;
-            if(!shape_ok || !chompi::Parse(buf, len, dst) || !Same(src, dst))
+            if(!shape_ok || std::strstr(buf, "\"version\":12") == nullptr
+               || std::strstr(buf, "\"name\":\"Preset \\\"One\\\" \\\\ copy\"")
+                      == nullptr
+               || !chompi::Parse(buf, len, dst) || !Same(src, dst))
                 ok = false;
         }
         Check(ok, "round-trip 75 pitches, five banks, all modes", "");
+    }
+
+    // Schema v11 files remain loadable and start with empty metadata.
+    {
+        chompi::BowlsPreset src;
+        src.SetDefaults();
+        const size_t len = chompi::Serialize(src, buf, sizeof(buf));
+        char legacy[kStorageJsonSize];
+        bool ok = len > 0;
+        if(ok)
+            std::memcpy(legacy, buf, len + 1);
+        ok = ok && Replace(legacy, "\"version\":12", "\"version\":11")
+             && Replace(legacy, ",\"name\":\"\",\"comment\":\"\"", "");
+        chompi::BowlsPreset loaded;
+        loaded.SetDefaults();
+        if(!ok || !chompi::Parse(legacy, std::strlen(legacy), loaded)
+           || loaded.name[0] != '\0' || loaded.comment[0] != '\0'
+           || !SameTicks(src, loaded) || !SamePitches(src.pitch_hz, loaded.pitch_hz))
+            ok = false;
+        Check(ok, "v11 preset loads with empty metadata", "");
+    }
+
+    // Metadata limits are measured in UTF-8 bytes and invalid NUL escapes fail.
+    {
+        chompi::BowlsPreset src;
+        src.SetDefaults();
+        const size_t len = chompi::Serialize(src, buf, sizeof(buf));
+        char doc[kStorageJsonSize];
+        chompi::BowlsPreset sentinel = PatternPreset(2);
+        const chompi::BowlsPreset before = sentinel;
+        char oversized[256];
+        std::memcpy(doc, buf, len + 1);
+        std::memset(oversized, 'n', chompi::BowlsPreset::kNameMaxBytes + 1);
+        oversized[chompi::BowlsPreset::kNameMaxBytes + 1] = '\0';
+        char replacement[256];
+        const int replacement_len
+            = std::snprintf(replacement, sizeof(replacement),
+                            "\"name\":\"%s\",\"comment\":\"\"", oversized);
+        bool ok = replacement_len > 0
+                  && static_cast<size_t>(replacement_len) < sizeof(replacement)
+                  && Replace(doc, "\"name\":\"\",\"comment\":\"\"",
+                             replacement)
+                  && !chompi::Parse(doc, std::strlen(doc), sentinel)
+                  && Same(sentinel, before);
+        std::memcpy(doc, buf, len + 1);
+        std::memset(oversized, 'c',
+                    chompi::BowlsPreset::kCommentMaxBytes + 1);
+        oversized[chompi::BowlsPreset::kCommentMaxBytes + 1] = '\0';
+        const int comment_len
+            = std::snprintf(replacement, sizeof(replacement),
+                            "\"name\":\"\",\"comment\":\"%s\"", oversized);
+        ok = ok && comment_len > 0
+             && static_cast<size_t>(comment_len) < sizeof(replacement)
+             && Replace(doc, "\"name\":\"\",\"comment\":\"\"",
+                        replacement)
+             && !chompi::Parse(doc, std::strlen(doc), sentinel)
+             && Same(sentinel, before);
+        std::memcpy(doc, buf, len + 1);
+        ok = ok && Replace(doc, "\"name\":\"\",\"comment\":\"\"",
+                           "\"name\":\"\",\"comment\":\"\\u0000\"")
+             && !chompi::Parse(doc, std::strlen(doc), sentinel)
+             && Same(sentinel, before);
+        Check(ok, "metadata rejects over-limit and NUL text", "");
+    }
+
+    // Raw UTF-8 in imported JSON is decoded into the bounded metadata fields.
+    {
+        chompi::BowlsPreset src;
+        src.SetDefaults();
+        const size_t len = chompi::Serialize(src, buf, sizeof(buf));
+        char doc[kStorageJsonSize];
+        std::memcpy(doc, buf, len + 1);
+        const bool ok = Replace(doc, "\"name\":\"\"",
+                                "\"name\":\"caf\xc3\xa9\"")
+                        && chompi::Parse(doc, std::strlen(doc), src)
+                        && std::strcmp(src.name, "caf\xc3\xa9") == 0;
+        Check(ok, "raw UTF-8 metadata parses", "");
+    }
+
+    // Saving new live parameters can retain the slot's text metadata.
+    {
+        const chompi::BowlsPreset existing = PatternPreset(0);
+        chompi::BowlsPreset updated = PatternPreset(1);
+        updated.CopyMetadataFrom(existing);
+        Check(std::strcmp(updated.name, existing.name) == 0
+                  && std::strcmp(updated.comment, existing.comment) == 0
+                  && updated.mode != existing.mode,
+              "metadata copy preserves text on parameter save", "");
+    }
+
+    // A copy whose repeated suffix would exceed the name limit is rejected.
+    {
+        chompi::BowlsPresetBank bank;
+        bank.Init();
+        chompi::BowlsPreset source = PatternPreset(0);
+        std::memset(source.name, 'x', chompi::BowlsPreset::kNameMaxBytes);
+        source.name[chompi::BowlsPreset::kNameMaxBytes] = '\0';
+        chompi::BowlsPreset destination = PatternPreset(1);
+        bank.LoadSlot(0, source);
+        bank.LoadSlot(1, destination);
+        const chompi::BowlsPreset before = bank.Get(1);
+        const bool ok = !bank.Copy(0, 1) && bank.IsValid(1)
+                        && Same(bank.Get(1), before)
+                        && !bank.IsDirty(1);
+        Check(ok, "copy suffix overflow leaves destination unchanged", "");
     }
 
     // Slot cache operations are explicit; editing a separate live snapshot
@@ -309,13 +425,21 @@ int main()
     {
         chompi::BowlsPresetBank bank;
         bank.Init();
-        const chompi::BowlsPreset first = PatternPreset(0);
+        chompi::BowlsPreset first = PatternPreset(0);
+        std::strcpy(first.name, "Original");
+        std::strcpy(first.comment, "Keep this note");
         bank.Save(0, first);
         const uint32_t first_revision = bank.Revision(0);
         bool ok = bank.IsValid(0) && bank.IsDirty(0)
                   && bank.NextDirtySlot() == 0
                   && bank.Copy(0, 14) && bank.IsValid(14)
-                  && bank.IsDirty(14) && Same(bank.Get(14), first)
+                  && bank.IsDirty(14)
+                  && std::strcmp(bank.Get(14).name, "Original-copy") == 0
+                  && std::strcmp(bank.Get(14).comment, first.comment) == 0
+                  && std::strcmp(bank.Get(0).name, "Original") == 0
+                  && bank.Copy(14, 13)
+                  && std::strcmp(bank.Get(13).name, "Original-copy-copy") == 0
+                  && std::strcmp(bank.Get(14).name, "Original-copy") == 0
                   && !bank.Copy(14, 14) && !bank.Copy(1, 2);
 
         bank.ClearDirtyIfRevision(0, first_revision - 1);
@@ -386,6 +510,14 @@ int main()
               "formatted offline input fits and parses", size_detail);
         Check(chompi::Serialize(p, small, sizeof(small)) == 0,
               "undersized serialization buffer rejected", "");
+        std::memset(p.name, '\n', chompi::BowlsPreset::kNameMaxBytes);
+        p.name[chompi::BowlsPreset::kNameMaxBytes] = '\0';
+        std::memset(p.comment, '\t', chompi::BowlsPreset::kCommentMaxBytes);
+        p.comment[chompi::BowlsPreset::kCommentMaxBytes] = '\0';
+        const size_t metadata_len
+            = chompi::Serialize(p, buf, sizeof(buf));
+        Check(metadata_len > 0 && metadata_len + 1 <= kStorageJsonSize,
+              "max escaped metadata fits 4096-byte budget", "");
     }
 
     // Float rounding is deterministic and stays within the stated bound.
@@ -459,14 +591,14 @@ int main()
             char replacement[24];
             std::snprintf(replacement, sizeof(replacement), "\"version\":%s",
                           version);
-            if(!Replace(doc, "\"version\":11", replacement)
+            if(!Replace(doc, "\"version\":12", replacement)
                || chompi::Parse(doc, std::strlen(doc), sentinel)
                || !Same(sentinel, before))
                 ok = false;
         }
         std::memcpy(doc, buf, len + 1);
         chompi::BowlsPreset legacy_destination = before;
-        if(!Replace(doc, "\"version\":11", "\"version\":9")
+        if(!Replace(doc, "\"version\":12", "\"version\":9")
            || chompi::ParseWithPitchFallback(
                doc, std::strlen(doc), sizeof(doc), src, legacy_destination)
            || !Same(legacy_destination, before)

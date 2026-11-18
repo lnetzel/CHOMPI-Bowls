@@ -28,6 +28,8 @@ const elements = {
   tuningPreview: byId("tuning-preview"),
   applyTuning: byId("apply-tuning"),
   startupMode: byId("startup-mode"),
+  presetName: byId("preset-name"),
+  presetComment: byId("preset-comment"),
   globalBowlControls: byId("global-bowl-controls"),
   editMode: byId("edit-mode"),
   editKey: byId("edit-key"),
@@ -424,6 +426,8 @@ function renderPreset() {
     setDraftDirty(false);
     return;
   }
+  elements.presetName.value = state.preset.name;
+  elements.presetComment.value = state.preset.comment;
   elements.startupMode.value = String(state.preset.mode);
   for (const input of document.querySelectorAll("[data-global]")) {
     input.value = String(state.preset[input.dataset.global]);
@@ -628,6 +632,17 @@ elements.editKey.addEventListener("change", (event) => {
 
 document.addEventListener("input", (event) => {
   const input = event.target;
+  if (input.matches("[data-metadata]") && state.preset) {
+    const field = input.dataset.metadata;
+    try {
+      state.preset = setPresetValue(state.preset, field, null, null, input.value);
+      markChanged();
+      setMessage("");
+    } catch (error) {
+      input.value = state.preset[field];
+      setMessage(error.message, "error");
+    }
+  }
   if (input.matches("[data-bank-global]") && state.preset) {
     const value = Number(input.value);
     if (!Number.isFinite(value)) return;

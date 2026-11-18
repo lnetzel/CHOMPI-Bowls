@@ -47,8 +47,9 @@ automatically. White keys 1-15 map to `BOWLS/P01.json` through
 and F#4 respectively. Confirm a selection by releasing and pressing
 SHIFT.
 
-Changes remain in memory until saved. Presets use schema v11. Each
-per-key setting is stored as three arrays of 25 values (`strikes`,
+Changes remain in memory until saved. Presets use schema v12; firmware
+continues to load existing v11 files with empty name and comment metadata.
+Each per-key setting is stored as three arrays of 25 values (`strikes`,
 `rimming`, `split`), ordered from C3 to C5. To edit a file, save the
 slot, power off, edit the JSON, safely eject the card, and reboot.
 

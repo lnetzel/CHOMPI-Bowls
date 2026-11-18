@@ -2,9 +2,10 @@
  *  @brief SD-card preset model for CHOMPI-BOWLS: 15 versioned JSON slots,
  *  host-testable (no Daisy dependencies).
  *
- *  Schema v11 stores persistent panel parameters in per-mode objects,
+ *  Schema v12 stores persistent panel parameters and per-slot text metadata,
+ *  with per-mode objects for key banks,
  *  including each mode's per-key values and direct fundamental frequencies.
- *  Only the current schema is accepted.
+ *  Schema v11 remains readable for migration.
  */
 #pragma once
 #include <cstdint>
@@ -29,8 +30,11 @@ struct BowlsPreset
     * v7: brightness and decay move from globals to per-mode/per-key
     * banks (six banks of 75); v8: delay mix and time; v9: base pitches;
     * v10: direct per-mode/per-key pitches replace relative tune ticks;
-     * v11: per-mode values become separate JSON objects. */
-    static constexpr int kVersion = 11;
+    * v11: per-mode values become separate JSON objects;
+    * v12: per-slot name and comment metadata. */
+    static constexpr int kVersion = 12;
+    static constexpr size_t kNameMaxBytes = 48;
+    static constexpr size_t kCommentMaxBytes = 128;
 
     /* field ranges (mirror the tick counts in chompi_main.cpp) */
     static constexpr int kMaxTicks   = 32; /* 0..32 tick parameters */
@@ -74,10 +78,44 @@ struct BowlsPreset
     uint8_t bright[kBankSlots];  /**< per-key brightness 0..32 */
     uint8_t decay[kBankSlots];   /**< per-key decay 0..32 */
     bowls::PitchTables pitch_hz; /**< final fundamental for each mode/key */
+    char name[kNameMaxBytes + 1];
+    char comment[kCommentMaxBytes + 1];
+
+    size_t NameLength() const
+    {
+        size_t length = 0;
+        while(length < sizeof(name) && name[length] != '\0')
+            ++length;
+        return length;
+    }
+
+    bool CanAppendCopySuffix() const
+    {
+        const size_t length = NameLength();
+        return length <= kNameMaxBytes
+               && length + sizeof("-copy") - 1 <= kNameMaxBytes;
+    }
+
+    bool AppendCopySuffix()
+    {
+        if(!CanAppendCopySuffix())
+            return false;
+        const size_t length = NameLength();
+        memcpy(name + length, "-copy", sizeof("-copy"));
+        return true;
+    }
+
+    void CopyMetadataFrom(const BowlsPreset &other)
+    {
+        memcpy(name, other.name, sizeof(name));
+        memcpy(comment, other.comment, sizeof(comment));
+    }
 
     void SetDefaults()
     {
         pitch_hz = bowls::FactoryPitchTables();
+        memset(name, 0, sizeof(name));
+        memset(comment, 0, sizeof(comment));
         mode       = kDefaultMode;
         volume     = kDefaultVolume;
         strike     = kDefaultStrike;
@@ -134,9 +172,12 @@ class BowlsPresetBank
     {
         if(source < 0 || source >= kNumSlots || destination < 0
            || destination >= kNumSlots || source == destination
-           || !valid_[source])
+           || !valid_[source]
+           || !slots_[source].CanAppendCopySuffix())
             return false;
         slots_[destination] = slots_[source];
+        if(!slots_[destination].AppendCopySuffix())
+            return false;
         valid_[destination] = true;
         MarkDirty(destination);
         return true;
@@ -315,6 +356,254 @@ inline size_t AppendPitchObject(char *buf, size_t size, size_t off,
     return off + static_cast<size_t>(n);
 }
 
+inline bool DecodeUtf8CodePoint(const unsigned char *text, size_t length,
+                                uint32_t &code_point, size_t &bytes)
+{
+    if(length == 0)
+        return false;
+    const unsigned char first = text[0];
+    if(first < 0x80)
+    {
+        code_point = first;
+        bytes = 1;
+        return true;
+    }
+
+    uint32_t value = 0;
+    size_t count = 0;
+    if(first >= 0xc2 && first <= 0xdf)
+    {
+        value = first & 0x1f;
+        count = 2;
+    }
+    else if(first >= 0xe0 && first <= 0xef)
+    {
+        value = first & 0x0f;
+        count = 3;
+    }
+    else if(first >= 0xf0 && first <= 0xf4)
+    {
+        value = first & 0x07;
+        count = 4;
+    }
+    else
+        return false;
+    if(count > length)
+        return false;
+    for(size_t i = 1; i < count; ++i)
+    {
+        if((text[i] & 0xc0) != 0x80)
+            return false;
+        value = (value << 6) | (text[i] & 0x3f);
+    }
+    if((count == 3 && value < 0x800)
+       || (count == 4 && value < 0x10000) || value > 0x10ffff
+       || (value >= 0xd800 && value <= 0xdfff))
+        return false;
+    code_point = value;
+    bytes = count;
+    return true;
+}
+
+inline bool AppendUtf8CodePoint(uint32_t code_point, char *dest,
+                                size_t capacity, size_t max_bytes,
+                                size_t &length)
+{
+    if(code_point == 0 || code_point > 0x10ffff
+       || (code_point >= 0xd800 && code_point <= 0xdfff))
+        return false;
+    size_t count = 1;
+    if(code_point > 0x7f)
+        count = code_point <= 0x7ff ? 2 : (code_point <= 0xffff ? 3 : 4);
+    if(length + count > max_bytes || length + count >= capacity)
+        return false;
+    if(count == 1)
+        dest[length++] = static_cast<char>(code_point);
+    else if(count == 2)
+    {
+        dest[length++] = static_cast<char>(0xc0 | (code_point >> 6));
+        dest[length++] = static_cast<char>(0x80 | (code_point & 0x3f));
+    }
+    else if(count == 3)
+    {
+        dest[length++] = static_cast<char>(0xe0 | (code_point >> 12));
+        dest[length++] = static_cast<char>(0x80 | ((code_point >> 6) & 0x3f));
+        dest[length++] = static_cast<char>(0x80 | (code_point & 0x3f));
+    }
+    else
+    {
+        dest[length++] = static_cast<char>(0xf0 | (code_point >> 18));
+        dest[length++] = static_cast<char>(0x80 | ((code_point >> 12) & 0x3f));
+        dest[length++] = static_cast<char>(0x80 | ((code_point >> 6) & 0x3f));
+        dest[length++] = static_cast<char>(0x80 | (code_point & 0x3f));
+    }
+    dest[length] = '\0';
+    return true;
+}
+
+inline bool ReadHexQuad(const char *text, size_t length, size_t &offset,
+                        uint32_t &value)
+{
+    if(length - offset < 4)
+        return false;
+    value = 0;
+    for(int i = 0; i < 4; ++i)
+    {
+        const char c = text[offset++];
+        value <<= 4;
+        if(c >= '0' && c <= '9')
+            value |= static_cast<uint32_t>(c - '0');
+        else if(c >= 'a' && c <= 'f')
+            value |= static_cast<uint32_t>(c - 'a' + 10);
+        else if(c >= 'A' && c <= 'F')
+            value |= static_cast<uint32_t>(c - 'A' + 10);
+        else
+            return false;
+    }
+    return true;
+}
+
+inline bool QueryStringStrict(char *buf, size_t len, const char *query,
+                              char *dest, size_t capacity, size_t max_bytes)
+{
+    char *value = nullptr;
+    size_t value_len = 0;
+    JSONTypes_t type = JSONInvalid;
+    if(capacity == 0
+       || JSON_SearchT(buf, len, query, strlen(query), &value, &value_len,
+                       &type)
+              != JSONSuccess
+       || type != JSONString)
+        return false;
+
+    memset(dest, 0, capacity);
+    size_t output_length = 0;
+    for(size_t i = 0; i < value_len;)
+    {
+        uint32_t code_point = 0;
+        if(value[i] == '\\')
+        {
+            if(++i >= value_len)
+                return false;
+            const char escaped = value[i++];
+            switch(escaped)
+            {
+                case '"': code_point = '"'; break;
+                case '\\': code_point = '\\'; break;
+                case '/': code_point = '/'; break;
+                case 'b': code_point = '\b'; break;
+                case 'f': code_point = '\f'; break;
+                case 'n': code_point = '\n'; break;
+                case 'r': code_point = '\r'; break;
+                case 't': code_point = '\t'; break;
+                case 'u':
+                {
+                    if(!ReadHexQuad(value, value_len, i, code_point))
+                        return false;
+                    if(code_point >= 0xd800 && code_point <= 0xdbff)
+                    {
+                        if(value_len - i < 6 || value[i] != '\\'
+                           || value[i + 1] != 'u')
+                            return false;
+                        i += 2;
+                        uint32_t low = 0;
+                        if(!ReadHexQuad(value, value_len, i, low)
+                           || low < 0xdc00 || low > 0xdfff)
+                            return false;
+                        code_point = 0x10000
+                                     + ((code_point - 0xd800) << 10)
+                                     + (low - 0xdc00);
+                    }
+                    else if(code_point >= 0xdc00 && code_point <= 0xdfff)
+                        return false;
+                    break;
+                }
+                default: return false;
+            }
+        }
+        else
+        {
+            size_t byte_count = 0;
+            if(!DecodeUtf8CodePoint(
+                   reinterpret_cast<const unsigned char *>(value + i),
+                   value_len - i, code_point, byte_count))
+                return false;
+            i += byte_count;
+        }
+        if(!AppendUtf8CodePoint(code_point, dest, capacity, max_bytes,
+                                output_length))
+            return false;
+    }
+    return true;
+}
+
+inline size_t AppendJsonString(char *buf, size_t size, size_t off,
+                               const char *value, size_t capacity,
+                               size_t max_bytes)
+{
+    size_t length = 0;
+    while(length < capacity && value[length] != '\0')
+        ++length;
+    if(length >= capacity || length > max_bytes || off >= size)
+        return 0;
+    buf[off++] = '"';
+    for(size_t i = 0; i < length;)
+    {
+        uint32_t code_point = 0;
+        size_t byte_count = 0;
+        if(!DecodeUtf8CodePoint(
+               reinterpret_cast<const unsigned char *>(value + i),
+               length - i, code_point, byte_count))
+            return 0;
+        i += byte_count;
+        char escaped[13];
+        size_t escaped_length = 0;
+        if(code_point == '"' || code_point == '\\')
+        {
+            escaped[0] = '\\';
+            escaped[1] = static_cast<char>(code_point);
+            escaped_length = 2;
+        }
+        else if(code_point < 0x20 || code_point > 0x7e)
+        {
+            if(code_point <= 0xffff)
+            {
+                const int n = snprintf(escaped, sizeof(escaped), "\\u%04x",
+                                       static_cast<unsigned>(code_point));
+                if(n != 6)
+                    return 0;
+                escaped_length = 6;
+            }
+            else
+            {
+                const uint32_t adjusted = code_point - 0x10000;
+                const uint32_t high = 0xd800 + (adjusted >> 10);
+                const uint32_t low = 0xdc00 + (adjusted & 0x3ff);
+                const int n = snprintf(escaped, sizeof(escaped),
+                                       "\\u%04x\\u%04x",
+                                       static_cast<unsigned>(high),
+                                       static_cast<unsigned>(low));
+                if(n != 12)
+                    return 0;
+                escaped_length = 12;
+            }
+        }
+        else
+        {
+            escaped[0] = static_cast<char>(code_point);
+            escaped_length = 1;
+        }
+        if(escaped_length >= size - off)
+            return 0;
+        memcpy(buf + off, escaped, escaped_length);
+        off += escaped_length;
+    }
+    if(off >= size)
+        return 0;
+    buf[off++] = '"';
+    return off;
+}
+
 /** Serialize as compact versioned JSON. Returns the number of bytes
  *  written (excluding the terminator), or 0 when the buffer is too
  *  small. */
@@ -325,7 +614,7 @@ inline size_t Serialize(const BowlsPreset &p, char *buf, size_t size)
                      "{\"version\":%d,\"mode\":%u,"
                      "\"volume\":%u,\"strike\":%u,\"shimmer\":%u,"
                      "\"reverb_mix\":%u,\"delay_mix\":%u,"
-                     "\"delay_time\":%u",
+                     "\"delay_time\":%u,\"name\":",
                      BowlsPreset::kVersion,
                      (unsigned)p.mode,
                      (unsigned)p.volume,
@@ -337,6 +626,18 @@ inline size_t Serialize(const BowlsPreset &p, char *buf, size_t size)
     if(n < 0 || static_cast<size_t>(n) >= size)
         return 0;
     size_t off = static_cast<size_t>(n);
+    off = AppendJsonString(buf, size, off, p.name, sizeof(p.name),
+                           BowlsPreset::kNameMaxBytes);
+    if(off == 0)
+        return 0;
+    n = snprintf(buf + off, size - off, ",\"comment\":");
+    if(n < 0 || static_cast<size_t>(n) >= size - off)
+        return 0;
+    off += static_cast<size_t>(n);
+    off = AppendJsonString(buf, size, off, p.comment, sizeof(p.comment),
+                           BowlsPreset::kCommentMaxBytes);
+    if(off == 0)
+        return 0;
     off = AppendModeArrays(buf, size, off, "pan", p.pan);
     if(off != 0)
         off = AppendModeArrays(buf, size, off, "bvol", p.bvol);
@@ -587,7 +888,7 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
         return false;
     int version = 0;
     if(!QueryIntPresent(buf, len, "version", 0, 100, version)
-       || version != BowlsPreset::kVersion)
+       || (version != 11 && version != BowlsPreset::kVersion))
         return false;
 
     BowlsPreset tmp;
@@ -621,6 +922,13 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
     tmp.reverb_mix = static_cast<uint8_t>(reverb_mix);
     tmp.delay_mix = static_cast<uint8_t>(delay_mix);
     tmp.delay_time = static_cast<uint8_t>(delay_time);
+    if(version == BowlsPreset::kVersion
+       && (!QueryStringStrict(buf, len, "name", tmp.name, sizeof(tmp.name),
+                              BowlsPreset::kNameMaxBytes)
+           || !QueryStringStrict(buf, len, "comment", tmp.comment,
+                                 sizeof(tmp.comment),
+                                 BowlsPreset::kCommentMaxBytes)))
+        return false;
 
     if(!QueryModeArraysStrict(buf, len, "pan", tmp.pan,
                               BowlsPreset::kMaxTicks)

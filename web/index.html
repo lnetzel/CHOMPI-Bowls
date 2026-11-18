@@ -68,6 +68,15 @@
         <fieldset id="editor-controls" disabled>
           <legend class="visually-hidden">Preset editor controls</legend>
           <div class="editor-grid">
+            <section class="subpanel" aria-labelledby="metadata-heading">
+              <h3 id="metadata-heading">Preset name and comment</h3>
+              <label for="preset-name">Name</label>
+              <input id="preset-name" data-metadata="name" type="text" maxlength="48">
+              <label for="preset-comment">Comment</label>
+              <textarea id="preset-comment" data-metadata="comment" rows="4" maxlength="128"></textarea>
+              <p class="muted">Name: up to 48 UTF-8 bytes. Comment: up to 128 UTF-8 bytes.</p>
+            </section>
+
             <section class="subpanel" aria-labelledby="global-heading">
               <h3 id="global-heading">Global preset values</h3>
               <label for="startup-mode">Startup mode</label>
