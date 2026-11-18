@@ -2,10 +2,8 @@
  *  @brief SD-card preset model for CHOMPI-BOWLS: 15 versioned JSON slots,
  *  host-testable (no Daisy dependencies).
  *
- *  Schema v12 stores persistent panel parameters and per-slot text metadata,
- *  with per-mode objects for key banks,
- *  including each mode's per-key values and direct fundamental frequencies.
- *  Schema v11 remains readable for migration.
+ *  Schema v1 is the initial published preset model and includes per-bowl
+ *  beating.
  */
 #pragma once
 #include <cstdint>
@@ -23,16 +21,7 @@ namespace chompi
 
 struct BowlsPreset
 {
-    /* v2: pan array; v3: reverb mix; v4: per-bowl volume + tuning;
-     * v5: split keybed - per-KEY slots 15 -> 24 (rim 0-11, strike 12-23);
-     * v6: play modes - mode field + per-mode/per-key banks of 25 slots
-     * (3 modes x 25 keys = 75), profile becomes per-bowl per-mode;
-    * v7: brightness and decay move from globals to per-mode/per-key
-    * banks (six banks of 75); v8: delay mix and time; v9: base pitches;
-    * v10: direct per-mode/per-key pitches replace relative tune ticks;
-    * v11: per-mode values become separate JSON objects;
-    * v12: per-slot name and comment metadata. */
-    static constexpr int kVersion = 12;
+    static constexpr int kVersion = 1;
     static constexpr size_t kNameMaxBytes = 48;
     static constexpr size_t kCommentMaxBytes = 128;
 
@@ -53,8 +42,9 @@ struct BowlsPreset
     static constexpr int kDefaultVolume     = 8;
     static constexpr int kDefaultStrike     = 32;
     static constexpr int kDefaultBrightness = 24;
-    static constexpr int kDefaultDecay      = 0;
+    static constexpr int kDefaultDecay      = 4;
     static constexpr int kDefaultShimmer    = 0;
+    static constexpr int kDefaultBeat       = 8;
     static constexpr int kDefaultProfile    = 0;
     static constexpr int kDefaultPan        = 16; /* centre */
     static constexpr int kDefaultReverbMix  = 0;  /* subtle temple room */
@@ -77,6 +67,7 @@ struct BowlsPreset
     uint8_t profile[kBankSlots]; /**< per-key bowl profile 0..4 */
     uint8_t bright[kBankSlots];  /**< per-key brightness 0..32 */
     uint8_t decay[kBankSlots];   /**< per-key decay 0..32 */
+    uint8_t beat[kBankSlots];    /**< per-key added detune 0..32 */
     bowls::PitchTables pitch_hz; /**< final fundamental for each mode/key */
     char name[kNameMaxBytes + 1];
     char comment[kCommentMaxBytes + 1];
@@ -130,6 +121,7 @@ struct BowlsPreset
             profile[w] = kDefaultProfile;
             bright[w]  = kDefaultBrightness;
             decay[w]   = kDefaultDecay;
+            beat[w]    = kDefaultBeat;
         }
     }
 };
@@ -647,6 +639,8 @@ inline size_t Serialize(const BowlsPreset &p, char *buf, size_t size)
         off = AppendModeArrays(buf, size, off, "bright", p.bright);
     if(off != 0)
         off = AppendModeArrays(buf, size, off, "decay", p.decay);
+    if(off != 0)
+        off = AppendModeArrays(buf, size, off, "beat", p.beat);
     if(off == 0)
         return 0;
     return AppendPitchObject(buf, size, off, p);
@@ -888,7 +882,7 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
         return false;
     int version = 0;
     if(!QueryIntPresent(buf, len, "version", 0, 100, version)
-       || (version != 11 && version != BowlsPreset::kVersion))
+       || version != BowlsPreset::kVersion)
         return false;
 
     BowlsPreset tmp;
@@ -922,12 +916,11 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
     tmp.reverb_mix = static_cast<uint8_t>(reverb_mix);
     tmp.delay_mix = static_cast<uint8_t>(delay_mix);
     tmp.delay_time = static_cast<uint8_t>(delay_time);
-    if(version == BowlsPreset::kVersion
-       && (!QueryStringStrict(buf, len, "name", tmp.name, sizeof(tmp.name),
-                              BowlsPreset::kNameMaxBytes)
-           || !QueryStringStrict(buf, len, "comment", tmp.comment,
-                                 sizeof(tmp.comment),
-                                 BowlsPreset::kCommentMaxBytes)))
+    if(!QueryStringStrict(buf, len, "name", tmp.name, sizeof(tmp.name),
+                          BowlsPreset::kNameMaxBytes)
+       || !QueryStringStrict(buf, len, "comment", tmp.comment,
+                             sizeof(tmp.comment),
+                             BowlsPreset::kCommentMaxBytes))
         return false;
 
     if(!QueryModeArraysStrict(buf, len, "pan", tmp.pan,
@@ -939,6 +932,8 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
        || !QueryModeArraysStrict(buf, len, "bright", tmp.bright,
                                  BowlsPreset::kMaxTicks)
        || !QueryModeArraysStrict(buf, len, "decay", tmp.decay,
+                                 BowlsPreset::kMaxTicks)
+       || !QueryModeArraysStrict(buf, len, "beat", tmp.beat,
                                  BowlsPreset::kMaxTicks)
        || !QueryPitchArrayStrict(buf, len, "pitch_hz.strikes",
                                  tmp.pitch_hz.strikes, bowls::kKeyCount)

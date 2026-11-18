@@ -75,6 +75,7 @@ const FIELD_CONFIG = [
   { field: "profile", label: "Bowl profile", kind: "select", options: BOWL_PROFILES },
   { field: "bright", label: "Brightness", kind: "range", min: 0, max: 32, step: 1 },
   { field: "decay", label: "Decay", kind: "range", min: 0, max: 32, step: 1 },
+  { field: "beat", label: "Beating", kind: "range", min: 0, max: 32, step: 1 },
   { field: "pitch_hz", label: "Pitch (Hz)", kind: "number", min: 40, max: 10000, step: 0.001 },
 ];
 

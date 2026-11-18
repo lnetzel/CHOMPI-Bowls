@@ -130,6 +130,7 @@ enum class Overlay : int
     Volume,
     Strike,
     Brightness,
+    Beat,
     Decay,
     Shimmer,
     Character,
@@ -180,6 +181,8 @@ struct Params
                     std::memory_order_relaxed);
                 decay_ticks[m][w].store(chompi::BowlsPreset::kDefaultDecay,
                                         std::memory_order_relaxed);
+                beat_ticks[m][w].store(chompi::BowlsPreset::kDefaultBeat,
+                                       std::memory_order_relaxed);
             }
     }
 
@@ -199,6 +202,7 @@ struct Params
     std::atomic<int>      profile_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
     std::atomic<int>      brightness_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
     std::atomic<int>      decay_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
+    std::atomic<int>      beat_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
 
     // Volume knob page 2: temple-room reverb dry/wet mix.
     std::atomic<int>      reverb_mix_ticks{
@@ -310,6 +314,11 @@ constexpr int kEnc1PageVolume    = 0;
 constexpr int kEnc1PageCharacter = 1;
 constexpr int kEnc1PageTune      = 2;
 volatile int  enc1_page_         = kEnc1PageVolume;
+
+// Encoder-2 pages: selected-bowl brightness -> selected-bowl beating.
+constexpr int kEnc2PageBrightness = 0;
+constexpr int kEnc2PageBeat       = 1;
+volatile int  enc2_page_          = kEnc2PageBrightness;
 
 // Encoder-4 pages (press cycles): global strike hardness -> global shimmer.
 constexpr int kEnc4PageStrike  = 0;
@@ -462,6 +471,20 @@ float ShimmerMultTicks(int ticks)
     return 2.0f * TicksToNorm(ticks); // 0..2x the profile detune
 }
 
+float BeatMultTicks(int ticks)
+{
+    return 0.5f * TicksToNorm(ticks); // additional 0..0.5x detune
+}
+
+float BowlDetuneMult(int mode, int key)
+{
+    const int shimmer_ticks
+        = params.shimmer_ticks.load(std::memory_order_relaxed);
+    const int beat_ticks
+        = params.beat_ticks[mode][key].load(std::memory_order_relaxed);
+    return ShimmerMultTicks(shimmer_ticks) + BeatMultTicks(beat_ticks);
+}
+
 // Per-bowl volume: 0..16 -> squared 0..1 (16 = unity, 0 = silence),
 // 16..32 -> linear 1..2x (+6 dB at 32).
 float BowlGainTicks(int ticks)
@@ -554,6 +577,14 @@ void SetDecayTicks(int m, int key, int ticks, uint32_t now)
                      [&](int v) { voices[v].SetDecayMult(mult); });
 }
 
+void SetBeatTicks(int m, int key, int ticks, uint32_t now)
+{
+    if(!StoreTicks(params.beat_ticks[m][key], ticks, now))
+        return;
+    const float mult = BowlDetuneMult(m, key);
+    ForVoiceIdentity(m, key, [&](int v) { voices[v].SetShimmerMult(mult); });
+}
+
 void SetPitchHz(int m, int key, int detents, bool fine)
 {
     if(m < 0 || m >= bowls::kPlayModeCount || key < 0
@@ -605,10 +636,18 @@ int last_key_[bowls::kPlayModeCount] = {0, 0, 0};
 // are silent, avoiding mid-tail coefficient jumps.
 void ApplyShimmerToVoices()
 {
-    const float shimmer_mult
-        = ShimmerMultTicks(params.shimmer_ticks.load(std::memory_order_relaxed));
     for(int v = 0; v < kVoiceCount; ++v)
-        voices[v].SetShimmerMult(shimmer_mult);
+    {
+        const int mode = voices[v].VoiceMode();
+        const int key = voices[v].Key();
+        const float mult
+            = mode >= 0 && mode < bowls::kPlayModeCount
+                      && key >= 0 && key < bowls::kKeyCount
+                  ? BowlDetuneMult(mode, key)
+                  : ShimmerMultTicks(
+                        params.shimmer_ticks.load(std::memory_order_relaxed));
+        voices[v].SetShimmerMult(mult);
+    }
 }
 
 /** Find the voice holding the identity (mode, key), or -1. Identity is
@@ -721,6 +760,7 @@ void StrikeKey(PlayMode mode, int key, int velocity = 127,
         = (voices[v].Key() != key || voices[v].VoiceMode() != ModeIdx(mode))
           && voices[v].IsActive();
     ApplyVoiceSettings(v, mode, key);
+    voices[v].SetShimmerMult(BowlDetuneMult(ModeIdx(mode), key));
     voices[v].SetKey(key);
     voices[v].SetVoiceMode(ModeIdx(mode));
     // A strike takes the voice over: any pad/rim performance gain left
@@ -839,6 +879,7 @@ void StartPadKey(int key, int velocity = 127)
         = (voices[v].Key() != key || voices[v].VoiceMode() != ModeIdx(mode))
           && voices[v].IsActive();
     ApplyVoiceSettings(v, mode, key);
+    voices[v].SetShimmerMult(BowlDetuneMult(ModeIdx(mode), key));
     voices[v].SetKey(key);
     voices[v].SetVoiceMode(ModeIdx(mode));
     voices[v].SelectForRub(KeyFundamental(mode, key), 1.0f,
@@ -879,6 +920,7 @@ void SelectRimKey(int key, bool make_edit_target, int velocity = 127)
     if(v < 0)
         return;
     ApplyVoiceSettings(v, mode, key);
+    voices[v].SetShimmerMult(BowlDetuneMult(ModeIdx(mode), key));
     voices[v].SetKey(key);
     voices[v].SetVoiceMode(ModeIdx(mode));
     // Deterministic detune, like strikes: the same bowl always sings
@@ -1557,6 +1599,16 @@ void ApplyControls()
                     now);
     }
 
+    if(hw.EncoderClicked(1))
+    {
+        enc2_page_ = enc2_page_ == kEnc2PageBrightness
+                         ? kEnc2PageBeat
+                         : kEnc2PageBrightness;
+        ShowOverlay(enc2_page_ == kEnc2PageBrightness ? Overlay::Brightness
+                                                       : Overlay::Beat,
+                    now);
+    }
+
     // Physical encoder 1: three pages editing the selected bowl (the
     // last played/selected key in the CURRENT mode). Page 1: turn =
     // per-bowl volume (rides ringing voices live), SHIFT+turn = pan.
@@ -1613,19 +1665,29 @@ void ApplyControls()
         }
     }
 
-    // Physical encoder 2, page 1: brightness of the SELECTED bowl
-    // (per-(mode,key)); pushed to its voice live.
-    const int brightness_inc = hw.EncoderIncrement(1);
-    if(brightness_inc != 0)
+    // Physical encoder 2: selected-bowl brightness or beating amount.
+    const int enc2_inc = hw.EncoderIncrement(1);
+    if(enc2_page_ == kEnc2PageBrightness && enc2_inc != 0)
     {
         const int cur_mode = ModeIdx(play_modes.Mode());
         const int key      = last_key_[cur_mode];
         SetBrightnessTicks(cur_mode, key,
                            params.brightness_ticks[cur_mode][key].load(
                                std::memory_order_relaxed)
-                               + brightness_inc,
+                               + enc2_inc,
                            now);
         ShowOverlay(Overlay::Brightness, now);
+    }
+    else if(enc2_page_ == kEnc2PageBeat && enc2_inc != 0)
+    {
+        const int cur_mode = ModeIdx(play_modes.Mode());
+        const int key      = last_key_[cur_mode];
+        SetBeatTicks(cur_mode, key,
+                     params.beat_ticks[cur_mode][key].load(
+                         std::memory_order_relaxed)
+                         + enc2_inc,
+                     now);
+        ShowOverlay(Overlay::Beat, now);
     }
 
     // Physical encoder 4: press to select page 1 strike hardness or
@@ -2128,6 +2190,15 @@ void DrawOverlayBar(uint32_t now)
                             std::memory_order_relaxed),
                         48, 20, 36);
                 break;
+            case Overlay::Beat:
+            {
+                const int mode = ModeIdx(play_modes.Mode());
+                const int key = last_key_[mode];
+                DrawBar(params.beat_ticks[mode][key].load(
+                            std::memory_order_relaxed),
+                        48, 0, 0);
+                break;
+            }
             case Overlay::Decay:
                 // Blue bar: decay of the selected bowl, matching the
                 // encoder 3 LED.
@@ -2541,7 +2612,11 @@ void RenderLeds()
         chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 14, 0, 20);
     else
         chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 0, 20, 0);
-    chompi_leds::SetPthLed(chompi_leds::kPthEncoder2, 48, 20, 36); // brightness
+    chompi_leds::SetPthLed(
+        chompi_leds::kPthEncoder2,
+        enc2_page_ == kEnc2PageBeat ? 48 : 48,
+        enc2_page_ == kEnc2PageBeat ? 0 : 20,
+        enc2_page_ == kEnc2PageBeat ? 0 : 36);
     chompi_leds::SetPthLed(chompi_leds::kPthEncoder3, 0, 8, 20);  // decay
     if(enc4_page_ == kEnc4PageStrike)
         chompi_leds::SetPthLed(chompi_leds::kPthEncoder4, 20, 11, 0); // strike
@@ -2736,6 +2811,8 @@ chompi::BowlsPreset SnapshotParams()
                     std::memory_order_relaxed));
             p.decay[slot] = static_cast<uint8_t>(
                 params.decay_ticks[m][w].load(std::memory_order_relaxed));
+            p.beat[slot] = static_cast<uint8_t>(
+                params.beat_ticks[m][w].load(std::memory_order_relaxed));
         }
     p.reverb_mix = static_cast<uint8_t>(
         params.reverb_mix_ticks.load(std::memory_order_relaxed));
@@ -2777,6 +2854,8 @@ void ApplyPreset(const chompi::BowlsPreset& p, bool boot)
                                                 std::memory_order_relaxed);
             params.decay_ticks[m][w].store(p.decay[slot],
                                            std::memory_order_relaxed);
+            params.beat_ticks[m][w].store(p.beat[slot],
+                                          std::memory_order_relaxed);
         }
     params.reverb_mix_ticks.store(p.reverb_mix, std::memory_order_relaxed);
     params.delay_mix_ticks.store(p.delay_mix, std::memory_order_relaxed);

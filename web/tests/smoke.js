@@ -18,7 +18,9 @@ import {
 
 const factory = createFactoryPreset();
 assert.equal(validatePreset(factory), factory);
-assert.equal(factory.version, 12);
+assert.equal(factory.version, 1);
+assert.equal(factory.shimmer, 0);
+assert.deepEqual(factory.beat.strikes, Array(25).fill(8));
 assert.equal(factory.name, "");
 assert.equal(factory.comment, "");
 assert.deepEqual(factory.pitch_hz.strikes, factory.pitch_hz.rimming);
@@ -49,7 +51,7 @@ assert.equal(edited.pitch_hz.rimming[4], 444.125);
 assert.equal(edited.pitch_hz.strikes[4], TUNINGS[2].pitches[4]);
 assert.equal(edited.pitch_hz.split[4], TUNINGS[2].pitches[4]);
 
-const bankValues = { pan: 22, bvol: 13, profile: 3, bright: 9, decay: 18 };
+const bankValues = { pan: 22, bvol: 13, profile: 3, bright: 9, decay: 18, beat: 11 };
 let globalized = factory;
 for (const [field, value] of Object.entries(bankValues)) {
   globalized = setBankValueForAllModes(globalized, field, value);
@@ -76,16 +78,7 @@ assert.throws(
   () => applyTuning(factory, Array(25).fill(10001)),
   /40 to 10,000 Hz/,
 );
-assert.throws(() => validatePreset({ ...factory, version: 10 }), /version 12/);
-
-const legacyPreset = { ...factory, version: 11 };
-delete legacyPreset.name;
-delete legacyPreset.comment;
-const migratedPreset = validatePreset(legacyPreset);
-assert.equal(migratedPreset.version, 12);
-assert.equal(migratedPreset.name, "");
-assert.equal(migratedPreset.comment, "");
-assert.equal(legacyPreset.version, 11);
+assert.throws(() => validatePreset({ ...factory, version: 2 }), /version 1/);
 
 let namedPreset = setPresetValue(factory, "name", null, null, 'Bowl "One" \\copy');
 namedPreset = setPresetValue(namedPreset, "comment", null, null, "Line one\nCafé 🥣");
@@ -137,9 +130,9 @@ client.access.outputs.set(output.id, output);
 assert.equal(client.findChompiPorts(), null);
 
 const compatibleClient = new PresetTransferClient();
-compatibleClient.request = async () => ({ payload: [0, 1, 12, 15, 1] });
+compatibleClient.request = async () => ({ payload: [0, 1, 1, 15, 1] });
 await compatibleClient.handshake();
-compatibleClient.request = async () => ({ payload: [0, 1, 11, 15, 1] });
+compatibleClient.request = async () => ({ payload: [0, 1, 2, 15, 1] });
 await assert.rejects(compatibleClient.handshake(), /protocol v1/);
 
 const slotClient = new PresetTransferClient();

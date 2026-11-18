@@ -1,6 +1,6 @@
 export const MODES = ["strikes", "rimming", "split"];
 export const KEY_COUNT = 25;
-export const PRESET_VERSION = 12;
+export const PRESET_VERSION = 1;
 export const METADATA_BYTE_LIMITS = Object.freeze({
   name: 48,
   comment: 128,
@@ -22,6 +22,7 @@ const BANK_RANGES = {
   profile: [0, 4],
   bright: [0, 32],
   decay: [0, 32],
+  beat: [0, 32],
 };
 
 const FACTORY_PITCHES = [
@@ -36,7 +37,8 @@ export function createFactoryPreset() {
     Object.keys(BANK_RANGES).map((field) => [
       field,
       Object.fromEntries(MODES.map((mode) => [mode, Array(KEY_COUNT).fill(
-        field === "pan" ? 16 : field === "bvol" ? 16 : field === "bright" ? 16 : 0,
+        field === "pan" || field === "bvol" || field === "bright" ? 16
+          : field === "beat" ? 8 : 0,
       )])),
     ]),
   );
@@ -64,9 +66,7 @@ export function validatePreset(preset) {
   if (!preset || typeof preset !== "object") {
     throw new Error(`Preset must use schema version ${PRESET_VERSION}.`);
   }
-  const normalized = preset.version === 11
-    ? { ...preset, version: PRESET_VERSION, name: "", comment: "" }
-    : preset;
+  const normalized = preset;
   if (normalized.version !== PRESET_VERSION) {
     throw new Error(`Preset must use schema version ${PRESET_VERSION}.`);
   }

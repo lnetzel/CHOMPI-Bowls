@@ -7,7 +7,7 @@
 namespace bowls
 {
 constexpr int kStrikeArpeggioMinRateTenthsHz = 1;
-constexpr int kStrikeArpeggioMaxRateTenthsHz = 200;
+constexpr int kStrikeArpeggioMaxRateTenthsHz = 100;
 constexpr int kStrikeArpeggioDefaultRateTenthsHz = 30;
 
 inline int AdjustStrikeArpeggioRateTenthsHz(int rate_tenths_hz, int detents)

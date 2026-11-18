@@ -9,7 +9,7 @@ delay and reverb, and SD-card recording/playback.
 | Control | Action |
 |---|---|
 | Encoder 1 | Press to change page. Page 1: selected bowl volume; SHIFT+turn pans it. Page 2: resonance profile. Page 3: fundamental frequency. |
-| Encoder 2 | Page 1: selected bowl brightness. |
+| Encoder 2 | Press to change page. Page 1: selected bowl brightness; page 2: selected bowl's added rhythmic beating (red LED). |
 | Encoder 3 | Selected bowl decay. |
 | Encoder 4 | Press to change page. Page 1: strike hardness; page 2: paired-mode shimmer. |
 | Transport wheel | Rims the active wheel set. Clockwise adds friction texture; counter-clockwise gives a clean sustained tone. |
@@ -47,7 +47,7 @@ automatically. White keys 1-15 map to `BOWLS/P01.json` through
 and F#4 respectively. Confirm a selection by releasing and pressing
 SHIFT.
 
-Changes remain in memory until saved. Presets use schema v12; firmware
+Changes remain in memory until saved. Presets use schema v1; firmware
 continues to load existing v11 files with empty name and comment metadata.
 Each per-key setting is stored as three arrays of 25 values (`strikes`,
 `rimming`, `split`), ordered from C3 to C5. To edit a file, save the

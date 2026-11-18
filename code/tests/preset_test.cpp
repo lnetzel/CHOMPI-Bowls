@@ -1,4 +1,4 @@
-// Host-side tests for the v12 preset schema, slot bank, and direct pitches.
+// Host-side tests for the v1 preset schema, slot bank, and direct pitches.
 // Run with `make -C code/tests modes-test` from the MSYS2 UCRT64 shell.
 
 #include "BowlsPreset.h"
@@ -47,6 +47,7 @@ chompi::BowlsPreset PatternPreset(int mode)
         p.profile[i] = static_cast<uint8_t>(i % 5);
         p.bright[i] = static_cast<uint8_t>((i * 3) % 33);
         p.decay[i] = static_cast<uint8_t>((i * 11) % 33);
+        p.beat[i] = static_cast<uint8_t>((i * 5) % 33);
     }
     for(int i = 0; i < bowls::kKeyCount; ++i)
     {
@@ -69,7 +70,8 @@ bool SameTicks(const chompi::BowlsPreset& a, const chompi::BowlsPreset& b)
            && std::memcmp(a.bvol, b.bvol, sizeof(a.bvol)) == 0
            && std::memcmp(a.profile, b.profile, sizeof(a.profile)) == 0
            && std::memcmp(a.bright, b.bright, sizeof(a.bright)) == 0
-           && std::memcmp(a.decay, b.decay, sizeof(a.decay)) == 0;
+           && std::memcmp(a.decay, b.decay, sizeof(a.decay)) == 0
+           && std::memcmp(a.beat, b.beat, sizeof(a.beat)) == 0;
 }
 
 bool SamePitches(const bowls::PitchTables& a, const bowls::PitchTables& b,
@@ -239,18 +241,21 @@ int main()
                                  std::istreambuf_iterator<char>());
         char doc[kStorageJsonSize];
         size_t len = 0;
-        bool ok = opened
-                  && chompi::CopyCompactJson(source.data(), source.size(), doc,
-                                             sizeof(doc), len);
+        const bool compacted
+            = opened && chompi::CopyCompactJson(source.data(), source.size(),
+                                                doc, sizeof(doc), len);
         chompi::BowlsPreset preset;
         preset.SetDefaults();
-        if(!ok || !chompi::Parse(doc, len, preset)
+        const bool parsed = compacted && chompi::Parse(doc, len, preset);
+        bool ok = parsed;
+        if(!parsed
            || preset.mode != chompi::BowlsPreset::kModeSplit
            || preset.delay_time != chompi::BowlsPreset::kDefaultDelayTime
            || preset.pitch_hz.strikes[0] != 99.0f
            || preset.pitch_hz.rimming[0] != 99.0f
            || preset.pitch_hz.split[0] != 99.0f
-           || preset.pitch_hz.strikes[1] != 113.066f)
+           || preset.pitch_hz.strikes[1] != 113.066f
+           || preset.beat[0] != chompi::BowlsPreset::kDefaultBeat)
             ok = false;
         for(int i = 0; i < bowls::kKeyCount; ++i)
             if(preset.pitch_hz.strikes[i] != preset.pitch_hz.rimming[i]
@@ -259,7 +264,13 @@ int main()
         for(int i = 0; i < chompi::BowlsPreset::kBankSlots; ++i)
             if(preset.bright[i] != chompi::BowlsPreset::kDefaultBrightness)
                 ok = false;
-        Check(ok, "embedded first-boot template parses", "");
+        char detail[96] = "";
+        if(!ok)
+            std::snprintf(detail, sizeof(detail),
+                          "open=%d compact=%d parse=%d len=%lu",
+                          opened ? 1 : 0, compacted ? 1 : 0, parsed ? 1 : 0,
+                          static_cast<unsigned long>(len));
+        Check(ok, "embedded first-boot template parses", detail);
     }
 
     // Distinct fractional pitches, all six banks, all globals and modes.
@@ -277,7 +288,7 @@ int main()
                     if(static_cast<unsigned char>(buf[i]) > 0x7f)
                         shape_ok = false;
             const char* fields[] = {"pan", "bvol", "profile", "bright",
-                                    "decay"};
+                                    "decay", "beat"};
             if(shape_ok)
                 for(const char* field : fields)
                 {
@@ -291,7 +302,7 @@ int main()
                && (std::strstr(buf, ",\"rimming\":[") == nullptr
                    || std::strstr(buf, ",\"split\":[") == nullptr))
                 shape_ok = false;
-            if(!shape_ok || std::strstr(buf, "\"version\":12") == nullptr
+            if(!shape_ok || std::strstr(buf, "\"version\":1") == nullptr
                || std::strstr(buf, "\"name\":\"Preset \\\"One\\\" \\\\ copy\"")
                       == nullptr
                || !chompi::Parse(buf, len, dst) || !Same(src, dst))
@@ -300,7 +311,7 @@ int main()
         Check(ok, "round-trip 75 pitches, five banks, all modes", "");
     }
 
-    // Schema v11 files remain loadable and start with empty metadata.
+    // Older schemas are intentionally rejected by this initial schema.
     {
         chompi::BowlsPreset src;
         src.SetDefaults();
@@ -309,15 +320,12 @@ int main()
         bool ok = len > 0;
         if(ok)
             std::memcpy(legacy, buf, len + 1);
-        ok = ok && Replace(legacy, "\"version\":12", "\"version\":11")
-             && Replace(legacy, ",\"name\":\"\",\"comment\":\"\"", "");
+        ok = ok && Replace(legacy, "\"version\":1", "\"version\":12");
         chompi::BowlsPreset loaded;
         loaded.SetDefaults();
-        if(!ok || !chompi::Parse(legacy, std::strlen(legacy), loaded)
-           || loaded.name[0] != '\0' || loaded.comment[0] != '\0'
-           || !SameTicks(src, loaded) || !SamePitches(src.pitch_hz, loaded.pitch_hz))
+        if(!ok || chompi::Parse(legacy, std::strlen(legacy), loaded))
             ok = false;
-        Check(ok, "v11 preset loads with empty metadata", "");
+        Check(ok, "old schema versions are rejected", "");
     }
 
     // Metadata limits are measured in UTF-8 bytes and invalid NUL escapes fail.
@@ -584,21 +592,21 @@ int main()
         char doc[kStorageJsonSize];
         chompi::BowlsPreset sentinel = PatternPreset(2);
         const chompi::BowlsPreset before = sentinel;
-        const char* versions[] = {"7", "8", "9", "10"};
+        const char* versions[] = {"0", "2", "7", "8", "9", "10", "12", "13"};
         for(const char* version : versions)
         {
             std::memcpy(doc, buf, len + 1);
             char replacement[24];
             std::snprintf(replacement, sizeof(replacement), "\"version\":%s",
                           version);
-            if(!Replace(doc, "\"version\":12", replacement)
+            if(!Replace(doc, "\"version\":1", replacement)
                || chompi::Parse(doc, std::strlen(doc), sentinel)
                || !Same(sentinel, before))
                 ok = false;
         }
         std::memcpy(doc, buf, len + 1);
         chompi::BowlsPreset legacy_destination = before;
-        if(!Replace(doc, "\"version\":12", "\"version\":9")
+        if(!Replace(doc, "\"version\":1", "\"version\":9")
            || chompi::ParseWithPitchFallback(
                doc, std::strlen(doc), sizeof(doc), src, legacy_destination)
            || !Same(legacy_destination, before)

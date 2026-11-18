@@ -17,8 +17,9 @@ Open `http://localhost:8000/` in desktop Chrome or Edge. Localhost is a
 secure context for Web MIDI. Direct MIDI access requires a browser that
 supports Web MIDI and the SysEx permission prompt.
 
-Create a local draft from the factory settings or import a schema-v11 or
-schema-v12 JSON preset. Older v11 imports are upgraded with empty metadata.
+Create a local draft from the factory settings or import a schema-v1 JSON
+preset. Schema v1 includes a per-key beating value alongside brightness and
+decay; older schema versions are not supported.
 The name and comment fields are saved with the other preset values; names
 are limited to 48 UTF-8 bytes and comments to 128 UTF-8 bytes. The editor
 tries to connect automatically and requests MIDI/SysEx permission when
@@ -32,9 +33,9 @@ selecting an empty slot sets the destination for **Save to slot**. Select a tuni
 choose **Apply to all bowls** to replace the 25 pitch values in Strikes,
 Rimming, and Split. This action never changes the firmware's embedded
 factory preset. The global bowl controls apply pan, bowl volume, profile,
-brightness, or decay to all 25 keys in all three modes; individual bowl
+brightness, decay, or beating to all 25 keys in all three modes; individual bowl
 values and pitches remain editable afterward. **Strike** remains a
-preset-wide setting. **Save to slot** is
+preset-wide setting, as does **Shimmer**. **Save to slot** is
 the only action that writes to the SD card; overwriting a populated slot
 requires confirmation. Export JSON to keep a local backup.
 The per-key editor keeps the Strikes/Rimming/Split mode selector and uses
@@ -43,7 +44,7 @@ pitch rounded to one decimal place in the selected mode and update when a pitch
 is edited or a tuning is applied.
 
 The connected instrument must run firmware with preset-transfer protocol
-v1 and preset schema v12. The browser requires user approval before
+v1 and preset schema v1. The browser requires user approval before
 granting MIDI/SysEx access;
 after permission is granted, the editor finds CHOMPI-BOWLS and reconnects
 when it appears. If the device has no SD card or is running older firmware,
@@ -78,7 +79,7 @@ make -C code/tests midi-transfer-test
 
 The SysEx protocol uses manufacturer ID `0x7D`, protocol version 1,
 7-bit-safe payloads, CRC-16 checksums, and 96-byte data chunks. Slot JSON
-is limited to 4095 bytes. Firmware validates schema-v12 presets, preserves
+is limited to 4095 bytes. Firmware validates schema-v1 presets, preserves
 metadata when saving hardware parameter changes, and appends `-copy` on each
 firmware slot copy. Existing v11 files load with empty metadata. Writes use
 the existing staged SD-card path before reporting success.
