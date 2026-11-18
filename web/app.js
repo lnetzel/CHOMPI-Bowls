@@ -22,6 +22,7 @@ const elements = {
   importPreset: byId("import-preset"),
   exportPreset: byId("export-preset"),
   editor: byId("editor-controls"),
+  metadataControls: byId("metadata-controls"),
   draftState: byId("draft-state"),
   tuningSelect: byId("tuning-select"),
   tuningDescription: byId("tuning-description"),
@@ -32,7 +33,8 @@ const elements = {
   presetComment: byId("preset-comment"),
   globalBowlControls: byId("global-bowl-controls"),
   editMode: byId("edit-mode"),
-  editKey: byId("edit-key"),
+  bowlKeybed: byId("bowl-keybed"),
+  selectedKeyLabel: byId("selected-key-label"),
   keyControls: byId("key-controls"),
 };
 
@@ -76,6 +78,16 @@ const FIELD_CONFIG = [
   { field: "pitch_hz", label: "Pitch (Hz)", kind: "number", min: 40, max: 10000, step: 0.001 },
 ];
 
+const NOTE_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+const BLACK_KEY_SEMITONES = new Set([1, 3, 6, 8, 10]);
+
+function getKeyLabel(key) {
+  const note = 48 + key;
+  const noteName = NOTE_NAMES[note % 12];
+  const octave = Math.floor(note / 12) - 1;
+  return `Key ${key + 1} · ${noteName}${octave}`;
+}
+
 function getProfileDescription(value) {
   const profile = BOWL_PROFILES.find((item) => item.value === Number(value));
   return profile
@@ -104,6 +116,7 @@ function setDraftDirty(dirty) {
 
 function updateEditorAvailability() {
   elements.editor.disabled = !state.preset;
+  elements.metadataControls.disabled = !state.preset;
   const slotsUnavailable = !state.connected || !state.slotsLoaded
     || state.slots.busy || state.refreshingSlots || state.transferBusy;
   for (const button of elements.slotButtons.querySelectorAll("[data-slot]")) {
@@ -390,11 +403,22 @@ function prepareEditor() {
   for (const tuning of TUNINGS) {
     elements.tuningSelect.add(new Option(tuning.name, tuning.id));
   }
+  let whiteIndex = 0;
   for (let key = 0; key < 25; key += 1) {
-    const note = 48 + key;
-    const noteName = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"][note % 12];
-    const octave = Math.floor(note / 12) - 1;
-    elements.editKey.add(new Option(`Key ${key + 1} · ${noteName}${octave}`, key));
+    const black = BLACK_KEY_SEMITONES.has(key % 12);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `piano-key ${black ? "piano-black-key" : "piano-white-key"}`;
+    button.dataset.keyIndex = String(key);
+    button.style.left = `${(whiteIndex / 15) * 100}%`;
+    button.style.width = black ? `${(100 / 15) * 0.62}%` : `${100 / 15}%`;
+    const label = document.createElement("span");
+    label.className = "piano-key-label";
+    button.append(label);
+    button.setAttribute("aria-pressed", String(key === state.key));
+    button.disabled = !state.preset;
+    elements.bowlKeybed.append(button);
+    if (!black) whiteIndex += 1;
   }
   elements.globalBowlControls.innerHTML = FIELD_CONFIG
     .filter((config) => config.field !== "pitch_hz")
@@ -418,10 +442,12 @@ function prepareEditor() {
     const output = config.field === "profile" ? "" : "<output></output>";
     return `<label>${config.label}${control}${description}${output}</label>`;
   }).join("");
+  renderKeybed();
 }
 
 function renderPreset() {
   if (!state.preset) {
+    renderKeybed();
     updateEditorAvailability();
     setDraftDirty(false);
     return;
@@ -435,10 +461,26 @@ function renderPreset() {
     if (output) output.value = input.value;
   }
   elements.editMode.value = state.mode;
-  elements.editKey.value = String(state.key);
   renderGlobalBowlValues();
   renderKeyValues();
   updateEditorAvailability();
+}
+
+function renderKeybed() {
+  for (const button of elements.bowlKeybed.querySelectorAll("[data-key-index]")) {
+    const key = Number(button.dataset.keyIndex);
+    const pitch = state.preset ? state.preset.pitch_hz[state.mode][key] : null;
+    const label = pitch === null ? "—" : pitch.toFixed(1);
+    const accessibleLabel = pitch === null
+      ? `${getKeyLabel(key)} · No preset loaded`
+      : `${getKeyLabel(key)} · ${label} Hz`;
+    button.querySelector(".piano-key-label").textContent = label;
+    button.title = accessibleLabel;
+    button.setAttribute("aria-label", accessibleLabel);
+    button.disabled = !state.preset;
+    button.setAttribute("aria-pressed", String(key === state.key));
+  }
+  elements.selectedKeyLabel.textContent = `${getKeyLabel(state.key)} selected`;
 }
 
 function renderGlobalBowlValues() {
@@ -471,6 +513,7 @@ function renderKeyValues() {
     const description = input.parentElement.querySelector("[data-profile-description]");
     if (description) description.textContent = getProfileDescription(value);
   }
+  renderKeybed();
 }
 
 function markChanged() {
@@ -625,8 +668,10 @@ elements.editMode.addEventListener("change", (event) => {
   state.mode = event.target.value;
   renderKeyValues();
 });
-elements.editKey.addEventListener("change", (event) => {
-  state.key = Number(event.target.value);
+elements.bowlKeybed.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-key-index]");
+  if (!button || button.disabled) return;
+  state.key = Number(button.dataset.keyIndex);
   renderKeyValues();
 });
 
@@ -677,6 +722,7 @@ document.addEventListener("input", (event) => {
       if (output) output.value = field === "pitch_hz" ? `${value.toFixed(3)} Hz` : String(value);
       const description = input.parentElement.querySelector("[data-profile-description]");
       if (description) description.textContent = getProfileDescription(value);
+      if (field === "pitch_hz") renderKeybed();
       renderGlobalBowlValues();
       markChanged();
     } catch (error) {

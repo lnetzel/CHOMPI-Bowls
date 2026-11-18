@@ -61,7 +61,6 @@ select, input[type="number"], input[type="text"], textarea {
 }
 
 textarea { width: 100%; resize: vertical; }
-.subpanel > input[type="text"] { width: 100%; margin-bottom: 0.8rem; }
 
 input[type="range"] { accent-color: var(--accent); }
 input[type="file"] { display: none; }
@@ -196,6 +195,24 @@ label { display: grid; gap: 0.4rem; color: #e4d8cb; font-size: 0.9rem; }
 .slot-legend li { display: inline-flex; align-items: center; gap: 0.4rem; }
 .slot-legend .slot-key-indicator { width: 0.5rem; height: 0.5rem; }
 .slot-actions { display: flex; justify-content: flex-end; padding-top: 0.75rem; }
+.slot-metadata {
+  margin-top: 1rem;
+  padding: 1rem 0 0;
+  border-top: 1px solid var(--line);
+}
+.slot-metadata legend {
+  padding-right: 0.5rem;
+  color: var(--accent);
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+.metadata-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 0.8rem 1rem;
+}
+.metadata-fields input, .metadata-fields textarea { width: 100%; }
+.slot-metadata p { margin: 0.65rem 0 0; }
 progress { display: block; width: 100%; height: 0.55rem; margin-top: 1rem; accent-color: var(--accent); }
 
 fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
@@ -215,6 +232,68 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .key-navigation { flex-wrap: wrap; justify-content: flex-end; }
 .key-navigation label { display: inline; }
 .key-navigation select { min-width: 7rem; }
+.bowl-selection { margin: 1rem 0; }
+.bowl-selection > p:first-child { margin-bottom: 0.65rem; }
+.piano-keybed {
+  position: relative;
+  width: 100%;
+  height: 8.5rem;
+  overflow: hidden;
+  border: 1px solid #685743;
+  border-radius: 0.45rem;
+  background: #d9cbb8;
+  box-shadow: 0 3px 0 #1a1511, 0 5px 8px #0003;
+  user-select: none;
+}
+.piano-key {
+  position: absolute;
+  top: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 0 0.45rem;
+  border-radius: 0 0 0.35rem 0.35rem;
+  font: 700 0.62rem/1 "Cascadia Code", Consolas, monospace;
+  transition: background-color 100ms ease, border-color 100ms ease;
+}
+.piano-key:disabled { opacity: 1; cursor: not-allowed; }
+.piano-key:focus-visible { outline: 2px solid #fff; outline-offset: -3px; z-index: 4; }
+.piano-key-label { white-space: nowrap; }
+.piano-white-key {
+  z-index: 1;
+  height: 100%;
+  border: 1px solid #8a7258;
+  background: linear-gradient(90deg, #f8f2e8, #e8dccb);
+  color: #594532;
+}
+.piano-white-key[aria-pressed="true"] {
+  border-color: #9c6a37;
+  background: linear-gradient(90deg, #f2c985, #dda95f);
+  box-shadow: inset 0 0 0 2px #9c6a37;
+}
+.piano-black-key {
+  z-index: 2;
+  height: 62%;
+  font-size: 0.4rem;
+  transform: translateX(-50%);
+  border: 1px solid #090807;
+  background: linear-gradient(90deg, #241c16, #090807 55%, #30251b);
+  color: #f3ece1;
+  box-shadow: 0 4px 5px #0008;
+}
+.piano-black-key[aria-pressed="true"] {
+  border-color: #e4ad68;
+  background: linear-gradient(90deg, #855b31, #4a2d16 55%, #9c6a37);
+}
+.piano-black-key:active:not(:disabled) { transform: translate(-50%, 2px); }
+.selected-key-label {
+  margin: 0.65rem 0 0;
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
 .key-control-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.85rem 1rem; }
 .key-control-grid label { background: #211b16; border: 1px solid #493b2e; border-radius: 0.45rem; padding: 0.75rem; }
 .key-control-grid input[type="range"] { width: 100%; }
@@ -228,6 +307,9 @@ footer a { color: var(--accent); }
 @media (max-width: 760px) {
   .page-header, .section-heading { flex-direction: column; align-items: stretch; }
   .port-grid, .editor-grid { grid-template-columns: 1fr; }
+  .piano-key-label { writing-mode: vertical-rl; }
+  .piano-black-key { font-size: 0.55rem; }
+  .metadata-fields { grid-template-columns: 1fr; }
   .key-control-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .key-navigation { justify-content: flex-start; }
   .slot-buttons { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.55rem; }

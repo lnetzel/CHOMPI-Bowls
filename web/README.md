@@ -37,6 +37,10 @@ values and pitches remain editable afterward. **Strike** remains a
 preset-wide setting. **Save to slot** is
 the only action that writes to the SD card; overwriting a populated slot
 requires confirmation. Export JSON to keep a local backup.
+The per-key editor keeps the Strikes/Rimming/Split mode selector and uses
+an interactive piano keybed for bowl selection. The keys display each bowl's
+pitch rounded to one decimal place in the selected mode and update when a pitch
+is edited or a tuning is applied.
 
 The connected instrument must run firmware with preset-transfer protocol
 v1 and preset schema v12. The browser requires user approval before
