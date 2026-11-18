@@ -14,6 +14,7 @@
 //   S12 maximum brightness substantially raises the strike's upper-mode balance
 //   S13 an idle lower-register voice clears its stale activity envelope
 //   S14 higher and user-tuned pitches build into the resonant body, not a transient
+//   S16 staging strike/steal parameters before excitation preserves the render
 
 #include "bowl_scale.h"
 #include "bowl_voice.h"
@@ -644,6 +645,72 @@ void S15_MutedModeRetune()
           "S15 muted mode retune stays finite and bounded", detail);
 }
 
+void S16_StagedExcitationSetup()
+{
+    const float old_pitches[] = {0.0f, 130.81f, 1100.0f};
+    const float new_pitches[] = {130.81f, 880.0f, 100.0f};
+    double      max_diff = 0.0;
+    bool        finite = true;
+
+    for(size_t scenario = 0;
+        scenario < sizeof(old_pitches) / sizeof(old_pitches[0]);
+        ++scenario)
+    {
+        std::vector<float> immediate, staged;
+        for(int path = 0; path < 2; ++path)
+        {
+            bowls::BowlVoice voice;
+            FreshVoice(voice);
+            if(old_pitches[scenario] > 0.0f)
+            {
+                voice.Strike(old_pitches[scenario], 0.75f, 1.0f, 1.0f);
+                Render(voice, 0.08, nullptr);
+            }
+
+            voice.SetProfile(4);
+            voice.SetBrightness(1.25f);
+            if(path == 0)
+            {
+                voice.SetDecayMult(2.4f);
+                voice.SetShimmerMult(1.4f);
+            }
+            else
+            {
+                voice.SetDecayMultForNextExcitation(2.4f);
+                voice.SetShimmerMultForNextExcitation(1.4f);
+            }
+
+            voice.StrikeWithAmplitude(new_pitches[scenario],
+                                      0.8f,
+                                      0.6f,
+                                      1.0f,
+                                      1.0f,
+                                      0.02f);
+            const Stats stats = Render(
+                voice, 0.3, path == 0 ? &immediate : &staged);
+            finite = finite && stats.finite;
+        }
+
+        if(immediate.size() != staged.size())
+        {
+            finite = false;
+            continue;
+        }
+        for(size_t i = 0; i < immediate.size(); ++i)
+        {
+            const double diff
+                = std::fabs(static_cast<double>(immediate[i] - staged[i]));
+            if(diff > max_diff)
+                max_diff = diff;
+        }
+    }
+
+    char detail[64];
+    std::snprintf(detail, sizeof(detail), "max|diff|=%g", max_diff);
+    Check(finite && max_diff == 0.0,
+          "S16 staged strike/steal setup is sample-identical", detail);
+}
+
 } // namespace
 
 int main()
@@ -664,6 +731,7 @@ int main()
     S13_IdleLowerVoiceClearsActivityEnvelope();
     S14_HighRegisterAttackBuildsResonantBody();
     S15_MutedModeRetune();
+    S16_StagedExcitationSetup();
     std::printf(g_failures == 0 ? "\nALL STRIKE TESTS PASSED\n"
                                 : "\n%d STRIKE TEST(S) FAILED\n",
                 g_failures);

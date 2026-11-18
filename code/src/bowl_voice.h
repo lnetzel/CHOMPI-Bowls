@@ -164,14 +164,17 @@ class BowlVoice
     /** Live decay multiplier (0.25..3); updates the ringing voice. */
     void SetDecayMult(float mult)
     {
-        if(mult < 0.25f)
-            mult = 0.25f;
-        if(mult > 3.0f)
-            mult = 3.0f;
+        mult = ClampDecayMult(mult);
         if(mult == decay_mult_)
             return;
         decay_mult_ = mult;
         UpdateCoeffs();
+    }
+
+    /** Stage decay for an excitation that immediately recomputes coefficients. */
+    void SetDecayMultForNextExcitation(float mult)
+    {
+        decay_mult_ = ClampDecayMult(mult);
     }
 
     /** Paired-mode detune multiplier (0..2). Defer changes until the voice
@@ -180,9 +183,17 @@ class BowlVoice
     {
         if(mult == shimmer_target_mult_)
             return;
+        SetShimmerMultForNextExcitation(mult);
+        ApplyPendingShimmerIfQuiet();
+    }
+
+    /** Stage shimmer for an excitation that immediately recalculates coefficients. */
+    void SetShimmerMultForNextExcitation(float mult)
+    {
+        if(mult == shimmer_target_mult_)
+            return;
         shimmer_target_mult_ = mult;
         shimmer_change_pending_ = true;
-        ApplyPendingShimmerIfQuiet();
     }
 
     /** Rim-rubbing level 0..1 and character (0 = clockwise friction
@@ -320,7 +331,8 @@ class BowlVoice
         // instead of being under-driven by a fixed long contact.
         float contact_s = 0.0006f + 0.0010f * softness;
         const float low_note_contact_s = 1.5f / fundamental_;
-        if(contact_s < low_note_contact_s)
+        const bool low_note_contact = contact_s < low_note_contact_s;
+        if(low_note_contact)
             contact_s = low_note_contact_s;
         burst_len_ = static_cast<int>(fs_ * contact_s);
         if(burst_len_ < 12)
@@ -390,6 +402,14 @@ class BowlVoice
         // pulse's response at the fundamental is measured per strike
         // with a short Goertzel recurrence over the bump shape, so a
         // low bowl's longer contact does not dull its body.
+        if(low_note_contact)
+        {
+            // The 1.5-cycle ContactShape has area 0.5 and its Goertzel
+            // response/area stays below 1/3 across the supported contact
+            // lengths, so the existing 3x-flat cap always applies.
+            pulse_gain_ = 3.6f / static_cast<float>(burst_len_);
+        }
+        else
         {
             const float w  = 2.0f * kPi * fundamental_ / fs_;
             const float cw = 2.0f * cosf(w);
@@ -720,6 +740,15 @@ class BowlVoice
     }
 
   private:
+    static float ClampDecayMult(float mult)
+    {
+        if(mult < 0.25f)
+            return 0.25f;
+        if(mult > 3.0f)
+            return 3.0f;
+        return mult;
+    }
+
     struct Resonator
     {
         float c1 = 0.0f; // 2 r cos(w)

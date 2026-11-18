@@ -23,6 +23,10 @@ ifdef CPU_METER
 C_DEFS += -DCPU_METER
 endif
 
+ifdef AUDIO_DEADLINE_DIAG
+C_DEFS += -DAUDIO_DEADLINE_DIAG
+endif
+
 include $(SYSTEM_FILES_DIR)/Makefile
 
 $(BUILD_DIR)/default_state.o: ../state\ examples/default_slendro_inspired.json

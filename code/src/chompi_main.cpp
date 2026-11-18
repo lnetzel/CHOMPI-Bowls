@@ -38,9 +38,12 @@ using namespace daisy;
  * is a single GLOBAL read at descriptor time, so one USB device stack
  * cannot present CDC (the USB-serial log) and MIDI at once - MIDI
  * takes priority, so normal builds compile the serial diagnostics out
- * (the LED diagnostics stay). CPU_METER diagnostic builds keep the
- * serial log and skip USB MIDI instead (DIN MIDI still works there). */
-#ifdef CPU_METER
+ *  (the LED diagnostics stay). Diagnostic builds keep the serial log
+ *  and skip USB MIDI instead (DIN MIDI still works there). */
+#ifdef AUDIO_DEADLINE_DIAG
+#define BOWLS_LOG(...) \
+    daisy::Logger<daisy::LOGGER_EXTERNAL>::PrintLine(__VA_ARGS__)
+#elif defined(CPU_METER)
 #define BOWLS_LOG(...) hw.seed.PrintLine(__VA_ARGS__)
 #else
 #define BOWLS_LOG(...) ((void)0)
@@ -270,8 +273,8 @@ void UpdateMidiClock(uint32_t now)
     }
 }
 
-#ifdef CPU_METER
-constexpr bool kUsbMidiEnable = false; // meter build: keep USB serial
+#if defined(CPU_METER) || defined(AUDIO_DEADLINE_DIAG)
+constexpr bool kUsbMidiEnable = false; // diagnostic build: keep USB serial
 #else
 constexpr bool kUsbMidiEnable = true;
 #endif
@@ -720,7 +723,7 @@ void ApplyVoiceSettings(int v, PlayMode mode, int key)
         params.profile_ticks[m][key].load(std::memory_order_relaxed));
     voices[v].SetBrightness(bowls::BrightnessFromTicks(
         params.brightness_ticks[m][key].load(std::memory_order_relaxed)));
-    voices[v].SetDecayMult(DecayMultTicks(
+    voices[v].SetDecayMultForNextExcitation(DecayMultTicks(
         params.decay_ticks[m][key].load(std::memory_order_relaxed)));
     voices[v].SetPan(PanNormTicks(
         params.pan_ticks[m][key].load(std::memory_order_relaxed)));
@@ -760,7 +763,8 @@ void StrikeKey(PlayMode mode, int key, int velocity = 127,
         = (voices[v].Key() != key || voices[v].VoiceMode() != ModeIdx(mode))
           && voices[v].IsActive();
     ApplyVoiceSettings(v, mode, key);
-    voices[v].SetShimmerMult(BowlDetuneMult(ModeIdx(mode), key));
+    voices[v].SetShimmerMultForNextExcitation(
+        BowlDetuneMult(ModeIdx(mode), key));
     voices[v].SetKey(key);
     voices[v].SetVoiceMode(ModeIdx(mode));
     // A strike takes the voice over: any pad/rim performance gain left
@@ -879,7 +883,8 @@ void StartPadKey(int key, int velocity = 127)
         = (voices[v].Key() != key || voices[v].VoiceMode() != ModeIdx(mode))
           && voices[v].IsActive();
     ApplyVoiceSettings(v, mode, key);
-    voices[v].SetShimmerMult(BowlDetuneMult(ModeIdx(mode), key));
+    voices[v].SetShimmerMultForNextExcitation(
+        BowlDetuneMult(ModeIdx(mode), key));
     voices[v].SetKey(key);
     voices[v].SetVoiceMode(ModeIdx(mode));
     voices[v].SelectForRub(KeyFundamental(mode, key), 1.0f,
@@ -920,7 +925,8 @@ void SelectRimKey(int key, bool make_edit_target, int velocity = 127)
     if(v < 0)
         return;
     ApplyVoiceSettings(v, mode, key);
-    voices[v].SetShimmerMult(BowlDetuneMult(ModeIdx(mode), key));
+    voices[v].SetShimmerMultForNextExcitation(
+        BowlDetuneMult(ModeIdx(mode), key));
     voices[v].SetKey(key);
     voices[v].SetVoiceMode(ModeIdx(mode));
     // Deterministic detune, like strikes: the same bowl always sings
@@ -3068,9 +3074,14 @@ int main()
 {
     hw.Init();
     // MIDI uses DIN (UART RX/TX D13/D14) and the panel USB-C port.
-    // The USB device mode is reserved for MIDI except in CPU_METER builds.
+    // Diagnostic builds reserve the panel USB-C port for serial logging.
     midi.Init(kUsbMidiEnable);
     hw.ConfigureUsbDevicePath();
+#ifdef AUDIO_DEADLINE_DIAG
+    daisy::Logger<daisy::LOGGER_EXTERNAL>::StartLog(false);
+#elif defined(CPU_METER)
+    hw.seed.StartLog(false);
+#endif
     bbd_delay.Init(kSampleRate, delay_buffer_l, delay_buffer_r);
     ApplyDelayTargets();
     chompi_leds::Init();
@@ -3130,6 +3141,12 @@ int main()
     }
     transport_wait_for_release_ = hw.PlayPressed() || hw.LoopPressed();
 
+#ifdef AUDIO_DEADLINE_DIAG
+    if(!hw.seed.audio_handle.EnableDeadlineDiagnostics())
+        BOWLS_LOG("AUDIO_DIAG: unable to enable cycle counter");
+    uint32_t audio_diag_reported_at = System::GetNow();
+#endif
+
     hw.StartAudio(AudioCallback);
 
     while(true)
@@ -3158,6 +3175,21 @@ int main()
         preset_storage.Service(preset_bank);
         sd_recorder.Service(preset_storage, System::GetNow());
         const uint32_t now = System::GetNow();
+#ifdef AUDIO_DEADLINE_DIAG
+        if(now - audio_diag_reported_at >= 1000)
+        {
+            daisy::AudioHandle::DeadlineStats stats;
+            if(hw.seed.audio_handle.ConsumeDeadlineStats(stats))
+                BOWLS_LOG("AUDIO_DIAG callbacks=%lu misses=%lu max=%luus budget=%luus",
+                          static_cast<unsigned long>(stats.callbacks),
+                          static_cast<unsigned long>(stats.misses),
+                          static_cast<unsigned long>(stats.max_us),
+                          static_cast<unsigned long>(stats.budget_us));
+            else
+                BOWLS_LOG("AUDIO_DIAG: timing stats unavailable");
+            audio_diag_reported_at = now;
+        }
+#endif
         if((preset_mode_ == kPresetSaving || preset_mode_ == kPresetCopying
             || preset_mode_ == kPresetErasing)
            && now - preset_anim_t_ >= 1000)
