@@ -61,7 +61,7 @@ chompi::sd_audio::StereoRing<kSdRingFrames> DSY_SDRAM_BSS playback_ring;
 chompi::SdRecorder<kSdRingFrames> sd_recorder(record_ring);
 chompi::SdPlayer<kSdRingFrames>   sd_player(playback_ring);
 
-constexpr int  kVoiceCount = 5; // shared pool, quietest-voice steal
+constexpr int  kVoiceCount = 6; // shared pool, quietest-voice steal
 bowls::BowlVoice voices[kVoiceCount];
 
 // Stereo temple-room reverb (DaisySP Freeverb derivative) on the bowl

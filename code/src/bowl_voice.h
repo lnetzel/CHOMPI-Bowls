@@ -69,12 +69,14 @@ class BowlVoice
         perf_gain_target_ = 1.0f;
         key_           = -1;
         rng_           = 0x12345678u;
+        swirl_step_size_ = 0;
         for(int k = 0; k < kResonators; ++k)
             res_[k] = Resonator{};
         float rw = 1.0f;
         for(int m = 0; m < kPairs; ++m)
         {
             pair_in_[m] = 0.0f;
+            pair_enabled_[m] = false;
             ga_l_[m] = ga_r_[m] = gb_l_[m] = gb_r_[m] = 0.0f;
             rub_weight_[m] = rw;
             rw *= 0.35f;
@@ -91,7 +93,11 @@ class BowlVoice
             // Rotating shimmer: random start phase, 2..10 s orbit
             // period spread across pairs and slightly randomized so two
             // bowls never swirl in sync.
-            swirl_phase_[m] = 6.2831853f * (Noise() * 0.5f + 0.5f);
+            const float phase = 6.2831853f * (Noise() * 0.5f + 0.5f);
+            swirl_sin_[m] = sinf(phase);
+            swirl_cos_[m] = cosf(phase);
+            swirl_step_sin_[m] = 0.0f;
+            swirl_step_cos_[m] = 1.0f;
             const float rate
                 = 0.10f * (1.0f + 0.22f * static_cast<float>(m))
                   * (0.85f + 0.30f * (Noise() * 0.5f + 0.5f));
@@ -492,6 +498,11 @@ class BowlVoice
 
         UpdateLife(n);
 
+        float rub_bright[kPairs];
+        for(int m = 0; m < kPairs; ++m)
+            rub_bright[m]
+                = 1.0f + 1.2f * brightness_ * static_cast<float>(m);
+
         float env = envelope_;
         float rub = rub_smooth_;
         for(size_t i = 0; i < n; ++i)
@@ -604,8 +615,7 @@ class BowlVoice
                 // Strike burst uses the per-strike weights; rubbing uses
                 // its own fundamental-dominant weights, and Brightness
                 // opens up the rubbed higher modes live.
-                const float rub_bright
-                    = 1.0f + 1.2f * brightness_ * static_cast<float>(m);
+                const float mode_brightness = rub_bright[m];
                 float clean_exc = 0.0f;
                 if(clean_lvl > 0.0f)
                 {
@@ -624,9 +634,17 @@ class BowlVoice
                     osc_cb_[m]     = sin_b_[m] * osc_sb_[m]
                                      + cos_b_[m] * osc_cb_[m];
                     osc_sb_[m]     = sb;
-                    clean_exc = clean_lvl * rub_bright
+                    clean_exc = clean_lvl * mode_brightness
                                 * (clean_amp_a_[m] * sa
                                    + clean_amp_b_[m] * sb);
+                }
+                if(!pair_enabled_[m])
+                {
+                    // Keep the modulation state current so a later
+                    // retune into band resumes smoothly.
+                    swirl_l_[m] += 0.004f * (swirl_l_t_[m] - swirl_l_[m]);
+                    swirl_r_[m] += 0.004f * (swirl_r_t_[m] - swirl_r_[m]);
+                    continue;
                 }
                 // Strike input is injected into the resonator STATE:
                 // what radiates is the bowl's response, not the raw
@@ -634,7 +652,7 @@ class BowlVoice
                 // transient at all (first 2 ms are 40-60 dB down).
                 // The rub paths include their direct feedthrough.
                 const float x_rub = rub_exc * pair_in_[m] * rub_weight_[m]
-                                        * rub_bright
+                                        * mode_brightness
                                     + clean_exc;
                 const float x_strike = exc * pair_in_[m] * in_weight_[m];
                 Resonator&   a = res_[2 * m];
@@ -823,6 +841,13 @@ class BowlVoice
         // peak across modes (a two-pole resonator's response peaks
         // at ~g / sin(w)); 0 for a muted (above-Nyquist) resonator.
         pair_in_[m] = PairInputGain(f0);
+        pair_enabled_[m] = ra > 0.0f || rb > 0.0f || pair_in_[m] != 0.0f;
+        if(!pair_enabled_[m])
+        {
+            Resonator& a = res_[2 * m];
+            Resonator& b = res_[2 * m + 1];
+            a.y1 = a.y2 = b.y1 = b.y2 = 0.0f;
+        }
 
         // Clean rim drive: rotation-oscillator coefficients locked to
         // the pair's resonant frequencies (phase states are untouched,
@@ -878,16 +903,33 @@ class BowlVoice
     {
         const float det_scale = fundamental_ / 220.0f;
         const float block_s   = static_cast<float>(n) / fs_;
+        if(swirl_step_size_ != n)
+        {
+            const float block_samples = static_cast<float>(n);
+            for(int m = 0; m < kPairs; ++m)
+            {
+                const float step = swirl_inc_[m] * block_samples;
+                swirl_step_cos_[m] = cosf(step);
+                swirl_step_sin_[m] = sinf(step);
+            }
+            swirl_step_size_ = n;
+        }
         for(int m = 0; m < kPairs; ++m)
         {
             // Rotating shimmer: slow orbit, L/R in quadrature, so the
-            // pair's energy circles the stereo field.
-            swirl_phase_[m] += swirl_inc_[m] * static_cast<float>(n);
-            if(swirl_phase_[m] > 6.2831853f)
-                swirl_phase_[m] -= 6.2831853f;
+            // pair's energy circles the stereo field. Rotate the unit
+            // phase by a cached block step instead of evaluating trig
+            // functions on every block.
+            const float phase_sin = swirl_sin_[m];
+            const float phase_cos = swirl_cos_[m];
+            swirl_sin_[m] = phase_sin * swirl_step_cos_[m]
+                            + phase_cos * swirl_step_sin_[m];
+            swirl_cos_[m] = phase_cos * swirl_step_cos_[m]
+                            - phase_sin * swirl_step_sin_[m];
+            RenormOsc(swirl_sin_[m], swirl_cos_[m]);
             constexpr float kSwirlDepth = 0.18f;
-            swirl_l_t_[m] = 1.0f + kSwirlDepth * cosf(swirl_phase_[m]);
-            swirl_r_t_[m] = 1.0f + kSwirlDepth * sinf(swirl_phase_[m]);
+            swirl_l_t_[m] = 1.0f + kSwirlDepth * swirl_cos_[m];
+            swirl_r_t_[m] = 1.0f + kSwirlDepth * swirl_sin_[m];
 
             // Wandering beat: random-walk the pair's detune multiplier
             // within +/-8%, ~2.5 s drift constant, new target every
@@ -1023,14 +1065,19 @@ class BowlVoice
     float     in_weight_[kPairs];  // per-mode excitation weight (strike)
     float     rub_weight_[kPairs]; // per-mode rub weight (low modes)
     float     pair_in_[kPairs];   // per-pair input gain (normalization)
+    bool      pair_enabled_[kPairs]; // at least one member can sound
     float     ga_l_[kPairs];
     float     ga_r_[kPairs];
     float     gb_l_[kPairs];
     float     gb_r_[kPairs];
 
     // Rotating shimmer: slow per-pair stereo orbit.
-    float swirl_phase_[kPairs];   // LFO phase, radians
+    float swirl_sin_[kPairs];     // LFO phase, unit-circle state
+    float swirl_cos_[kPairs];
     float swirl_inc_[kPairs];     // per-sample phase increment
+    float swirl_step_sin_[kPairs]; // cached block rotation
+    float swirl_step_cos_[kPairs];
+    size_t swirl_step_size_ = 0;
     float swirl_l_[kPairs];       // smoothed per-pair swirl gains
     float swirl_r_[kPairs];
     float swirl_l_t_[kPairs];     // block-rate targets

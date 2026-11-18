@@ -548,10 +548,10 @@ void TestLatchedVoiceProtection()
     PlayModes sm;
     sm.Init(PlayMode::kRimming);
     sm.LoopPressed();
-    bool  active[5] = {true, true, true, true, true};
-    bool  protected_voice[5] = {};
-    float envelope[5] = {0.01f, 0.02f, 0.03f, 0.04f, 0.05f};
-    for(int key = 0; key < 5; ++key)
+    bool  active[6] = {true, true, true, true, true, true};
+    bool  protected_voice[6] = {};
+    float envelope[6] = {0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.06f};
+    for(int key = 0; key < 6; ++key)
     {
         sm.KeyDown(key, false);
         sm.KeyUp(key);
@@ -560,12 +560,12 @@ void TestLatchedVoiceProtection()
     sm.SetMode(PlayMode::kStrikes);
     const auto select = [&]() {
         return bowls::QuietestUnprotectedVoice(
-            5, [&](int i) { return active[i]; },
+            6, [&](int i) { return active[i]; },
             [&](int i) { return protected_voice[i]; },
             [&](int i) { return envelope[i]; });
     };
     Check(sm.LatchEnabled() && select() == -1,
-          "M7f five preserved latches reject voice stealing", "");
+          "M7f six preserved latches reject voice stealing", "");
     protected_voice[0] = false;
     protected_voice[1] = false;
     Check(select() == 0,
@@ -573,18 +573,18 @@ void TestLatchedVoiceProtection()
 
     sm.Init(PlayMode::kStrikes);
     sm.PlayPressed();
-    for(int key = 0; key < 5; ++key)
+    for(int key = 0; key < 6; ++key)
     {
         sm.KeyDown(key, false);
         sm.KeyUp(key);
         protected_voice[key] = sm.StrikeLatched(key);
     }
     Check(bowls::QuietestUnprotectedVoice(
-              5, [&](int i) { return active[i]; },
+              6, [&](int i) { return active[i]; },
               [&](int i) { return protected_voice[i]; },
               [&](int i) { return envelope[i]; })
               == -1,
-          "M7h five Strike latches are protected from stealing", "");
+          "M7h six Strike latches are protected from stealing", "");
 }
 
 // -- M8: wheel sets ------------------------------------------------------------

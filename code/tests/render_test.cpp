@@ -190,8 +190,10 @@ void T0_BaselineIdentity()
     char det[96];
     std::snprintf(det, sizeof(det), "samples=%u max|diff|=%g",
                   static_cast<unsigned>(now.size()), max_diff);
-    Check(ref.size() == now.size() && max_diff == 0.0,
-          "T0 rub sample-identity vs accepted build", det);
+    // The block-step recurrence is mathematically equivalent to the saved
+    // per-block trig render; keep its float-rounding error at 1e-5 or less.
+    Check(ref.size() == now.size() && max_diff <= 1.0e-5,
+          "T0 rub render matches accepted build within roundoff", det);
 }
 
 /** Sustained rubbed render at the reference setup (220 Hz, Temple,
@@ -579,6 +581,55 @@ void T7_ShimmerRetune()
           "T7b quiet voice uses new shimmer setting", detail);
 }
 
+void T8_SwirlRecurrence()
+{
+    bowls::BowlVoice a, b;
+    for(bowls::BowlVoice* voice : {&a, &b})
+    {
+        voice->Init(kFs);
+        voice->SetProfile(0);
+        voice->SetBrightness(0.5f);
+        voice->SelectForRub(220.0f, 1.0f);
+        voice->SetRub(1.0f, 1.0f);
+    }
+
+    constexpr long kSamples = 10L * static_cast<long>(kFs);
+    float          al[kBlk], ar[kBlk], bl[kBlk], br[kBlk];
+    bool           finite = true;
+    double         max_difference = 0.0;
+    double         peak = 0.0;
+    for(long base = 0; base < kSamples; base += kBlk)
+    {
+        for(int i = 0; i < kBlk; ++i)
+            al[i] = ar[i] = bl[i] = br[i] = 0.0f;
+        a.ProcessBlock(al, ar, kBlk);
+        b.ProcessBlock(bl, br, kBlk);
+        for(int i = 0; i < kBlk; ++i)
+        {
+            finite = finite && std::isfinite(al[i]) && std::isfinite(ar[i])
+                     && std::isfinite(bl[i]) && std::isfinite(br[i]);
+            if(std::fabs(static_cast<double>(al[i])) > peak)
+                peak = std::fabs(static_cast<double>(al[i]));
+            if(std::fabs(static_cast<double>(ar[i])) > peak)
+                peak = std::fabs(static_cast<double>(ar[i]));
+            const double left_difference
+                = std::fabs(static_cast<double>(al[i]) - bl[i]);
+            const double right_difference
+                = std::fabs(static_cast<double>(ar[i]) - br[i]);
+            if(left_difference > max_difference)
+                max_difference = left_difference;
+            if(right_difference > max_difference)
+                max_difference = right_difference;
+        }
+    }
+
+    char detail[96];
+    std::snprintf(detail, sizeof(detail), "peak=%.3f max stereo diff=%.8f",
+                  peak, max_difference);
+    Check(finite && max_difference == 0.0,
+          "T8 10 s swirl recurrence is deterministic and finite", detail);
+}
+
 void Cal()
 {
     const double text_rms  = SustainedRms(false);
@@ -611,6 +662,7 @@ int main(int argc, char** argv)
     T5_BoundedSweep();
     T6_LongSustained();
     T7_ShimmerRetune();
+    T8_SwirlRecurrence();
     std::printf(g_failures == 0 ? "\nALL TESTS PASSED\n"
                                 : "\n%d TEST(S) FAILED\n",
                 g_failures);

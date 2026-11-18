@@ -618,6 +618,32 @@ void S14_HighRegisterAttackBuildsResonantBody()
           "S14 high-register attack builds into resonant body", detail);
 }
 
+void S15_MutedModeRetune()
+{
+    bowls::BowlVoice voice;
+    FreshVoice(voice);
+    voice.Strike(850.0f, 0.75f, 1.0f, 1.0f);
+    const Stats before = Render(voice, 0.05, nullptr);
+    const bool tail_before = voice.HasTail();
+
+    // At 900 Hz the Temple profile's highest pair is above the 0.45 fs
+    // limit; returning to 850 Hz makes it audible again.
+    voice.SelectForRub(900.0f, 1.0f);
+    const bool tail_muted = voice.HasTail();
+    const Stats muted = Render(voice, 0.05, nullptr);
+    voice.SelectForRub(850.0f, 1.0f);
+    const bool tail_enabled = voice.HasTail();
+    const Stats enabled = Render(voice, 0.05, nullptr);
+
+    const double peak = std::max(before.peak,
+                                 std::max(muted.peak, enabled.peak));
+    char         detail[64];
+    std::snprintf(detail, sizeof(detail), "peak=%.3f", peak);
+    Check(before.finite && muted.finite && enabled.finite && peak <= 1.5
+              && tail_before && tail_muted && tail_enabled,
+          "S15 muted mode retune stays finite and bounded", detail);
+}
+
 } // namespace
 
 int main()
@@ -637,6 +663,7 @@ int main()
     S12_MaxBrightnessStrengthensStrikeHighModes();
     S13_IdleLowerVoiceClearsActivityEnvelope();
     S14_HighRegisterAttackBuildsResonantBody();
+    S15_MutedModeRetune();
     std::printf(g_failures == 0 ? "\nALL STRIKE TESTS PASSED\n"
                                 : "\n%d STRIKE TEST(S) FAILED\n",
                 g_failures);
