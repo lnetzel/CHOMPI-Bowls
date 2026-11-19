@@ -1549,17 +1549,9 @@ void ApplyControls()
     // owns this function (HandleTransport early-returns then): MIDI
     // note-offs must never leave a stuck pad gate.
     SyncPadGates();
-    if(HandleTransport())
-        return;
-    RetriggerLatchedStrikes();
-    const bool     shift = hw.ShiftHeld();
-    static bool prev_shift_held = false;
-    if(shift && !prev_shift_held)
-        PresetShiftConfirm();
-    prev_shift_held = shift;
+    const bool shift = hw.ShiftHeld();
 
-    // Volume knob press: page 1 = master, page 2 = reverb.
-    // The newly active page's bar shows as confirmation.
+    // Keep the master-volume knob available while the transport owns the UI.
     if(hw.VolumeClicked())
     {
         vol_page_ = (vol_page_ + 1) % 2;
@@ -1568,6 +1560,30 @@ void ApplyControls()
                         : Overlay::ReverbMix,
                     now);
     }
+
+    const int volume_inc = hw.EncoderIncrement(5);
+    if(volume_inc != 0)
+    {
+        if(vol_page_ == kVolPageReverb)
+        {
+            if(shift)
+                BumpTicks(params.reverb_decay_ticks, volume_inc,
+                          Overlay::ReverbDecay, now);
+            else
+                BumpTicks(params.reverb_mix_ticks, volume_inc,
+                          Overlay::ReverbMix, now);
+        }
+        else if(!shift)
+            BumpTicks(params.volume_ticks, volume_inc, Overlay::Volume, now);
+    }
+
+    if(HandleTransport())
+        return;
+    RetriggerLatchedStrikes();
+    static bool prev_shift_held = false;
+    if(shift && !prev_shift_held)
+        PresetShiftConfirm();
+    prev_shift_held = shift;
 
     // Physical encoder 1 press: cycle page 1 bowl volume -> page 2 pan
     // -> page 3 direct-Hz frequency. The newly active page's bar shows
@@ -1719,23 +1735,6 @@ void ApplyControls()
     {
         BumpTicks(params.shimmer_ticks, enc4_inc, Overlay::Shimmer, now);
         ApplyShimmerToVoices();
-    }
-
-    // Volume encoder pages: master, then reverb mix and SHIFT-decay.
-    const int volume_inc = hw.EncoderIncrement(5);
-    if(volume_inc != 0)
-    {
-        if(vol_page_ == kVolPageReverb)
-        {
-            if(shift)
-                BumpTicks(params.reverb_decay_ticks, volume_inc,
-                          Overlay::ReverbDecay, now);
-            else
-                BumpTicks(params.reverb_mix_ticks, volume_inc,
-                          Overlay::ReverbMix, now);
-        }
-        else if(!shift)
-            BumpTicks(params.volume_ticks, volume_inc, Overlay::Volume, now);
     }
 
     // Transport wheel: in a latched Strike arpeggio, adjust its rate
