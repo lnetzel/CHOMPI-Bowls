@@ -755,6 +755,7 @@ void StrikeKey(PlayMode mode, int key, int velocity = 127,
     voices[v].StrikeWithAmplitude(KeyFundamental(mode, key), strike.hardness,
                                   strike.amplitude, 1.0f, 1.0f,
                                   stolen ? 0.02f : 0.25f);
+    reverb.DampenImpact();
 #ifdef CPU_METER
     if(stolen)
         g_steal_flash_until = System::GetNow() + 300;

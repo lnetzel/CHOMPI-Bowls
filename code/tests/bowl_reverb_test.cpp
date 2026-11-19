@@ -142,6 +142,34 @@ float TailRms(int ticks)
     return count == 0 ? 0.0f
                       : sqrtf(static_cast<float>(energy / (2 * count)));
 }
+
+float ImpactToneRms(bool dampened, float frequency)
+{
+    if(room.Init(kSampleRate) != 0)
+        return 0.0f;
+    room.SetDecayTicks(4);
+    if(dampened)
+        room.DampenImpact();
+    double energy = 0.0;
+    int count = 0;
+    for(int i = 0; i < 12000; ++i)
+    {
+        const float input = sinf(6.28318530718f * frequency
+                                 * static_cast<float>(i) / kSampleRate);
+        float left = 0.0f;
+        float right = 0.0f;
+        if(room.Process(input, input, &left, &right) != 0)
+            return 0.0f;
+        if(i >= 2500 && i < 8000)
+        {
+            energy += static_cast<double>(left) * left
+                      + static_cast<double>(right) * right;
+            ++count;
+        }
+    }
+    return count == 0 ? 0.0f
+                      : sqrtf(static_cast<float>(energy / (2 * count)));
+}
 } // namespace
 
 int main()
@@ -184,6 +212,11 @@ int main()
     const float long_tail = TailRms(32);
     Check(long_tail > short_tail * 8.0f,
           "20 second decay sustains longer than 1 second");
+
+    const float bright_steady = ImpactToneRms(false, 8000.0f);
+    const float bright_strike = ImpactToneRms(true, 8000.0f);
+    Check(bright_steady > 0.0f && bright_strike < bright_steady * 0.6f,
+          "strike transient is softened in reverb send");
 
     return failures == 0 ? 0 : 1;
 }

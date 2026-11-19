@@ -35,13 +35,21 @@ class BowlReverb
         predelay_write_ = 0;
         mod_write_ = 0;
         mod_phase_ = 0.0f;
+        impact_damping_ = 0.0f;
         decay_ticks_ = -1;
         mod_phase_increment_
             = kTwoPi * kModulationRateHz / sample_rate;
+        const float damping_rate
+            = kTwoPi * kImpactDampedCutoffHz / sample_rate;
+        impact_filter_coeff_ = 1.0f - expf(-damping_rate);
+        impact_release_coeff_ = expf(-1.0f / (kImpactReleaseSeconds
+                                               * sample_rate));
         memset(predelay_l_, 0, sizeof(predelay_l_));
         memset(predelay_r_, 0, sizeof(predelay_r_));
         memset(mod_l_, 0, sizeof(mod_l_));
         memset(mod_r_, 0, sizeof(mod_r_));
+        impact_lp1_l_ = impact_lp2_l_ = 0.0f;
+        impact_lp1_r_ = impact_lp2_r_ = 0.0f;
 
         highpass_l_.Init(sample_rate, 780.0f);
         highpass_r_.Init(sample_rate, 780.0f);
@@ -75,15 +83,24 @@ class BowlReverb
                      / static_cast<float>(kMaxDecayTicks);
     }
 
+    void DampenImpact() { impact_damping_ = 1.0f; }
+
     int Process(const float& in_l, const float& in_r, float* out_l,
                 float* out_r)
     {
         const float filtered_l = highpass_l_.Process(in_l);
         const float filtered_r = highpass_r_.Process(in_r);
+        const float impact_coeff
+            = 1.0f - impact_damping_ * (1.0f - impact_filter_coeff_);
+        impact_damping_ *= impact_release_coeff_;
+        impact_lp1_l_ += impact_coeff * (filtered_l - impact_lp1_l_);
+        impact_lp2_l_ += impact_coeff * (impact_lp1_l_ - impact_lp2_l_);
+        impact_lp1_r_ += impact_coeff * (filtered_r - impact_lp1_r_);
+        impact_lp2_r_ += impact_coeff * (impact_lp1_r_ - impact_lp2_r_);
         const float delayed_l = predelay_l_[predelay_write_];
         const float delayed_r = predelay_r_[predelay_write_];
-        predelay_l_[predelay_write_] = filtered_l;
-        predelay_r_[predelay_write_] = filtered_r;
+        predelay_l_[predelay_write_] = impact_lp2_l_;
+        predelay_r_[predelay_write_] = impact_lp2_r_;
         if(++predelay_write_ >= predelay_samples_)
             predelay_write_ = 0;
 
@@ -117,6 +134,8 @@ class BowlReverb
     static constexpr float kModulationBaseDelayMs = 1.5f;
     static constexpr float kModulationDepthMs = 0.5f;
     static constexpr float kMeanDelaySamples = 3015.5f;
+    static constexpr float kImpactDampedCutoffHz = 2200.0f;
+    static constexpr float kImpactReleaseSeconds = 0.14f;
 
     class BiquadHighpass
     {
@@ -195,9 +214,16 @@ class BowlReverb
     float predelay_r_[kMaxPredelaySamples];
     float mod_l_[kModBufferSamples];
     float mod_r_[kModBufferSamples];
+    float impact_lp1_l_;
+    float impact_lp2_l_;
+    float impact_lp1_r_;
+    float impact_lp2_r_;
     float sample_rate_;
     float mod_phase_;
     float mod_phase_increment_;
+    float impact_damping_;
+    float impact_filter_coeff_;
+    float impact_release_coeff_;
     int predelay_samples_;
     int predelay_write_;
     int mod_write_;

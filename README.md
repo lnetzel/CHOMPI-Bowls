@@ -79,6 +79,8 @@ over USB MIDI and runs locally or on GitHub Pages.
   page, turn sets mix and SHIFT+turn sets decay from 1–20 seconds.
 - The 1970s-style room reverb uses a 20 ms pre-delay, 780 Hz low cut,
   8 kHz high cut, and subtle 2.6 Hz stereo modulation.
+- Strike attacks are gently darkened in the reverb send and the filter
+  reopens over time; the dry bowl attack is unchanged.
 - **Normal** sends the bowl mix to headphones and line out.
   **Send FX** sends dry bowls to line out and monitors AUX IN through the
   headphones. Patch line out to the external effect and its output to
