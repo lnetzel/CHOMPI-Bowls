@@ -205,6 +205,10 @@ struct Params
     // UI overlay: which parameter bar is shown on the white keys.
     std::atomic<int>      overlay{static_cast<int>(Overlay::Volume)};
     std::atomic<uint32_t> overlay_until{0};
+    std::atomic<bool>     tune_fine{false};
+    std::atomic<uint32_t> tune_fine_reference_millihz{0};
+    std::atomic<int>      tune_fine_reference_mode{-1};
+    std::atomic<int>      tune_fine_reference_key{-1};
 };
 
 Params params;
@@ -296,6 +300,7 @@ constexpr int kEnc1PageVolume    = 0;
 constexpr int kEnc1PagePan       = 1;
 constexpr int kEnc1PageTune      = 2;
 volatile int  enc1_page_         = kEnc1PageVolume;
+uint32_t      fine_tune_key_play_until_ = 0;
 
 // Encoder-2 pages: selected-bowl brightness -> selected-bowl beating.
 constexpr int kEnc2PageBrightness = 0;
@@ -393,7 +398,7 @@ constexpr int kWhiteKeyIndices[15] = {
 chompi::BowlsPreset SnapshotParams();
 void ApplyPreset(const chompi::BowlsPreset &p, bool boot);
 void PresetShiftConfirm();
-bool PresetKeyEvent(int key, bool down, bool shift);
+bool PresetKeyEvent(int key, bool down, bool shift, bool fine_tune_key_play);
 
 float TicksToNorm(int ticks)
 {
@@ -425,6 +430,18 @@ void ShowOverlay(Overlay overlay, uint32_t now)
 {
     params.overlay.store(static_cast<int>(overlay), std::memory_order_relaxed);
     params.overlay_until.store(now + kOverlayMs, std::memory_order_relaxed);
+}
+
+void ShowTuneOverlay(bool fine, uint32_t now)
+{
+    params.tune_fine.store(fine, std::memory_order_relaxed);
+    fine_tune_key_play_until_ = fine ? now + kOverlayMs : now;
+    if(!fine)
+    {
+        params.tune_fine_reference_mode.store(-1, std::memory_order_relaxed);
+        params.tune_fine_reference_key.store(-1, std::memory_order_relaxed);
+    }
+    ShowOverlay(Overlay::Tune, now);
 }
 
 // ticks -> DSP mappings
@@ -562,6 +579,21 @@ void SetPitchHz(int m, int key, int detents, bool fine)
     const float updated = bowls::AdjustPitchHz(current, detents, fine);
     params.pitch_millihz[m][key].store(PitchToMilliHz(updated),
                                        std::memory_order_relaxed);
+}
+
+void BeginFineTune(int m, int key)
+{
+    if(params.tune_fine_reference_mode.load(std::memory_order_relaxed) == m
+       && params.tune_fine_reference_key.load(std::memory_order_relaxed)
+              == key)
+        return;
+
+    params.tune_fine.store(false, std::memory_order_relaxed);
+    params.tune_fine_reference_millihz.store(
+        params.pitch_millihz[m][key].load(std::memory_order_relaxed),
+        std::memory_order_relaxed);
+    params.tune_fine_reference_mode.store(m, std::memory_order_relaxed);
+    params.tune_fine_reference_key.store(key, std::memory_order_relaxed);
 }
 
 void SetProfileTicks(int m, int key, int profile, uint32_t now)
@@ -1560,11 +1592,12 @@ void ApplyControls()
     if(hw.EncoderClicked(0))
     {
         enc1_page_ = (enc1_page_ + 1) % 3;
-        ShowOverlay(enc1_page_ == kEnc1PageVolume
-                        ? Overlay::BowlVolume
-                        : (enc1_page_ == kEnc1PagePan ? Overlay::Pan
-                                                      : Overlay::Tune),
-                    now);
+        if(enc1_page_ == kEnc1PageTune)
+            ShowTuneOverlay(false, now);
+        else
+            ShowOverlay(enc1_page_ == kEnc1PageVolume ? Overlay::BowlVolume
+                                                      : Overlay::Pan,
+                        now);
     }
 
     if(hw.EncoderClicked(1))
@@ -1619,8 +1652,10 @@ void ApplyControls()
         else if(enc1_page_ == kEnc1PageTune)
         {
             // Direct fundamental pitch applies at the next excitation.
+            if(shift)
+                BeginFineTune(cur_mode, key);
             SetPitchHz(cur_mode, key, enc1_inc, shift);
-            ShowOverlay(Overlay::Tune, now);
+            ShowTuneOverlay(shift, now);
         }
     }
 
@@ -1857,11 +1892,14 @@ void ApplyControls()
     // through release; every other key press/release is interpreted
     // in the mode it started in (so a key-up after a mode switch
     // still releases the right note).
+    const bool fine_tune_key_play
+        = shift && enc1_page_ == kEnc1PageTune
+          && static_cast<int32_t>(fine_tune_key_play_until_ - now) > 0;
     for(int key = 0; key < bowls::kKeyCount; ++key)
     {
         if(hw.KeyRising(key))
         {
-            if(PresetKeyEvent(key, true, shift))
+            if(PresetKeyEvent(key, true, shift, fine_tune_key_play))
                 continue;
             // SHIFT + Black 6 (C#4, key 13) / Black 7 (D#4, key 15):
             // audio routing selection (audio_routing.h). Consumed
@@ -1904,7 +1942,7 @@ void ApplyControls()
         }
         else if(hw.KeyFalling(key))
         {
-            if(PresetKeyEvent(key, false, shift))
+            if(PresetKeyEvent(key, false, shift, fine_tune_key_play))
                 continue;
             // Releases reconcile through the state machine (PadOn) and
             // SyncPadGates below - no explicit action needed here.
@@ -2086,11 +2124,16 @@ void DrawCenterBar(int ticks, uint8_t red, uint8_t green, uint8_t blue)
                                    blue);
 }
 
-/** Directional centre-detent bar, centered on white key 8 (index 7):
- *  values left of centre fill the bar toward key 1, right of centre
- *  toward key 15; dead centre lights key 8 alone. Used for pan (cyan). */
+/** Pan bar grows from white key 8; the centre detent is green, otherwise
+ *  the bar is cyan and extends toward the selected pan direction. */
 void DrawPanBar(int ticks, uint8_t red, uint8_t green, uint8_t blue)
 {
+    if(ticks == chompi::BowlsPreset::kDefaultPan)
+    {
+        chompi_leds::SetSmtLed(chompi_leds::kWhiteKeyLeds[7], 0, 48, 0);
+        return;
+    }
+
     const int offset = ticks - 16; // -16 .. +16
     const int span   = ((offset < 0 ? -offset : offset) * 7 + 8) / 16; // 0..7
     const int lo     = offset < 0 ? 7 - span : 7;
@@ -2109,6 +2152,26 @@ void DrawPitchBar(float pitch_hz)
     for(int white = 0; white < lit; ++white)
         chompi_leds::SetSmtLed(chompi_leds::kWhiteKeyLeds[white],
                                30, 0, 48);
+}
+
+/** Fine tuning shows Hz steps from the pitch captured at the first turn. */
+void DrawFinePitchBar(uint32_t pitch_millihz, uint32_t reference_millihz)
+{
+    const int32_t delta_millihz
+        = static_cast<int32_t>(pitch_millihz)
+          - static_cast<int32_t>(reference_millihz);
+    const int offset_hz
+        = delta_millihz < 0 ? -((-delta_millihz + 500) / 1000)
+                            : (delta_millihz + 500) / 1000;
+    const int magnitude = offset_hz < 0 ? -offset_hz : offset_hz;
+    const int span      = magnitude > 7 ? 7 : magnitude;
+
+    for(int step = 1; step <= span; ++step)
+    {
+        const int white = offset_hz < 0 ? 7 - step : 7 + step;
+        chompi_leds::SetSmtLed(chompi_leds::kWhiteKeyLeds[white], 0, 40, 40);
+    }
+    chompi_leds::SetSmtLed(chompi_leds::kWhiteKeyLeds[7], 0, 48, 0);
 }
 
 /** The five bowl profiles as five 3-key sections; the active one lights. */
@@ -2190,9 +2253,31 @@ void DrawOverlayBar(uint32_t now)
                         0, 48, 0);
                 break;
             case Overlay::Tune:
-                DrawPitchBar(
-                    KeyFundamental(static_cast<PlayMode>(cur_mode), edit_key));
+            {
+                const bool fine
+                    = params.tune_fine.load(std::memory_order_relaxed);
+                if(fine)
+                {
+                    const uint32_t pitch_millihz
+                        = params.pitch_millihz[cur_mode][edit_key].load(
+                            std::memory_order_relaxed);
+                    uint32_t reference_millihz = pitch_millihz;
+                    if(params.tune_fine_reference_mode.load(
+                           std::memory_order_relaxed)
+                           == cur_mode
+                       && params.tune_fine_reference_key.load(
+                              std::memory_order_relaxed)
+                              == edit_key)
+                        reference_millihz
+                            = params.tune_fine_reference_millihz.load(
+                                std::memory_order_relaxed);
+                    DrawFinePitchBar(pitch_millihz, reference_millihz);
+                }
+                else
+                    DrawPitchBar(KeyFundamental(
+                        static_cast<PlayMode>(cur_mode), edit_key));
                 break;
+            }
             default: break;
         }
     }
@@ -2556,7 +2641,16 @@ void RenderLeds()
     // Encoder-1 LED: green = bowl volume, cyan = pan,
     // violet = direct-Hz frequency.
     if(enc1_page_ == kEnc1PagePan)
-        chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 0, 20, 20);
+    {
+        const int cur_mode = ModeIdx(play_modes.Mode());
+        const int edit_key = last_key_[cur_mode];
+        const bool centered
+            = params.pan_ticks[cur_mode][edit_key].load(
+                  std::memory_order_relaxed)
+              == chompi::BowlsPreset::kDefaultPan;
+        chompi_leds::SetPthLed(chompi_leds::kPthEncoder1,
+                               0, 20, centered ? 0 : 20);
+    }
     else if(enc1_page_ == kEnc1PageTune)
         chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 14, 0, 20);
     else
@@ -2907,7 +3001,7 @@ void PresetShiftConfirm()
 
 /** Handle preset gestures while keeping note releases
  *  for notes that began before a selection view was entered. */
-bool PresetKeyEvent(int key, bool down, bool shift)
+bool PresetKeyEvent(int key, bool down, bool shift, bool fine_tune_key_play)
 {
     const PlaybackUiState playback_state
         = playback_ui_state.load(std::memory_order_acquire);
@@ -2969,7 +3063,7 @@ bool PresetKeyEvent(int key, bool down, bool shift)
         return true;
     }
 
-    if(!down || !shift)
+    if(!down || !shift || fine_tune_key_play)
         return false;
 
     const int slot = PresetSlotForKey(key);

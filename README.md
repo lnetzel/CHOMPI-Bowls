@@ -8,7 +8,7 @@ reverb, and SD-card recording/playback.
 
 | Control | Action |
 |---|---|
-| Encoder 1 | Press to change page. Page 1: selected bowl volume; page 2: pan; page 3: fundamental frequency. |
+| Encoder 1 | Press to change page. Page 1: selected bowl volume; page 2: pan; page 3: fundamental frequency (shift turn for fine tuning). |
 | Encoder 2 | Press to change page. Page 1: selected bowl brightness; page 2: selected bowl's added rhythmic beating (red LED). |
 | Encoder 3 | Press to change page. Page 1: selected bowl decay; page 2: resonance profile. |
 | Encoder 4 | Press to change page. Page 1: strike hardness; page 2: paired-mode shimmer. |
@@ -23,7 +23,11 @@ reverb, and SD-card recording/playback.
 Encoder 1 selects the key being edited. Per-key settings are independent
 for every key in each mode. The encoder bars appear briefly after a turn;
 with no bar displayed, held keys and ringing voices show the current play
-state.
+state. The pan bar's center key turns green at the center detent; page 3's
+fine-tuning bar keeps the starting pitch at the green center key and adds
+one cyan key per Hz of adjustment, up to seven keys in either direction.
+While fine tuning is active, SHIFT+white keys play notes instead of
+selecting presets.
 
 ## Play modes
 
