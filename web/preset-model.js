@@ -12,6 +12,7 @@ const GLOBAL_RANGES = {
   strike: [0, 32],
   shimmer: [0, 32],
   reverb_mix: [0, 32],
+  reverb_decay: [0, 32],
 };
 
 const BANK_RANGES = {
@@ -49,6 +50,7 @@ export function createFactoryPreset() {
     strike: 32,
     shimmer: 0,
     reverb_mix: 0,
+    reverb_decay: 4,
     ...banks,
     pitch_hz: Object.fromEntries(MODES.map((mode) => [mode, [...FACTORY_PITCHES]])),
   };
@@ -62,7 +64,9 @@ export function validatePreset(preset) {
   if (!preset || typeof preset !== "object") {
     throw new Error(`Preset must use schema version ${PRESET_VERSION}.`);
   }
-  const normalized = preset;
+  const normalized = Object.prototype.hasOwnProperty.call(preset, "reverb_decay")
+    ? preset
+    : { ...preset, reverb_decay: 4 };
   if (normalized.version !== PRESET_VERSION) {
     throw new Error(`Preset must use schema version ${PRESET_VERSION}.`);
   }

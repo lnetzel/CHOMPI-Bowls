@@ -37,6 +37,9 @@ modes-test: play_modes_test.exe pad_test.exe preset_test.exe
 	./pad_test.exe
 	./preset_test.exe
 
+reverb-test: bowl_reverb_test.exe
+	./bowl_reverb_test.exe
+
 # Audio-routing feature tests: the send-FX loop key mapping and the
 # per-sample output distribution (pure header, like play_modes.h).
 routing-test: audio_routing_test.exe
@@ -66,6 +69,9 @@ sd-test: sd_audio_test.exe
 sd_audio_test.exe: sd_audio_test.cpp ../src/sd_audio.h
 	$(CXX) $(CXXFLAGS) -o $@ sd_audio_test.cpp
 
+bowl_reverb_test.exe: bowl_reverb_test.cpp ../src/bowl_reverb.h ../libs/DaisySP/Source/Effects/reverbsc.cpp
+	$(CXX) $(CXXFLAGS) -I../libs/DaisySP/Source -o $@ bowl_reverb_test.cpp ../libs/DaisySP/Source/Effects/reverbsc.cpp
+
 audio_routing_test.exe: audio_routing_test.cpp ../src/audio_routing.h ../src/bowl_scale.h
 	$(CXX) $(CXXFLAGS) -o $@ audio_routing_test.cpp
 
@@ -90,6 +96,6 @@ baseline_gen.exe: baseline_gen.cpp .baseline/bowl_voice.h .baseline/bowl_profile
 	$(CXX) $(CXXFLAGS) -o $@ baseline_gen.cpp
 
 clean:
-	rm -f render_test.exe baseline_gen.exe strike_analyze.exe strike_test.exe play_modes_test.exe pad_test.exe preset_test.exe audio_routing_test.exe sd_audio_test.exe midi_test.exe preset_transfer_test.exe core_json_host.o
+	rm -f render_test.exe baseline_gen.exe strike_analyze.exe strike_test.exe play_modes_test.exe pad_test.exe preset_test.exe audio_routing_test.exe sd_audio_test.exe bowl_reverb_test.exe midi_test.exe preset_transfer_test.exe core_json_host.o
 
-.PHONY: test cal analyze baseline modes-test strike-test routing-test sd-test midi-test midi-transfer-test clean
+.PHONY: test cal analyze baseline modes-test strike-test routing-test reverb-test sd-test midi-test midi-transfer-test clean

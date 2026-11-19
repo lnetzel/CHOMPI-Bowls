@@ -13,7 +13,7 @@ reverb, and SD-card recording/playback.
 | Encoder 3 | Press to change page. Page 1: selected bowl decay; page 2: resonance profile. |
 | Encoder 4 | Press to change page. Page 1: strike hardness; page 2: paired-mode shimmer. |
 | Transport wheel | Rims the active wheel set. Clockwise adds friction texture; counter-clockwise gives a clean sustained tone. |
-| Volume encoder | Press to select master volume or reverb mix. |
+| Volume encoder | Press to select master volume or reverb mix; on the reverb page, SHIFT+turn adjusts decay from 1–20 seconds. |
 | SHIFT + lower F# / G# / A# | Select Split / Strikes / Rimming. |
 | SHIFT + Black 6 / Black 7 | Select Normal / Send FX routing. |
 | SHIFT + white key | Load that preset slot. |
@@ -51,8 +51,8 @@ automatically. White keys 1-15 map to `BOWLS/P01.json` through
 and F#4 respectively. Confirm a selection by releasing and pressing
 SHIFT.
 
-Changes remain in memory until saved. Presets use schema v1; firmware
-continues to load existing v11 files with empty name and comment metadata.
+Changes remain in memory until saved. Presets use schema v1; existing
+presets without a reverb-decay value load with the 3.4-second default.
 Each per-key setting is stored as three arrays of 25 values (`strikes`,
 `rimming`, `split`), ordered from C3 to C5. To edit a file, save the
 slot, power off, edit the JSON, safely eject the card, and reboot.
@@ -75,7 +75,10 @@ over USB MIDI and runs locally or on GitHub Pages.
   `BOWLS/RECORDINGS/`.
 - Hold PLAY for 2 s to enter or exit playback. In playback, tap PLAY to
   pause/resume, LOOP to repeat, or a white key to select a take.
-- The volume encoder cycles master volume and reverb mix.
+- The volume encoder cycles master volume and reverb mix. On the reverb
+  page, turn sets mix and SHIFT+turn sets decay from 1–20 seconds.
+- The 1970s-style room reverb uses a 20 ms pre-delay, 780 Hz low cut,
+  8 kHz high cut, and subtle 2.6 Hz stereo modulation.
 - **Normal** sends the bowl mix to headphones and line out.
   **Send FX** sends dry bowls to line out and monitors AUX IN through the
   headphones. Patch line out to the external effect and its output to

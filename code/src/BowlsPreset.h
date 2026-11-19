@@ -48,6 +48,7 @@ struct BowlsPreset
     static constexpr int kDefaultProfile    = 0;
     static constexpr int kDefaultPan        = 16; /* centre */
     static constexpr int kDefaultReverbMix  = 0;  /* subtle temple room */
+    static constexpr int kDefaultReverbDecay = 4; /* about 3.4 seconds */
     static constexpr int kDefaultBowlVol    = 8; /* unity gain (0 dB) */
     static constexpr float kMinPitchHz = bowls::kMinPitchHz;
     static constexpr float kMaxPitchHz = bowls::kMaxPitchHz;
@@ -57,6 +58,7 @@ struct BowlsPreset
     uint8_t strike;     /**< 0..32 strike hardness ticks */
     uint8_t shimmer;    /**< 0..32 paired-mode detune ticks */
     uint8_t reverb_mix; /**< 0..32 reverb dry/wet mix ticks */
+    uint8_t reverb_decay; /**< 0..32 room decay ticks */
     /* per-mode/per-key banks, flattened [mode * 25 + key] */
     uint8_t pan[kBankSlots];     /**< per-key pan 0..32 (16 = centre) */
     uint8_t bvol[kBankSlots];    /**< per-key volume 0..32 (16 = unity) */
@@ -108,6 +110,7 @@ struct BowlsPreset
         strike     = kDefaultStrike;
         shimmer    = kDefaultShimmer;
         reverb_mix = kDefaultReverbMix;
+        reverb_decay = kDefaultReverbDecay;
         for(int w = 0; w < kBankSlots; ++w)
         {
             pan[w]     = kDefaultPan;
@@ -599,13 +602,14 @@ inline size_t Serialize(const BowlsPreset &p, char *buf, size_t size)
                      size,
                      "{\"version\":%d,\"mode\":%u,"
                      "\"volume\":%u,\"strike\":%u,\"shimmer\":%u,"
-                     "\"reverb_mix\":%u,\"name\":",
+                     "\"reverb_mix\":%u,\"reverb_decay\":%u,\"name\":",
                      BowlsPreset::kVersion,
                      (unsigned)p.mode,
                      (unsigned)p.volume,
                      (unsigned)p.strike,
                      (unsigned)p.shimmer,
-                     (unsigned)p.reverb_mix);
+                     (unsigned)p.reverb_mix,
+                     (unsigned)p.reverb_decay);
     if(n < 0 || static_cast<size_t>(n) >= size)
         return 0;
     size_t off = static_cast<size_t>(n);
@@ -718,6 +722,9 @@ inline bool NumberTokenEnd(const char *buf, size_t len, size_t start,
 
 /** Read a present integer scalar, rejecting missing or non-integer JSON
  *  values while clamping numeric positions to the supported range. */
+inline bool ParseIntValue(const char *value, size_t value_len,
+                          JSONTypes_t type, int lo, int hi, int &result);
+
 inline bool QueryIntPresent(char *buf, size_t len, const char *query,
                             int lo, int hi, int &result)
 {
@@ -725,8 +732,30 @@ inline bool QueryIntPresent(char *buf, size_t len, const char *query,
     size_t value_len = 0;
     JSONTypes_t type = JSONInvalid;
     if(JSON_SearchT(buf, len, query, strlen(query), &value, &value_len, &type)
-           != JSONSuccess
-       || type != JSONNumber || value_len == 0 || value_len >= 24)
+       != JSONSuccess)
+        return false;
+    return ParseIntValue(value, value_len, type, lo, hi, result);
+}
+
+inline bool QueryIntOptional(char *buf, size_t len, const char *query, int lo,
+                             int hi, int &result)
+{
+    char *value = nullptr;
+    size_t value_len = 0;
+    JSONTypes_t type = JSONInvalid;
+    const JSONStatus_t status
+        = JSON_SearchT(buf, len, query, strlen(query), &value, &value_len,
+                       &type);
+    if(status == JSONNotFound)
+        return true;
+    return status == JSONSuccess
+           && ParseIntValue(value, value_len, type, lo, hi, result);
+}
+
+inline bool ParseIntValue(const char *value, size_t value_len,
+                          JSONTypes_t type, int lo, int hi, int &result)
+{
+    if(type != JSONNumber || value_len == 0 || value_len >= 24)
         return false;
     size_t token_end = 0;
     if(!NumberTokenEnd(value, value_len, 0, token_end) || token_end != value_len
@@ -883,6 +912,7 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
     int strike = 0;
     int shimmer = 0;
     int reverb_mix = 0;
+    int reverb_decay = BowlsPreset::kDefaultReverbDecay;
     if(!QueryIntPresent(buf, len, "mode", -100, 100, mode)
        || mode < 0 || mode >= BowlsPreset::kModeCount
        || !QueryIntPresent(buf, len, "volume", 0, BowlsPreset::kMaxTicks,
@@ -893,6 +923,8 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
                            shimmer)
        || !QueryIntPresent(buf, len, "reverb_mix", 0,
                            BowlsPreset::kMaxTicks, reverb_mix)
+       || !QueryIntOptional(buf, len, "reverb_decay", 0,
+                           BowlsPreset::kMaxTicks, reverb_decay)
        )
         return false;
     tmp.mode = static_cast<uint8_t>(mode);
@@ -900,6 +932,7 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
     tmp.strike = static_cast<uint8_t>(strike);
     tmp.shimmer = static_cast<uint8_t>(shimmer);
     tmp.reverb_mix = static_cast<uint8_t>(reverb_mix);
+    tmp.reverb_decay = static_cast<uint8_t>(reverb_decay);
     if(!QueryStringStrict(buf, len, "name", tmp.name, sizeof(tmp.name),
                           BowlsPreset::kNameMaxBytes)
        || !QueryStringStrict(buf, len, "comment", tmp.comment,

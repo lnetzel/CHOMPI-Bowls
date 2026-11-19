@@ -19,6 +19,8 @@ supports Web MIDI and the SysEx permission prompt.
 
 Create a local draft from the factory settings, which starts with Strikes
 selected for both startup and editing mode, or import a schema-v1 JSON preset.
+The global reverb decay spans 1–20 seconds; older files without this field
+default to about 3.4 seconds.
 Schema v1 includes a per-key beating value alongside brightness and
 decay; older schema versions are not supported.
 The name and comment fields are saved with the other preset values; names

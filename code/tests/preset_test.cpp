@@ -36,6 +36,7 @@ chompi::BowlsPreset PatternPreset(int mode)
     p.strike = 31;
     p.shimmer = 29;
     p.reverb_mix = 21;
+    p.reverb_decay = 27;
     std::strcpy(p.name, "Preset \"One\" \\ copy");
     std::strcpy(p.comment, "line one\nline two \xc3\xa9 \xf0\x9f\x8e\xb5");
     for(int i = 0; i < chompi::BowlsPreset::kBankSlots; ++i)
@@ -61,6 +62,7 @@ bool SameTicks(const chompi::BowlsPreset& a, const chompi::BowlsPreset& b)
 {
     return a.mode == b.mode && a.volume == b.volume && a.strike == b.strike
            && a.shimmer == b.shimmer && a.reverb_mix == b.reverb_mix
+           && a.reverb_decay == b.reverb_decay
            && std::strcmp(a.name, b.name) == 0
            && std::strcmp(a.comment, b.comment) == 0
            && std::memcmp(a.pan, b.pan, sizeof(a.pan)) == 0
@@ -307,6 +309,32 @@ int main()
         Check(ok, "round-trip 75 pitches, five banks, all modes", "");
     }
 
+    // v1 presets from before room-decay control load with the default.
+    {
+        chompi::BowlsPreset src = PatternPreset(0);
+        size_t len = chompi::Serialize(src, buf, sizeof(buf));
+        char legacy[kStorageJsonSize];
+        bool ok = len > 0;
+        if(ok)
+            std::memcpy(legacy, buf, len + 1);
+        ok = ok && Replace(legacy, "\"reverb_decay\":27,", "");
+        chompi::BowlsPreset loaded;
+        loaded.SetDefaults();
+        ok = ok && chompi::Parse(legacy, std::strlen(legacy), loaded)
+             && loaded.reverb_decay
+                    == chompi::BowlsPreset::kDefaultReverbDecay;
+        Check(ok, "presets without room decay load at the default", "");
+
+        std::memcpy(legacy, buf, len + 1);
+        chompi::BowlsPreset before = PatternPreset(1);
+        const chompi::BowlsPreset sentinel = before;
+        ok = ok && Replace(legacy, "\"reverb_decay\":27",
+                           "\"reverb_decay\":\"long\"")
+             && !chompi::Parse(legacy, std::strlen(legacy), before)
+             && Same(before, sentinel);
+        Check(ok, "invalid room decay is rejected without partial apply", "");
+    }
+
     // Older schemas are intentionally rejected by this initial schema.
     {
         chompi::BowlsPreset src;
@@ -481,7 +509,7 @@ int main()
             p.pitch_hz.strikes[i] = p.pitch_hz.rimming[i] = 10000.0f;
         for(int i = 0; i < bowls::kKeyCount; ++i)
             p.pitch_hz.split[i] = 10000.0f;
-        p.volume = p.strike = p.shimmer = p.reverb_mix = 255;
+        p.volume = p.strike = p.shimmer = p.reverb_mix = p.reverb_decay = 255;
         const size_t len = chompi::Serialize(p, buf, sizeof(buf));
         char small[512];
         Check(len > 512 && len + 1 <= kStorageJsonSize,

@@ -20,11 +20,16 @@ const factory = createFactoryPreset();
 assert.equal(validatePreset(factory), factory);
 assert.equal(factory.version, 1);
 assert.equal(factory.shimmer, 0);
+assert.equal(factory.reverb_decay, 4);
 assert.equal("delay_mix" in factory, false);
 assert.equal("delay_time" in factory, false);
 assert.deepEqual(factory.beat.strikes, Array(25).fill(8));
 assert.equal(factory.name, "");
 assert.equal(factory.comment, "");
+const legacyPreset = { ...factory };
+delete legacyPreset.reverb_decay;
+assert.equal(validatePreset(legacyPreset).reverb_decay, 4);
+assert.equal("reverb_decay" in legacyPreset, false);
 assert.deepEqual(factory.pitch_hz.strikes, factory.pitch_hz.rimming);
 assert.deepEqual(factory.pitch_hz.strikes, factory.pitch_hz.split);
 

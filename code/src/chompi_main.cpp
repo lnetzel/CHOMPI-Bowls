@@ -18,9 +18,9 @@
 #include "MidiCcMap.h"
 #include "MidiHandler.h"
 #include "midi_clock.h"
+#include "bowl_reverb.h"
 
 #include "Utility/dsp.h"
-#include "Effects/reverbsc.h"
 
 #include <atomic>
 #include <cmath>
@@ -65,10 +65,8 @@ chompi::SdPlayer<kSdRingFrames>   sd_player(playback_ring);
 constexpr int  kVoiceCount = 6; // shared pool, quietest-voice steal
 bowls::BowlVoice voices[kVoiceCount];
 
-// Stereo temple-room reverb (DaisySP Freeverb derivative) on the bowl
-// bus: a small wooden room - short tail, highs damped (wood absorbs
-// them). Character is fixed; only the dry/wet mix is on the panel.
-daisysp::ReverbSc DSY_SDRAM_BSS reverb;
+// Stereo, modulated 1970s-style room reverb on the bowl bus.
+bowls::BowlReverb DSY_SDRAM_BSS reverb;
 
 #ifdef CPU_METER
 // CPU meter with a ~5 s peak-hold: dropouts come from the WORST block,
@@ -78,22 +76,6 @@ CpuLoadMeter g_cpu_meter;
 float        g_cpu_peak          = 0.0f;
 uint32_t     g_steal_flash_until = 0; // encoder-4 LED steal witness
 #endif
-
-// Strike-transient darkening of the reverb SEND: a real mallet thud
-// barely excites a room - the room blooms on the sustained ring. So at
-// the moment of a strike the send's two-pole lowpass closes to a dark
-// ~1.2 kHz and re-opens toward ~9 kHz over ~180 ms; the dry path is
-// untouched, so the strike stays present while the room's answer to
-// the contact burst stays soft. (The send is filtered, not the voice:
-// the bowl itself keeps its full spectrum.)
-float       send_dark_       = 0.0f; // 1 at the strike instant, -> 0
-float       send_lp_l_       = 0.0f; // send-filter states (2-pole)
-float       send_lp_r_       = 0.0f;
-float       send_lp2_l_      = 0.0f;
-float       send_lp2_r_      = 0.0f;
-constexpr float kSendDarkRelease = 0.00011574f; // ~180 ms at 48 kHz
-constexpr float kSendLpDark      = 0.1454f;     // ~1.2 kHz one-pole
-constexpr float kSendLpOpen      = 0.6922f;     // ~9 kHz (~open)
 
 // ---------------------------------------------------------------------------
 // Parameter state
@@ -132,6 +114,7 @@ enum class Overlay : int
     Character,
     Pan,
     ReverbMix,
+    ReverbDecay,
     BowlVolume,
     Tune,
 };
@@ -198,9 +181,11 @@ struct Params
     std::atomic<int>      decay_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
     std::atomic<int>      beat_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
 
-    // Volume knob page 2: temple-room reverb dry/wet mix.
+    // Volume knob page 2: room reverb mix and SHIFT-decay.
     std::atomic<int>      reverb_mix_ticks{
         chompi::BowlsPreset::kDefaultReverbMix};
+    std::atomic<int>      reverb_decay_ticks{
+        chompi::BowlsPreset::kDefaultReverbDecay};
 
     // UI overlay: which parameter bar is shown on the white keys.
     std::atomic<int>      overlay{static_cast<int>(Overlay::Volume)};
@@ -774,9 +759,6 @@ void StrikeKey(PlayMode mode, int key, int velocity = 127,
     if(stolen)
         g_steal_flash_until = System::GetNow() + 300;
 #endif
-    // The mallet contact burst barely excites a real room: darken the
-    // reverb send (it re-opens into the pure ring over ~180 ms).
-    send_dark_ = 1.0f;
     // MIDI notes never move the LOCAL bowl-editor target (the CC 81/82
     // edit context is kept per sender instead).
     if(edit_target)
@@ -1738,13 +1720,16 @@ void ApplyControls()
         ApplyShimmerToVoices();
     }
 
-    // Volume encoder pages: master, then reverb mix.
+    // Volume encoder pages: master, then reverb mix and SHIFT-decay.
     const int volume_inc = hw.EncoderIncrement(5);
     if(volume_inc != 0)
     {
         if(vol_page_ == kVolPageReverb)
         {
-            if(!shift)
+            if(shift)
+                BumpTicks(params.reverb_decay_ticks, volume_inc,
+                          Overlay::ReverbDecay, now);
+            else
                 BumpTicks(params.reverb_mix_ticks, volume_inc,
                           Overlay::ReverbMix, now);
         }
@@ -2004,6 +1989,9 @@ void AudioCallback(AudioHandle::InputBuffer  in,
     // SDRAM state, the reverb is not processed (no concurrent access)
     // and the bowl bus stays muted by the fast panic fade.
     const bool rev_reset = reverb_reset_pending_;
+    if(!rev_reset)
+        reverb.SetDecayTicks(
+            params.reverb_decay_ticks.load(std::memory_order_relaxed));
     float bus_l[kBlockSize];
     float bus_r[kBlockSize];
     for(size_t i = 0; i < size; ++i)
@@ -2016,21 +2004,10 @@ void AudioCallback(AudioHandle::InputBuffer  in,
         // this gain).
         panic_gain_
             += 0.03f * ((panic_mute_ ? 0.0f : 1.0f) - panic_gain_);
-        // Temple-room reverb on the stereo bowl bus, before the master
-        // gain so the volume knob also controls the tail. The send is
-        // lowpassed dark right after a strike (the mallet contact burst
-        // barely excites a real room) and re-opens into the pure ring;
-        // the dry path keeps the full spectrum.
-        send_dark_ -= kSendDarkRelease * send_dark_;
-        const float send_coef
-            = kSendLpOpen + (kSendLpDark - kSendLpOpen) * send_dark_;
-        daisysp::fonepole(send_lp_l_, mix_l[i], send_coef);
-        daisysp::fonepole(send_lp_r_, mix_r[i], send_coef);
-        daisysp::fonepole(send_lp2_l_, send_lp_l_, send_coef);
-        daisysp::fonepole(send_lp2_r_, send_lp_r_, send_coef);
+        // The filtered, pre-delayed room return is mixed before master gain.
         float wet_l = 0.0f, wet_r = 0.0f;
         if(!rev_reset)
-            reverb.Process(send_lp2_l_, send_lp2_r_, &wet_l, &wet_r);
+            reverb.Process(mix_l[i], mix_r[i], &wet_l, &wet_r);
         const float dry   = 1.0f - mix_smooth;
         bus_l[i] = (mix_l[i] * dry + wet_l * mix_smooth) * panic_gain_;
         bus_r[i] = (mix_r[i] * dry + wet_r * mix_smooth) * panic_gain_;
@@ -2242,9 +2219,14 @@ void DrawOverlayBar(uint32_t now)
                            0, 40, 40); // cyan
                 break;
             case Overlay::ReverbMix:
-                // Pale ice bar for the temple-room reverb mix.
+                // Pale ice bar for the room reverb mix.
                 DrawBar(params.reverb_mix_ticks.load(std::memory_order_relaxed),
                         24, 32, 48);
+                break;
+            case Overlay::ReverbDecay:
+                DrawBar(
+                    params.reverb_decay_ticks.load(std::memory_order_relaxed),
+                    40, 16, 40);
                 break;
             case Overlay::BowlVolume:
                 // Green bar: per-bowl volume of the selected bowl.
@@ -2860,6 +2842,8 @@ chompi::BowlsPreset SnapshotParams()
         }
     p.reverb_mix = static_cast<uint8_t>(
         params.reverb_mix_ticks.load(std::memory_order_relaxed));
+    p.reverb_decay = static_cast<uint8_t>(
+        params.reverb_decay_ticks.load(std::memory_order_relaxed));
     return p;
 }
 
@@ -2898,6 +2882,8 @@ void ApplyPreset(const chompi::BowlsPreset& p, bool boot)
                                           std::memory_order_relaxed);
         }
     params.reverb_mix_ticks.store(p.reverb_mix, std::memory_order_relaxed);
+    params.reverb_decay_ticks.store(p.reverb_decay,
+                                    std::memory_order_relaxed);
     for(int v = 0; v < kVoiceCount; ++v)
     {
         const int key = voices[v].Key();
@@ -3120,10 +3106,9 @@ int main()
         voices[v].Init(kSampleRate);
     ApplyShimmerToVoices();
 
-    // Temple-room reverb: a small wooden room, not a cathedral.
-    reverb.Init(kSampleRate);
-    reverb.SetFeedback(0.82f);   // short-to-medium tail
-    reverb.SetLpFreq(4500.0f);   // wood damps the highs
+    // 1970s-style room reverb with a 20 ms pre-delay and gentle modulation.
+    reverb.Init(kSampleRate,
+                params.reverb_decay_ticks.load(std::memory_order_relaxed));
 
     // Presets: load the embedded factory state and cache the 15 saved
     // slots. A populated slot is loaded only by an explicit user action.
@@ -3188,13 +3173,13 @@ int main()
 
         /* CC 120 deferred reverb clear: the panic fade has muted the
          * bowl bus and the ISR skips reverb.Process while this runs,
-         * so the ~387 KB SDRAM state clear never races the renderer;
+         * so the reverb state clear never races the renderer;
          * the mute lifts only after the clear completes. */
         if(reverb_reset_pending_)
         {
-            reverb.Init(kSampleRate);
-            reverb.SetFeedback(0.82f);
-            reverb.SetLpFreq(4500.0f);
+            reverb.Init(
+                kSampleRate,
+                params.reverb_decay_ticks.load(std::memory_order_relaxed));
             reverb_reset_pending_ = false;
             panic_mute_           = false;
         }
