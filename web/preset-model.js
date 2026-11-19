@@ -123,8 +123,8 @@ function validateModeArrays(value, field, pitch = false) {
         throw new Error(`${field}.${mode} contains a non-numeric value.`);
       }
       if (pitch) {
-        if (item < 40 || item > 10000) {
-          throw new Error(`${field}.${mode} pitches must be 40-10,000 Hz.`);
+        if (item !== 0 && (item < 40 || item > 10000)) {
+          throw new Error(`${field}.${mode} pitches must be 40-10,000 Hz or 0 Hz.`);
         }
       } else {
         const [min, max] = BANK_RANGES[field];
@@ -139,8 +139,9 @@ function validateModeArrays(value, field, pitch = false) {
 export function applyTuning(preset, pitches) {
   validatePreset(preset);
   if (!Array.isArray(pitches) || pitches.length !== KEY_COUNT
-      || pitches.some((pitch) => !Number.isFinite(pitch) || pitch < 40 || pitch > 10000)) {
-    throw new Error("A tuning must contain 25 pitches from 40 to 10,000 Hz.");
+      || pitches.some((pitch) => !Number.isFinite(pitch)
+        || (pitch !== 0 && (pitch < 40 || pitch > 10000)))) {
+    throw new Error("A tuning must contain 25 pitches from 40 to 10,000 Hz or 0 Hz.");
   }
   const updated = clonePreset(preset);
   const splitPitches = [

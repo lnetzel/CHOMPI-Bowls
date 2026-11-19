@@ -52,6 +52,13 @@ struct BowlsPreset
     static constexpr float kMinPitchHz = bowls::kMinPitchHz;
     static constexpr float kMaxPitchHz = bowls::kMaxPitchHz;
 
+    static bool IsValidPitchHz(double pitch_hz)
+    {
+        return std::isfinite(pitch_hz)
+               && (pitch_hz == 0.0f
+                   || (pitch_hz >= kMinPitchHz && pitch_hz <= kMaxPitchHz));
+    }
+
     uint8_t mode;       /**< 0..2 active play mode */
     uint8_t strike;     /**< 0..32 strike hardness ticks */
     uint8_t shimmer;    /**< 0..32 paired-mode detune ticks */
@@ -289,8 +296,7 @@ inline size_t AppendFloatValues(char *buf, size_t size, size_t off,
     off += static_cast<size_t>(n);
     for(int i = 0; i < count; ++i)
     {
-        if(!std::isfinite(values[i]) || values[i] < BowlsPreset::kMinPitchHz
-           || values[i] > BowlsPreset::kMaxPitchHz)
+        if(!BowlsPreset::IsValidPitchHz(values[i]))
             return 0;
         const uint32_t milli_hz = static_cast<uint32_t>(
             std::lround(static_cast<double>(values[i]) * 1000.0));
@@ -870,8 +876,7 @@ inline bool QueryPitchArrayStrict(char *buf, size_t len, const char *query,
         char *parsed_end = nullptr;
         const double parsed = strtod(tmp, &parsed_end);
         if(errno == ERANGE || parsed_end == tmp || *parsed_end != '\0'
-           || !std::isfinite(parsed) || parsed < BowlsPreset::kMinPitchHz
-           || parsed > BowlsPreset::kMaxPitchHz)
+           || !BowlsPreset::IsValidPitchHz(parsed))
             return false;
         dest[w] = static_cast<float>(parsed);
         if(!std::isfinite(dest[w]))

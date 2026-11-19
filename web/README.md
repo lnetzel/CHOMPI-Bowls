@@ -47,6 +47,10 @@ unchanged.
 **Save to slot** is
 the only action that writes to the SD card; overwriting a populated slot
 requires confirmation. Export JSON to keep a local backup.
+The Solfeggio tuning assigns 174, 285, 396, 417, 528, 639, 741, 852, and
+963 Hz to Keys 1–9; the remaining keys are set to 0 Hz and are silent.
+Preset pitch values accept 0 Hz for a muted key or 40–10,000 Hz for an audible
+pitch.
 The global and per-key controls are grouped by firmware encoder and ordered
 by page; fine-grained pitch editing remains with Encoder 1, Page 3.
 The per-key editor keeps the Strikes/Rimming/Split mode selector and uses

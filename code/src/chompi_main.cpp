@@ -2266,10 +2266,25 @@ void DrawOverlayBar(uint32_t now)
     }
 
     // Held Strike notes glow blue, held Rimming notes glow yellow,
-    // ringing voices glow dim amber, and latched notes use their mode
-    // color - except while a temporary overlay bar is up.
+    // ringing voices glow dim amber, latched notes use their mode color,
+    // and muted pitches glow dim red - except while a temporary overlay
+    // bar is up.
     if(!overlay_active)
     {
+        const int current_mode = ModeIdx(play_modes.Mode());
+        const bool shift_selectors_visible
+            = hw.ShiftHeld() && !sd_player.ModeActive();
+        for(int key = 0; key < bowls::kKeyCount; ++key)
+            if(KeyFundamental(static_cast<PlayMode>(current_mode), key) <= 0.0f)
+            {
+                bool shift_selector = bowls::IsRoutingSelectKey(key);
+                for(int mode = 0; mode < bowls::kPlayModeCount; ++mode)
+                    shift_selector
+                        = shift_selector || key == bowls::kModeShortcutKey[mode];
+                if(!shift_selectors_visible || !shift_selector)
+                    chompi_leds::SetSmtLed(chompi_leds::kKeyLeds[key], 12, 0, 0);
+            }
+
         // Physical keys AND MIDI-held notes (any source's claim) alike.
         for(unsigned key = 0; key < 25; ++key)
             if(hw.KeyHeld(key) || play_modes.AnyHeld(key))

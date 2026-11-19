@@ -213,7 +213,7 @@ class BowlVoice
      *  note-off level. The bowl's natural ring and the reverb can decay
      *  well beyond the excitation envelope. Retriggering starts from
      *  the current envelope value, never from a reset. */
-    void SetPadGate(bool on) { pad_gate_ = on; }
+    void SetPadGate(bool on) { pad_gate_ = on && fundamental_ > 0.0f; }
     bool PadGate() const { return pad_gate_; }
     /** Current pad-drive envelope 0..1 (host-test hook). */
     float PadEnvelope() const { return pad_env_; }
@@ -313,6 +313,12 @@ class BowlVoice
                              float detune_jitter,
                              float damp_target = 0.25f)
     {
+        if(fundamental_hz <= 0.0f)
+        {
+            PanicReset();
+            fundamental_ = 0.0f;
+            return;
+        }
         fundamental_     = fundamental_hz;
         detune_jitter_   = detune_jitter;
         intensity_       = strike_amplitude * amp_jitter;
@@ -468,6 +474,12 @@ class BowlVoice
                       float detune_jitter,
                       float ring_damp_target = 1.0f)
     {
+        if(fundamental_hz <= 0.0f)
+        {
+            PanicReset();
+            fundamental_ = 0.0f;
+            return;
+        }
         fundamental_   = fundamental_hz;
         detune_jitter_ = detune_jitter;
         // A plain rim selection is not a pad: any leftover pad drive

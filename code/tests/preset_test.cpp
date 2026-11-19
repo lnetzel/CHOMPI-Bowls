@@ -752,6 +752,21 @@ int main()
             ok = false;
         Check(ok, "pitch boundaries, exponent, duplicates and ordering accepted", "");
     }
+    {
+        chompi::BowlsPreset src = PatternPreset(0);
+        for(int i = 9; i < bowls::kKeyCount; ++i)
+        {
+            src.pitch_hz.strikes[i] = 0.0f;
+            src.pitch_hz.rimming[i] = 0.0f;
+            src.pitch_hz.split[i] = 0.0f;
+        }
+        const size_t len = chompi::Serialize(src, buf, sizeof(buf));
+        chompi::BowlsPreset dst;
+        dst.SetDefaults();
+        const bool ok = len > 0 && ParseCopy(buf, dst)
+                        && SamePitches(src.pitch_hz, dst.pitch_hz);
+        Check(ok, "zero-Hz muted pitches serialize and parse", "");
+    }
 
     // Factory state and default fields remain unchanged when no preset exists.
     {

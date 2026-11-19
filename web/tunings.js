@@ -18,6 +18,11 @@ const pelogSelisir = [
   2359.649, 2663.96,
 ];
 
+const solfeggio = [
+  174, 285, 396, 417, 528, 639, 741, 852, 963,
+  ...Array(16).fill(0),
+];
+
 const shrutiRatios = [
   1, 256 / 243, 16 / 15, 10 / 9, 9 / 8, 32 / 27, 6 / 5, 5 / 4,
   81 / 64, 4 / 3, 27 / 20, 45 / 32, 729 / 512, 3 / 2, 128 / 81,
@@ -48,6 +53,12 @@ export const TUNINGS = [
     pitches: pelogSelisir,
   },
   {
+    id: "solfeggio",
+    name: "Solfeggio Frequencies",
+    description: "The nine frequencies on Keys 1–9; Keys 10–25 are muted at 0 Hz.",
+    pitches: solfeggio,
+  },
+  {
     id: "harmonic",
     name: "Harmonic series (overtones)",
     description: "Harmonics 1–25, anchored at 99 Hz.",
@@ -58,13 +69,5 @@ export const TUNINGS = [
     name: "12-TET",
     description: "Equal semitones, rooted at C3 (A4 = 440 Hz).",
     pitches: fromGenerator((key) => c3Hz * (2 ** (key / 12))),
-  },
-  {
-    id: "indian-22-shruti",
-    name: "Indian 22-Shruti",
-    description: "A 22-shruti just-ratio reference set, anchored at 99 Hz.",
-    pitches: fromGenerator((key) => (
-      anchorHz * (2 ** Math.floor(key / 22)) * shrutiRatios[key % 22]
-    )),
   },
 ];

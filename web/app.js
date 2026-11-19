@@ -74,7 +74,7 @@ const BOWL_PROFILES = [
 const FIELD_CONFIG = [
   { field: "bvol", label: "Bowl volume", encoder: 1, page: 1, kind: "range", min: 0, max: 32, step: 1 },
   { field: "pan", label: "Pan", encoder: 1, page: 2, kind: "range", min: 0, max: 32, step: 1 },
-  { field: "pitch_hz", label: "Pitch (Hz)", encoder: 1, page: 3, kind: "number", min: 40, max: 10000, step: 0.001 },
+  { field: "pitch_hz", label: "Pitch (Hz)", encoder: 1, page: 3, kind: "number", min: 0, max: 10000, step: 0.001 },
   { field: "bright", label: "Brightness", encoder: 2, page: 1, kind: "range", min: 0, max: 32, step: 1 },
   { field: "beat", label: "Beating", encoder: 2, page: 2, kind: "range", min: 0, max: 32, step: 1 },
   { field: "decay", label: "Decay", encoder: 3, page: 1, kind: "range", min: 0, max: 32, step: 1 },

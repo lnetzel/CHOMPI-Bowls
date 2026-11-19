@@ -40,14 +40,21 @@ assert.equal("volume" in normalizedPreset, false);
 assert.equal(presetWithLegacyVolume.volume, 9);
 
 assert.equal(TUNINGS.length, 6);
-assert.ok(!TUNINGS.some((tuning) => ["arabic-24tet", "thai-7tet"].includes(tuning.id)));
+assert.ok(!TUNINGS.some((tuning) => (
+  ["arabic-24tet", "thai-7tet", "indian-22-shruti"].includes(tuning.id)
+)));
 for (const tuning of TUNINGS) {
   assert.equal(tuning.pitches.length, 25);
-  assert.ok(tuning.pitches.every((pitch) => pitch >= 40 && pitch <= 10000));
+  assert.ok(tuning.pitches.every((pitch) => (
+    pitch === 0 || (pitch >= 40 && pitch <= 10000)
+  )));
 }
 const twelveTet = TUNINGS.find((tuning) => tuning.id === "12tet");
 assert.ok(Math.abs(twelveTet.pitches[0] - 130.8128) < 0.001);
 assert.ok(Math.abs(twelveTet.pitches[21] - 440) < 1e-9);
+const solfeggio = TUNINGS.find((tuning) => tuning.id === "solfeggio");
+assert.deepEqual(solfeggio.pitches.slice(0, 9), [174, 285, 396, 417, 528, 639, 741, 852, 963]);
+assert.deepEqual(solfeggio.pitches.slice(9), Array(16).fill(0));
 
 const unchanged = JSON.stringify(factory);
 const tuned = applyTuning(factory, TUNINGS[2].pitches);
@@ -59,6 +66,13 @@ assert.deepEqual(tuned.pitch_hz.split, [
   ...TUNINGS[2].pitches.slice(0, 12),
   TUNINGS[2].pitches[12],
 ]);
+const solfeggioPreset = applyTuning(factory, solfeggio.pitches);
+assert.deepEqual(solfeggioPreset.pitch_hz.strikes, solfeggio.pitches);
+assert.deepEqual(solfeggioPreset.pitch_hz.rimming, solfeggio.pitches);
+assert.equal(solfeggioPreset.pitch_hz.split[8], 963);
+assert.equal(solfeggioPreset.pitch_hz.split[9], 0);
+assert.equal(solfeggioPreset.pitch_hz.split[24], 0);
+assert.equal(validatePreset(JSON.parse(JSON.stringify(solfeggioPreset))).pitch_hz.strikes[24], 0);
 const edited = setPresetValue(tuned, "pitch_hz", "rimming", 4, 444.125);
 assert.equal(edited.pitch_hz.rimming[4], 444.125);
 assert.equal(edited.pitch_hz.strikes[4], TUNINGS[2].pitches[4]);
@@ -109,6 +123,10 @@ assert.throws(
 assert.throws(
   () => applyTuning(factory, Array(25).fill(10001)),
   /40 to 10,000 Hz/,
+);
+assert.throws(
+  () => applyTuning(factory, [...Array(24).fill(100), 1]),
+  /40 to 10,000 Hz or 0 Hz/,
 );
 assert.throws(() => validatePreset({ ...factory, version: 2 }), /version 1/);
 
