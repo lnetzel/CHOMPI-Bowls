@@ -40,7 +40,7 @@ switches (64-127 = on) use their own conversions, documented per row.
 | Note On | Note On (0x90) | Note 48-72 (key = note - 48); velocity 1-127 (scaled to 0.0-1.0). Velocity 0 = Note Off. Other notes are ignored |
 | Note Off | Note Off (0x80) | Note 48-72; release velocity ignored |
 | MIDI rimming level | CC 1 | 0-127 = held rub level 0.0-1.0 for this transport's eligible notes (see Notes) |
-| Master volume | CC 7 | 0-32 positions; gain is position-squared (0 = silence, 32 = unity). Saved |
+| Master volume | CC 7 | 0-32 positions; gain is position-squared (0 = silence, 32 = unity). Not stored in presets |
 | Bowl pan | CC 10 | 0-32 positions, left - centre (16) - right, for the edit-selected bowl. Saved |
 | Sustain pedal | CC 64 | 0-63 off, 64-127 on; per transport; defers this sender's Rimming pad releases only |
 | Resonance character | CC 70 | 0-25 = Temple, 26-51 = Deep, 52-76 = Bright, 77-102 = Wide, 103-127 = Thin; for the edit-selected bowl, applies at the next strike/pad/selection. Saved |

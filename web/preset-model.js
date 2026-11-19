@@ -8,7 +8,6 @@ export const METADATA_BYTE_LIMITS = Object.freeze({
 
 const GLOBAL_RANGES = {
   mode: [0, 2],
-  volume: [0, 32],
   strike: [0, 32],
   shimmer: [0, 32],
   reverb_mix: [0, 32],
@@ -46,7 +45,6 @@ export function createFactoryPreset() {
     name: "",
     comment: "",
     mode: 2,
-    volume: 8,
     strike: 32,
     shimmer: 0,
     reverb_mix: 0,
@@ -64,9 +62,14 @@ export function validatePreset(preset) {
   if (!preset || typeof preset !== "object") {
     throw new Error(`Preset must use schema version ${PRESET_VERSION}.`);
   }
-  const normalized = Object.prototype.hasOwnProperty.call(preset, "reverb_decay")
-    ? preset
-    : { ...preset, reverb_decay: 4 };
+  const hasReverbDecay = Object.prototype.hasOwnProperty.call(preset, "reverb_decay");
+  const hasLegacyVolume = Object.prototype.hasOwnProperty.call(preset, "volume");
+  let normalized = preset;
+  if (!hasReverbDecay || hasLegacyVolume) {
+    normalized = { ...preset };
+    if (!hasReverbDecay) normalized.reverb_decay = 4;
+    delete normalized.volume;
+  }
   if (normalized.version !== PRESET_VERSION) {
     throw new Error(`Preset must use schema version ${PRESET_VERSION}.`);
   }

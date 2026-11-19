@@ -121,6 +121,7 @@ enum class Overlay : int
 
 // White-key bars disappear 500 ms after turning.
 constexpr uint32_t kOverlayMs = 500;
+constexpr int kDefaultMasterVolume = 8;
 
 uint32_t PitchToMilliHz(float pitch_hz)
 {
@@ -164,7 +165,7 @@ struct Params
     }
 
     // Global controls (shared by all modes).
-    std::atomic<int>      volume_ticks{chompi::BowlsPreset::kDefaultVolume};
+    std::atomic<int>      volume_ticks{kDefaultMasterVolume};
     std::atomic<int>      strike_ticks{chompi::BowlsPreset::kDefaultStrike};
     std::atomic<int>      shimmer_ticks{chompi::BowlsPreset::kDefaultShimmer};
 
@@ -2806,8 +2807,6 @@ chompi::BowlsPreset SnapshotParams()
     chompi::BowlsPreset p;
     p.SetDefaults();
     p.mode = static_cast<uint8_t>(ModeIdx(play_modes.Mode()));
-    p.volume = static_cast<uint8_t>(
-        params.volume_ticks.load(std::memory_order_relaxed));
     p.strike = static_cast<uint8_t>(
         params.strike_ticks.load(std::memory_order_relaxed));
     p.shimmer = static_cast<uint8_t>(
@@ -2857,7 +2856,6 @@ void ApplyPreset(const chompi::BowlsPreset& p, bool boot)
         midi_rub_level_[bowls::kDin] = 0.0f;
         midi_rub_level_[bowls::kUsb] = 0.0f;
     }
-    params.volume_ticks.store(p.volume, std::memory_order_relaxed);
     params.strike_ticks.store(p.strike, std::memory_order_relaxed);
     params.shimmer_ticks.store(p.shimmer, std::memory_order_relaxed);
     for(int m = 0; m < bowls::kPlayModeCount; ++m)

@@ -39,7 +39,6 @@ struct BowlsPreset
 
     /* boot defaults (mirror Params in chompi_main.cpp) */
     static constexpr int kDefaultMode       = kModeSplit;
-    static constexpr int kDefaultVolume     = 8;
     static constexpr int kDefaultStrike     = 32;
     static constexpr int kDefaultBrightness = 24;
     static constexpr int kDefaultDecay      = 4;
@@ -54,7 +53,6 @@ struct BowlsPreset
     static constexpr float kMaxPitchHz = bowls::kMaxPitchHz;
 
     uint8_t mode;       /**< 0..2 active play mode */
-    uint8_t volume;     /**< 0..32 master volume ticks */
     uint8_t strike;     /**< 0..32 strike hardness ticks */
     uint8_t shimmer;    /**< 0..32 paired-mode detune ticks */
     uint8_t reverb_mix; /**< 0..32 reverb dry/wet mix ticks */
@@ -106,7 +104,6 @@ struct BowlsPreset
         memset(name, 0, sizeof(name));
         memset(comment, 0, sizeof(comment));
         mode       = kDefaultMode;
-        volume     = kDefaultVolume;
         strike     = kDefaultStrike;
         shimmer    = kDefaultShimmer;
         reverb_mix = kDefaultReverbMix;
@@ -601,11 +598,10 @@ inline size_t Serialize(const BowlsPreset &p, char *buf, size_t size)
     int n = snprintf(buf,
                      size,
                      "{\"version\":%d,\"mode\":%u,"
-                     "\"volume\":%u,\"strike\":%u,\"shimmer\":%u,"
+                     "\"strike\":%u,\"shimmer\":%u,"
                      "\"reverb_mix\":%u,\"reverb_decay\":%u,\"name\":",
                      BowlsPreset::kVersion,
                      (unsigned)p.mode,
-                     (unsigned)p.volume,
                      (unsigned)p.strike,
                      (unsigned)p.shimmer,
                      (unsigned)p.reverb_mix,
@@ -908,15 +904,12 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
     BowlsPreset tmp;
     tmp.SetDefaults();
     int mode = -1;
-    int volume = 0;
     int strike = 0;
     int shimmer = 0;
     int reverb_mix = 0;
     int reverb_decay = BowlsPreset::kDefaultReverbDecay;
     if(!QueryIntPresent(buf, len, "mode", -100, 100, mode)
        || mode < 0 || mode >= BowlsPreset::kModeCount
-       || !QueryIntPresent(buf, len, "volume", 0, BowlsPreset::kMaxTicks,
-                           volume)
        || !QueryIntPresent(buf, len, "strike", 0, BowlsPreset::kMaxTicks,
                            strike)
        || !QueryIntPresent(buf, len, "shimmer", 0, BowlsPreset::kMaxTicks,
@@ -928,7 +921,6 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
        )
         return false;
     tmp.mode = static_cast<uint8_t>(mode);
-    tmp.volume = static_cast<uint8_t>(volume);
     tmp.strike = static_cast<uint8_t>(strike);
     tmp.shimmer = static_cast<uint8_t>(shimmer);
     tmp.reverb_mix = static_cast<uint8_t>(reverb_mix);

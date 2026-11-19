@@ -22,6 +22,7 @@ assert.equal(validatePreset(factory), factory);
 assert.equal(factory.version, 1);
 assert.equal(factory.shimmer, 0);
 assert.equal(factory.reverb_decay, 4);
+assert.equal("volume" in factory, false);
 assert.equal("delay_mix" in factory, false);
 assert.equal("delay_time" in factory, false);
 assert.deepEqual(factory.beat.strikes, Array(25).fill(8));
@@ -33,6 +34,10 @@ assert.equal(validatePreset(legacyPreset).reverb_decay, 4);
 assert.equal("reverb_decay" in legacyPreset, false);
 assert.deepEqual(factory.pitch_hz.strikes, factory.pitch_hz.rimming);
 assert.deepEqual(factory.pitch_hz.strikes, factory.pitch_hz.split);
+const presetWithLegacyVolume = { ...factory, volume: 9 };
+const normalizedPreset = validatePreset(presetWithLegacyVolume);
+assert.equal("volume" in normalizedPreset, false);
+assert.equal(presetWithLegacyVolume.volume, 9);
 
 assert.equal(TUNINGS.length, 6);
 assert.ok(!TUNINGS.some((tuning) => ["arabic-24tet", "thai-7tet"].includes(tuning.id)));
@@ -109,11 +114,10 @@ assert.throws(() => validatePreset({ ...factory, version: 2 }), /version 1/);
 
 let namedPreset = setPresetValue(factory, "name", null, null, 'Bowl "One" \\copy');
 namedPreset = setPresetValue(namedPreset, "comment", null, null, "Line one\nCafé 🥣");
-namedPreset = setPresetValue(namedPreset, "volume", null, null, 9);
 const metadataRoundTrip = validatePreset(JSON.parse(JSON.stringify(namedPreset)));
 assert.equal(metadataRoundTrip.name, 'Bowl "One" \\copy');
 assert.equal(metadataRoundTrip.comment, "Line one\nCafé 🥣");
-assert.equal(metadataRoundTrip.volume, 9);
+assert.equal("volume" in metadataRoundTrip, false);
 assert.throws(
   () => setPresetValue(factory, "name", null, null, "🥣".repeat(13)),
   /48 UTF-8 bytes/,

@@ -32,7 +32,6 @@ chompi::BowlsPreset PatternPreset(int mode)
     chompi::BowlsPreset p;
     p.SetDefaults();
     p.mode = static_cast<uint8_t>(mode);
-    p.volume = 3;
     p.strike = 31;
     p.shimmer = 29;
     p.reverb_mix = 21;
@@ -60,7 +59,7 @@ chompi::BowlsPreset PatternPreset(int mode)
 
 bool SameTicks(const chompi::BowlsPreset& a, const chompi::BowlsPreset& b)
 {
-    return a.mode == b.mode && a.volume == b.volume && a.strike == b.strike
+    return a.mode == b.mode && a.strike == b.strike
            && a.shimmer == b.shimmer && a.reverb_mix == b.reverb_mix
            && a.reverb_decay == b.reverb_decay
            && std::strcmp(a.name, b.name) == 0
@@ -271,7 +270,7 @@ int main()
         Check(ok, "embedded first-boot template parses", detail);
     }
 
-    // Distinct fractional pitches, all six banks, all globals and modes.
+    // Distinct fractional pitches, all six banks, saved globals and modes.
     {
         bool ok = true;
         for(int mode = 0; mode < chompi::BowlsPreset::kModeCount; ++mode)
@@ -301,12 +300,36 @@ int main()
                    || std::strstr(buf, ",\"split\":[") == nullptr))
                 shape_ok = false;
             if(!shape_ok || std::strstr(buf, "\"version\":1") == nullptr
+               || std::strstr(buf, "\"volume\"") != nullptr
                || std::strstr(buf, "\"name\":\"Preset \\\"One\\\" \\\\ copy\"")
                       == nullptr
                || !chompi::Parse(buf, len, dst) || !Same(src, dst))
                 ok = false;
         }
         Check(ok, "round-trip 75 pitches, five banks, all modes", "");
+    }
+
+    // Legacy master-volume values are ignored and are never serialized.
+    {
+        chompi::BowlsPreset src = PatternPreset(0);
+        const size_t len = chompi::Serialize(src, buf, sizeof(buf));
+        char legacy[kStorageJsonSize];
+        bool ok = len > 0;
+        if(ok)
+            std::memcpy(legacy, buf, len + 1);
+        ok = ok && Replace(legacy, "\"mode\":0,",
+                           "\"mode\":0,\"volume\":31,");
+        chompi::BowlsPreset loaded;
+        loaded.SetDefaults();
+        ok = ok && chompi::Parse(legacy, std::strlen(legacy), loaded)
+             && Same(src, loaded);
+        if(ok)
+        {
+            const size_t saved_len
+                = chompi::Serialize(loaded, buf, sizeof(buf));
+            ok = saved_len > 0 && std::strstr(buf, "\"volume\"") == nullptr;
+        }
+        Check(ok, "legacy master volume is ignored", "");
     }
 
     // v1 presets from before room-decay control load with the default.
@@ -445,7 +468,7 @@ int main()
         chompi::BowlsPreset live_state = PatternPreset(0);
         const chompi::BowlsPreset saved_state = live_state;
         bank.LoadSlot(0, saved_state);
-        live_state.volume = 12;
+        live_state.strike = 12;
         const bool ok = bank.IsValid(0) && !bank.IsDirty(0)
                         && bank.NextDirtySlot() == -1
                         && Same(bank.Get(0), saved_state)
@@ -509,7 +532,7 @@ int main()
             p.pitch_hz.strikes[i] = p.pitch_hz.rimming[i] = 10000.0f;
         for(int i = 0; i < bowls::kKeyCount; ++i)
             p.pitch_hz.split[i] = 10000.0f;
-        p.volume = p.strike = p.shimmer = p.reverb_mix = p.reverb_decay = 255;
+        p.strike = p.shimmer = p.reverb_mix = p.reverb_decay = 255;
         const size_t len = chompi::Serialize(p, buf, sizeof(buf));
         char small[512];
         Check(len > 512 && len + 1 <= kStorageJsonSize,
