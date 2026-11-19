@@ -173,3 +173,33 @@ export function setBankValueForAllModes(preset, field, value) {
   }
   return validatePreset(updated);
 }
+
+const BOWL_RANDOM_RANGES = {
+  pan: [8, 24],
+  profile: [0, 4],
+  bright: [8, 24],
+  beat: [0, 16],
+  decay: [8, 24],
+};
+
+function shuffledSpread(min, max) {
+  const values = Array.from(
+    { length: KEY_COUNT },
+    (_, index) => Math.round(min + (index * (max - min)) / (KEY_COUNT - 1)),
+  );
+  for (let index = values.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [values[index], values[swapIndex]] = [values[swapIndex], values[index]];
+  }
+  return values;
+}
+
+export function randomizeBowlValues(preset) {
+  const updated = clonePreset(preset);
+  for (const [field, [min, max]] of Object.entries(BOWL_RANDOM_RANGES)) {
+    for (const mode of MODES) {
+      updated[field][mode] = shuffledSpread(min, max);
+    }
+  }
+  return validatePreset(updated);
+}

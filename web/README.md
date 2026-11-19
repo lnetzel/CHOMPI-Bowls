@@ -38,7 +38,11 @@ Rimming, and Split. This action never changes the firmware's embedded
 factory preset. The global bowl controls apply pan, bowl volume, profile,
 brightness, decay, or beating to all 25 keys in all three modes; individual bowl
 values and pitches remain editable afterward. **Strike** remains a
-preset-wide setting, as does **Shimmer**. **Save to slot** is
+preset-wide setting, as does **Shimmer**. **Randomize all bowl values** spreads
+the per-key controls across moderate ranges in all three modes, keeps panning
+within the center half of the stereo image, and leaves bowl volume and pitches
+unchanged.
+**Save to slot** is
 the only action that writes to the SD card; overwriting a populated slot
 requires confirmation. Export JSON to keep a local backup.
 The global and per-key controls are grouped by firmware encoder and ordered

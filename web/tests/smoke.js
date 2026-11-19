@@ -3,6 +3,7 @@ import {
   applyTuning,
   createFactoryPreset,
   METADATA_BYTE_LIMITS,
+  randomizeBowlValues,
   setBankValueForAllModes,
   setPresetValue,
   validatePreset,
@@ -67,6 +68,25 @@ for (const [field, value] of Object.entries(bankValues)) {
   }
 }
 assert.deepEqual(factory.pan.strikes, Array(25).fill(16));
+const randomized = randomizeBowlValues(factory);
+const randomRanges = {
+  pan: [8, 24],
+  profile: [0, 4],
+  bright: [8, 24],
+  beat: [0, 16],
+  decay: [8, 24],
+};
+for (const [field, [min, max]] of Object.entries(randomRanges)) {
+  for (const mode of ["strikes", "rimming", "split"]) {
+    const values = randomized[field][mode];
+    assert.equal(values.length, 25);
+    assert.ok(values.every((value) => value >= min && value <= max));
+    assert.ok(new Set(values).size >= (field === "profile" ? 5 : 15));
+  }
+}
+assert.deepEqual(randomized.bvol, factory.bvol);
+assert.deepEqual(randomized.pitch_hz, factory.pitch_hz);
+assert.deepEqual(factory, createFactoryPreset());
 const afterGlobal = setPresetValue(globalized, "bright", "rimming", 4, 20);
 assert.equal(afterGlobal.bright.rimming[4], 20);
 assert.equal(afterGlobal.bright.rimming[3], 9);

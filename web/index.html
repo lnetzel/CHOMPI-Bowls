@@ -78,6 +78,15 @@
         <fieldset id="editor-controls" disabled>
           <legend class="visually-hidden">Preset editor controls</legend>
           <div class="editor-grid">
+            <section class="subpanel" aria-labelledby="global-bowl-heading">
+              <div class="section-heading">
+                <h3 id="global-bowl-heading">Global bowl values</h3>
+                <button id="randomize-bowl-values" type="button">Randomize bowls</button>
+              </div>
+              <p>Changing a value applies it to all 25 keys in Strikes, Rimming, and Split. Randomize all bowl values spreads the controls across moderate ranges, keeps panning within the center half of the stereo image, and leaves bowl volume and pitches unchanged. Global controls show Mixed; edit individual bowls below.</p>
+              <div id="global-bowl-controls" class="encoder-control-groups"></div>
+            </section>
+
             <section class="subpanel" aria-labelledby="global-heading">
               <h3 id="global-heading">Global preset values</h3>
               <label for="startup-mode">Startup mode</label>
@@ -103,12 +112,6 @@
                   </div>
                 </section>
               </div>
-            </section>
-
-            <section class="subpanel" aria-labelledby="global-bowl-heading">
-              <h3 id="global-bowl-heading">Global bowl values</h3>
-              <p>Changing a value applies it to all 25 keys in Strikes, Rimming, and Split. You can then edit individual bowls below. Mixed values are shown when the preset differs between bowls.</p>
-              <div id="global-bowl-controls" class="encoder-control-groups"></div>
             </section>
 
             <section class="subpanel" aria-labelledby="tuning-heading">

@@ -4,6 +4,7 @@ import {
   setPresetValue,
   validatePreset,
   setBankValueForAllModes,
+  randomizeBowlValues,
 } from "./preset-model.js";
 import { TUNINGS } from "./tunings.js";
 import { PresetTransferClient } from "./preset-transfer.js";
@@ -32,6 +33,7 @@ const elements = {
   presetName: byId("preset-name"),
   presetComment: byId("preset-comment"),
   globalBowlControls: byId("global-bowl-controls"),
+  randomizeBowlValues: byId("randomize-bowl-values"),
   editMode: byId("edit-mode"),
   bowlKeybed: byId("bowl-keybed"),
   selectedKeyLabel: byId("selected-key-label"),
@@ -519,6 +521,15 @@ function renderGlobalBowlValues() {
   }
 }
 
+function randomizeAllBowlValues() {
+  if (!state.preset) return;
+  state.preset = randomizeBowlValues(state.preset);
+  renderGlobalBowlValues();
+  renderKeyValues();
+  markChanged();
+  setMessage("Bowl controls randomized across Strikes, Rimming, and Split. Bowl volume and pitches are unchanged; panning stays within the center half.");
+}
+
 function renderKeyValues() {
   if (!state.preset) return;
   for (const input of elements.keyControls.querySelectorAll("[data-key-field]")) {
@@ -686,6 +697,7 @@ elements.tuningSelect.addEventListener("change", () => {
   elements.applyTuning.disabled = !tuning || !state.preset;
 });
 elements.applyTuning.addEventListener("click", applySelectedTuning);
+elements.randomizeBowlValues.addEventListener("click", randomizeAllBowlValues);
 elements.editMode.addEventListener("change", (event) => {
   state.mode = event.target.value;
   renderKeyValues();
