@@ -44,6 +44,11 @@
             </ul>
           </div>
           <div class="slot-actions">
+            <button id="new-preset" type="button">New from factory defaults</button>
+            <label class="file-button">Import JSON
+              <input id="import-preset" type="file" accept="application/json,.json">
+            </label>
+            <button id="export-preset" type="button" disabled>Export JSON</button>
             <button id="save-slot" type="button" disabled>Save to slot</button>
           </div>
         </div>
@@ -68,13 +73,6 @@
             <p class="eyebrow">LOCAL DRAFT</p>
             <h2 id="draft-heading">Preset data</h2>
           </div>
-          <div class="button-row">
-            <button id="new-preset" type="button">New from factory defaults</button>
-            <label class="file-button">Import JSON
-              <input id="import-preset" type="file" accept="application/json,.json">
-            </label>
-            <button id="export-preset" type="button" disabled>Export JSON</button>
-          </div>
         </div>
 
         <fieldset id="editor-controls" disabled>
@@ -88,18 +86,28 @@
                 <option value="1">Rimming</option>
                 <option value="2">Split</option>
               </select>
-              <div class="global-controls">
-                <label>Master volume <input data-global="volume" type="range" min="0" max="32" step="1"><output></output></label>
-                <label>Strike <input data-global="strike" type="range" min="0" max="32" step="1"><output></output></label>
-                <label>Shimmer <input data-global="shimmer" type="range" min="0" max="32" step="1"><output></output></label>
-                <label>Reverb mix <input data-global="reverb_mix" type="range" min="0" max="32" step="1"><output></output></label>
+              <div class="encoder-control-groups">
+                <section class="encoder-control-row" aria-labelledby="volume-encoder-heading">
+                  <h4 id="volume-encoder-heading">Volume encoder</h4>
+                  <div class="encoder-control-fields" data-columns="2">
+                    <label>Page 1: Master volume <input data-global="volume" type="range" min="0" max="32" step="1"><output></output></label>
+                    <label>Page 2: Reverb mix <input data-global="reverb_mix" type="range" min="0" max="32" step="1"><output></output></label>
+                  </div>
+                </section>
+                <section class="encoder-control-row" aria-labelledby="encoder-4-heading">
+                  <h4 id="encoder-4-heading">Encoder 4</h4>
+                  <div class="encoder-control-fields" data-columns="2">
+                    <label>Page 1: Strike <input data-global="strike" type="range" min="0" max="32" step="1"><output></output></label>
+                    <label>Page 2: Shimmer <input data-global="shimmer" type="range" min="0" max="32" step="1"><output></output></label>
+                  </div>
+                </section>
               </div>
             </section>
 
             <section class="subpanel" aria-labelledby="global-bowl-heading">
               <h3 id="global-bowl-heading">Global bowl values</h3>
               <p>Changing a value applies it to all 25 keys in Strikes, Rimming, and Split. You can then edit individual bowls below. Mixed values are shown when the preset differs between bowls.</p>
-              <div id="global-bowl-controls" class="global-controls"></div>
+              <div id="global-bowl-controls" class="encoder-control-groups"></div>
             </section>
 
             <section class="subpanel" aria-labelledby="tuning-heading">
@@ -140,7 +148,7 @@
               <div id="bowl-keybed" class="piano-keybed" role="group" aria-label="Select bowl to edit"></div>
               <p id="selected-key-label" class="selected-key-label" aria-live="polite"></p>
             </div>
-            <div id="key-controls" class="key-control-grid"></div>
+            <div id="key-controls" class="encoder-control-groups key-encoder-groups"></div>
           </section>
         </fieldset>
       </section>

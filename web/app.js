@@ -70,13 +70,13 @@ const BOWL_PROFILES = [
 ];
 
 const FIELD_CONFIG = [
-  { field: "pan", label: "Pan", kind: "range", min: 0, max: 32, step: 1 },
-  { field: "bvol", label: "Bowl volume", kind: "range", min: 0, max: 32, step: 1 },
-  { field: "profile", label: "Bowl profile", kind: "select", options: BOWL_PROFILES },
-  { field: "bright", label: "Brightness", kind: "range", min: 0, max: 32, step: 1 },
-  { field: "decay", label: "Decay", kind: "range", min: 0, max: 32, step: 1 },
-  { field: "beat", label: "Beating", kind: "range", min: 0, max: 32, step: 1 },
-  { field: "pitch_hz", label: "Pitch (Hz)", kind: "number", min: 40, max: 10000, step: 0.001 },
+  { field: "bvol", label: "Bowl volume", encoder: 1, page: 1, kind: "range", min: 0, max: 32, step: 1 },
+  { field: "pan", label: "Pan", encoder: 1, page: 2, kind: "range", min: 0, max: 32, step: 1 },
+  { field: "pitch_hz", label: "Pitch (Hz)", encoder: 1, page: 3, kind: "number", min: 40, max: 10000, step: 0.001 },
+  { field: "bright", label: "Brightness", encoder: 2, page: 1, kind: "range", min: 0, max: 32, step: 1 },
+  { field: "beat", label: "Beating", encoder: 2, page: 2, kind: "range", min: 0, max: 32, step: 1 },
+  { field: "decay", label: "Decay", encoder: 3, page: 1, kind: "range", min: 0, max: 32, step: 1 },
+  { field: "profile", label: "Bowl profile", encoder: 3, page: 2, kind: "select", options: BOWL_PROFILES },
 ];
 
 const NOTE_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
@@ -94,6 +94,33 @@ function getProfileDescription(value) {
   return profile
     ? profile.description
     : "Different profiles are used across the preset.";
+}
+
+function renderFieldControl(config, dataAttribute, idPrefix, includeMixedOption) {
+  const label = `Page ${config.page}: ${config.label}`;
+  const descriptionId = `${idPrefix}-profile-description`;
+  const control = config.kind === "select"
+    ? `<select ${dataAttribute}="${config.field}" aria-label="${label}" aria-describedby="${descriptionId}">${config.options.map((option) => `<option value="${option.value}">${option.name}</option>`).join("")}${includeMixedOption ? '<option value="" disabled>Mixed values</option>' : ""}</select>`
+    : `<input ${dataAttribute}="${config.field}" type="${config.kind}" min="${config.min}" max="${config.max}" step="${config.step}">`;
+  const description = config.field === "profile"
+    ? `<span id="${descriptionId}" class="profile-description" data-profile-description>${BOWL_PROFILES[0].description}</span>`
+    : "";
+  const output = config.kind === "select" ? "" : "<output></output>";
+  return `<label>${label}${control}${description}${output}</label>`;
+}
+
+function renderEncoderGroups(configs, dataAttribute, idPrefix, includeMixedOption = false) {
+  const encoders = [...new Set(configs.map((config) => config.encoder))];
+  return encoders.map((encoder) => {
+    const fields = configs
+      .filter((config) => config.encoder === encoder)
+      .sort((left, right) => left.page - right.page);
+    const headingId = `${idPrefix}-encoder-${encoder}-heading`;
+    return `<section class="encoder-control-row" aria-labelledby="${headingId}">
+      <h4 id="${headingId}">Encoder ${encoder}</h4>
+      <div class="encoder-control-fields" data-columns="${fields.length}">${fields.map((config) => renderFieldControl(config, dataAttribute, idPrefix, includeMixedOption)).join("")}</div>
+    </section>`;
+  }).join("");
 }
 
 function setMessage(message, type = "info") {
@@ -421,28 +448,17 @@ function prepareEditor() {
     elements.bowlKeybed.append(button);
     if (!black) whiteIndex += 1;
   }
-  elements.globalBowlControls.innerHTML = FIELD_CONFIG
-    .filter((config) => config.field !== "pitch_hz")
-    .map((config) => {
-      const control = config.kind === "select"
-        ? `<select data-bank-global="${config.field}" aria-label="${config.label}" aria-describedby="global-profile-description">${config.options.map((option) => `<option value="${option.value}">${option.name}</option>`).join("")}<option value="" disabled>Mixed values</option></select>`
-        : `<input data-bank-global="${config.field}" type="${config.kind}" min="${config.min}" max="${config.max}" step="${config.step}">`;
-      const output = config.kind === "select" ? "" : "<output></output>";
-      const description = config.field === "profile"
-        ? `<span id="global-profile-description" class="profile-description" data-profile-description>${BOWL_PROFILES[0].description}</span>`
-        : "";
-      return `<label>${config.label}${control}${description}${output}</label>`;
-    }).join("");
-  elements.keyControls.innerHTML = FIELD_CONFIG.map((config) => {
-    const control = config.kind === "select"
-      ? `<select data-key-field="${config.field}" aria-label="${config.label}" aria-describedby="key-profile-description">${config.options.map((option) => `<option value="${option.value}">${option.name}</option>`).join("")}</select>`
-      : `<input data-key-field="${config.field}" type="${config.kind}" min="${config.min}" max="${config.max}" step="${config.step}">`;
-    const description = config.field === "profile"
-      ? `<span id="key-profile-description" class="profile-description" data-profile-description>${BOWL_PROFILES[0].description}</span>`
-      : "";
-    const output = config.field === "profile" ? "" : "<output></output>";
-    return `<label>${config.label}${control}${description}${output}</label>`;
-  }).join("");
+  elements.globalBowlControls.innerHTML = renderEncoderGroups(
+    FIELD_CONFIG.filter((config) => config.field !== "pitch_hz"),
+    "data-bank-global",
+    "global",
+    true,
+  );
+  elements.keyControls.innerHTML = renderEncoderGroups(
+    FIELD_CONFIG,
+    "data-key-field",
+    "key",
+  );
   renderKeybed();
 }
 
@@ -587,6 +603,7 @@ async function saveToSelectedSlot() {
 function createDraft() {
   if (state.dirty && !window.confirm("Discard your unsaved draft?")) return;
   state.preset = createFactoryPreset();
+  state.preset.mode = 0;
   state.mode = "strikes";
   state.key = 0;
   setDraftDirty(true);

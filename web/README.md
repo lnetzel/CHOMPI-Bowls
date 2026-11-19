@@ -17,8 +17,9 @@ Open `http://localhost:8000/` in desktop Chrome or Edge. Localhost is a
 secure context for Web MIDI. Direct MIDI access requires a browser that
 supports Web MIDI and the SysEx permission prompt.
 
-Create a local draft from the factory settings or import a schema-v1 JSON
-preset. Schema v1 includes a per-key beating value alongside brightness and
+Create a local draft from the factory settings, which starts with Strikes
+selected for both startup and editing mode, or import a schema-v1 JSON preset.
+Schema v1 includes a per-key beating value alongside brightness and
 decay; older schema versions are not supported.
 The name and comment fields are saved with the other preset values; names
 are limited to 48 UTF-8 bytes and comments to 128 UTF-8 bytes. The editor
@@ -38,6 +39,8 @@ values and pitches remain editable afterward. **Strike** remains a
 preset-wide setting, as does **Shimmer**. **Save to slot** is
 the only action that writes to the SD card; overwriting a populated slot
 requires confirmation. Export JSON to keep a local backup.
+The global and per-key controls are grouped by firmware encoder and ordered
+by page; fine-grained pitch editing remains with Encoder 1, Page 3.
 The per-key editor keeps the Strikes/Rimming/Split mode selector and uses
 an interactive piano keybed for bowl selection. The keys display each bowl's
 pitch rounded to one decimal place in the selected mode and update when a pitch
