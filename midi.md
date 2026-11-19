@@ -9,8 +9,8 @@ host.
 The USB device identifies itself to the host as **CHOMPI-BOWLS**.
 USB MIDI is unavailable in CPU_METER diagnostic builds.
 MIDI IN receives notes, supported CCs and MIDI Timing Clock. When clock
-pulses arrive, the delay and latched Strike arpeggio follow that tempo;
-without clock they retain their normal free-running settings. MIDI OUT sends local keyboard
+pulses arrive, the latched Strike arpeggio follows that tempo; without
+clock it retains its normal free-running rate. MIDI OUT sends local keyboard
 notes on both enabled transports; incoming messages are never echoed or
 soft-thru'd, and no CCs are transmitted.
 Other channels and unsupported MIDI messages are ignored.
@@ -23,11 +23,9 @@ storage path; it does not expose or alter the embedded factory preset.
 See the [web editor guide](web/README.md) for browser setup and deployment.
 
 MIDI Timing Clock is accepted regardless of channel (24 pulses per
-quarter note). After tempo is established, the delay-time control selects
-a pulse divider (its existing 40-1000 ms curve is referenced to 120 BPM),
-and the Strike arpeggio wheel selects the number of clock pulses between
-strikes. Clock sync expires after 500 ms without a pulse; DIN takes
-priority if both DIN and USB clocks are active.
+quarter note). The Strike arpeggio wheel selects the number of clock
+pulses between strikes. Clock sync expires after 500 ms without a pulse;
+DIN takes priority if both DIN and USB clocks are active.
 
 Saved rotary parameters use the same 33 positions as the panel encoders:
 `position = (value * 32 + 63) / 127`. CC values 0, 64 and 127 select

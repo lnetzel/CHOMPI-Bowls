@@ -20,6 +20,8 @@ const factory = createFactoryPreset();
 assert.equal(validatePreset(factory), factory);
 assert.equal(factory.version, 1);
 assert.equal(factory.shimmer, 0);
+assert.equal("delay_mix" in factory, false);
+assert.equal("delay_time" in factory, false);
 assert.deepEqual(factory.beat.strikes, Array(25).fill(8));
 assert.equal(factory.name, "");
 assert.equal(factory.comment, "");

@@ -48,8 +48,6 @@ struct BowlsPreset
     static constexpr int kDefaultProfile    = 0;
     static constexpr int kDefaultPan        = 16; /* centre */
     static constexpr int kDefaultReverbMix  = 0;  /* subtle temple room */
-    static constexpr int kDefaultDelayMix   = 0;  /* dry, 35% feedback */
-    static constexpr int kDefaultDelayTime  = 15; /* 500 ms */
     static constexpr int kDefaultBowlVol    = 8; /* unity gain (0 dB) */
     static constexpr float kMinPitchHz = bowls::kMinPitchHz;
     static constexpr float kMaxPitchHz = bowls::kMaxPitchHz;
@@ -59,8 +57,6 @@ struct BowlsPreset
     uint8_t strike;     /**< 0..32 strike hardness ticks */
     uint8_t shimmer;    /**< 0..32 paired-mode detune ticks */
     uint8_t reverb_mix; /**< 0..32 reverb dry/wet mix ticks */
-    uint8_t delay_mix;  /**< 0..32 combined wet/feedback control */
-    uint8_t delay_time; /**< 0..32 delay time (40..1000 ms) */
     /* per-mode/per-key banks, flattened [mode * 25 + key] */
     uint8_t pan[kBankSlots];     /**< per-key pan 0..32 (16 = centre) */
     uint8_t bvol[kBankSlots];    /**< per-key volume 0..32 (16 = unity) */
@@ -112,8 +108,6 @@ struct BowlsPreset
         strike     = kDefaultStrike;
         shimmer    = kDefaultShimmer;
         reverb_mix = kDefaultReverbMix;
-        delay_mix  = kDefaultDelayMix;
-        delay_time = kDefaultDelayTime;
         for(int w = 0; w < kBankSlots; ++w)
         {
             pan[w]     = kDefaultPan;
@@ -605,16 +599,13 @@ inline size_t Serialize(const BowlsPreset &p, char *buf, size_t size)
                      size,
                      "{\"version\":%d,\"mode\":%u,"
                      "\"volume\":%u,\"strike\":%u,\"shimmer\":%u,"
-                     "\"reverb_mix\":%u,\"delay_mix\":%u,"
-                     "\"delay_time\":%u,\"name\":",
+                     "\"reverb_mix\":%u,\"name\":",
                      BowlsPreset::kVersion,
                      (unsigned)p.mode,
                      (unsigned)p.volume,
                      (unsigned)p.strike,
                      (unsigned)p.shimmer,
-                     (unsigned)p.reverb_mix,
-                     (unsigned)p.delay_mix,
-                     (unsigned)p.delay_time);
+                     (unsigned)p.reverb_mix);
     if(n < 0 || static_cast<size_t>(n) >= size)
         return 0;
     size_t off = static_cast<size_t>(n);
@@ -892,8 +883,6 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
     int strike = 0;
     int shimmer = 0;
     int reverb_mix = 0;
-    int delay_mix = 0;
-    int delay_time = 0;
     if(!QueryIntPresent(buf, len, "mode", -100, 100, mode)
        || mode < 0 || mode >= BowlsPreset::kModeCount
        || !QueryIntPresent(buf, len, "volume", 0, BowlsPreset::kMaxTicks,
@@ -904,18 +893,13 @@ inline bool Parse(char *buf, size_t len, BowlsPreset &p)
                            shimmer)
        || !QueryIntPresent(buf, len, "reverb_mix", 0,
                            BowlsPreset::kMaxTicks, reverb_mix)
-       || !QueryIntPresent(buf, len, "delay_mix", 0,
-                           BowlsPreset::kMaxTicks, delay_mix)
-       || !QueryIntPresent(buf, len, "delay_time", 0,
-                           BowlsPreset::kMaxTicks, delay_time))
+       )
         return false;
     tmp.mode = static_cast<uint8_t>(mode);
     tmp.volume = static_cast<uint8_t>(volume);
     tmp.strike = static_cast<uint8_t>(strike);
     tmp.shimmer = static_cast<uint8_t>(shimmer);
     tmp.reverb_mix = static_cast<uint8_t>(reverb_mix);
-    tmp.delay_mix = static_cast<uint8_t>(delay_mix);
-    tmp.delay_time = static_cast<uint8_t>(delay_time);
     if(!QueryStringStrict(buf, len, "name", tmp.name, sizeof(tmp.name),
                           BowlsPreset::kNameMaxBytes)
        || !QueryStringStrict(buf, len, "comment", tmp.comment,

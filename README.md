@@ -2,18 +2,18 @@
 
 A five-voice singing-bowl instrument for CHOMPI hardware. It includes
 three play modes, per-key tuning and sound controls, presets, MIDI, stereo
-delay and reverb, and SD-card recording/playback.
+reverb, and SD-card recording/playback.
 
 ## Controls
 
 | Control | Action |
 |---|---|
-| Encoder 1 | Press to change page. Page 1: selected bowl volume; SHIFT+turn pans it. Page 2: resonance profile. Page 3: fundamental frequency. |
+| Encoder 1 | Press to change page. Page 1: selected bowl volume; page 2: pan; page 3: fundamental frequency. |
 | Encoder 2 | Press to change page. Page 1: selected bowl brightness; page 2: selected bowl's added rhythmic beating (red LED). |
-| Encoder 3 | Selected bowl decay. |
+| Encoder 3 | Press to change page. Page 1: selected bowl decay; page 2: resonance profile. |
 | Encoder 4 | Press to change page. Page 1: strike hardness; page 2: paired-mode shimmer. |
 | Transport wheel | Rims the active wheel set. Clockwise adds friction texture; counter-clockwise gives a clean sustained tone. |
-| Volume encoder | Press to select master volume, delay, or reverb. On the delay page, SHIFT+turn changes time. |
+| Volume encoder | Press to select master volume or reverb mix. |
 | SHIFT + lower F# / G# / A# | Select Split / Strikes / Rimming. |
 | SHIFT + Black 6 / Black 7 | Select Normal / Send FX routing. |
 | SHIFT + white key | Load that preset slot. |
@@ -71,8 +71,7 @@ over USB MIDI and runs locally or on GitHub Pages.
   `BOWLS/RECORDINGS/`.
 - Hold PLAY for 2 s to enter or exit playback. In playback, tap PLAY to
   pause/resume, LOOP to repeat, or a white key to select a take.
-- The volume encoder cycles master, delay, and reverb pages. Delay time
-  is 40-1000 ms and follows MIDI Clock when available.
+- The volume encoder cycles master volume and reverb mix.
 - **Normal** sends the bowl mix to headphones and line out.
   **Send FX** sends dry bowls to line out and monitors AUX IN through the
   headphones. Patch line out to the external effect and its output to

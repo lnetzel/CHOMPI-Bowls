@@ -15,8 +15,6 @@
 #include "PresetTransfer.h"
 #include "SdRecorder.h"
 #include "SdPlayer.h"
-#include "StereoBbdDelay.h"
-#include "delay_parameters.h"
 #include "MidiCcMap.h"
 #include "MidiHandler.h"
 #include "midi_clock.h"
@@ -70,12 +68,7 @@ bowls::BowlVoice voices[kVoiceCount];
 // Stereo temple-room reverb (DaisySP Freeverb derivative) on the bowl
 // bus: a small wooden room - short tail, highs damped (wood absorbs
 // them). Character is fixed; only the dry/wet mix is on the panel.
-// The delay buffers (~387 KB) live in SDRAM - SRAM is for state that
-// must be fast, not for bulk audio memory.
 daisysp::ReverbSc DSY_SDRAM_BSS reverb;
-float DSY_SDRAM_BSS delay_buffer_l[chompi::StereoBbdDelay::kBufferSize];
-float DSY_SDRAM_BSS delay_buffer_r[chompi::StereoBbdDelay::kBufferSize];
-chompi::StereoBbdDelay bbd_delay;
 
 #ifdef CPU_METER
 // CPU meter with a ~5 s peak-hold: dropouts come from the WORST block,
@@ -139,8 +132,6 @@ enum class Overlay : int
     Character,
     Pan,
     ReverbMix,
-    DelayMix,
-    DelayTime,
     BowlVolume,
     Tune,
 };
@@ -210,10 +201,6 @@ struct Params
     // Volume knob page 2: temple-room reverb dry/wet mix.
     std::atomic<int>      reverb_mix_ticks{
         chompi::BowlsPreset::kDefaultReverbMix};
-    std::atomic<int>      delay_mix_ticks{
-        chompi::BowlsPreset::kDefaultDelayMix};
-    std::atomic<int>      delay_time_ticks{
-        chompi::BowlsPreset::kDefaultDelayTime};
 
     // UI overlay: which parameter bar is shown on the white keys.
     std::atomic<int>      overlay{static_cast<int>(Overlay::Volume)};
@@ -222,10 +209,9 @@ struct Params
 
 Params params;
 
-// Volume-knob pages (press cycles): master volume -> delay -> reverb.
+// Volume-knob pages (press cycles): master volume -> reverb.
 constexpr int kVolPageVolume = 0;
-constexpr int kVolPageDelay  = 1;
-constexpr int kVolPageReverb = 2;
+constexpr int kVolPageReverb = 1;
 volatile int  vol_page_      = kVolPageVolume;
 
 // Audio routing selection (audio_routing.h): Normal (boot default) or
@@ -243,15 +229,10 @@ volatile int routing_ = bowls::kRoutingDefault;
 bowls::BowlsMidi midi;
 bowls::MidiClockTracker midi_clock_trackers[bowls::kMidiTransportCount];
 
-void ApplyDelayTargets();
-
 void UpdateMidiClock(uint32_t now)
 {
-    bool pulse_changed = false;
     for(int src = 0; src < bowls::kMidiTransportCount; ++src)
-        pulse_changed = midi_clock_trackers[src].Update(
-                            midi.ClockPulses(src), now)
-                        || pulse_changed;
+        midi_clock_trackers[src].Update(midi.ClockPulses(src), now);
 
     int source = -1;
     if(midi_clock_trackers[bowls::kDin].HasTempo(now))
@@ -263,13 +244,11 @@ void UpdateMidiClock(uint32_t now)
     const float pulse_period_ms
         = active ? midi_clock_trackers[source].PulsePeriodMs() : 0.0f;
     if(active != midi_clock_active_ || source != midi_clock_source_
-       || (active && (pulse_changed
-                      || pulse_period_ms != midi_clock_pulse_period_ms_)))
+       || (active && pulse_period_ms != midi_clock_pulse_period_ms_))
     {
         midi_clock_active_ = active;
         midi_clock_source_ = source;
         midi_clock_pulse_period_ms_ = pulse_period_ms;
-        ApplyDelayTargets();
     }
 }
 
@@ -312,9 +291,9 @@ bowls::Source MidiSrcFromTransport(int src)
                               : bowls::Source::kMidiUsb;
 }
 
-// Encoder-1 pages (press cycles): bowl volume -> character -> tuning.
+// Encoder-1 pages (press cycles): bowl volume -> pan -> tuning.
 constexpr int kEnc1PageVolume    = 0;
-constexpr int kEnc1PageCharacter = 1;
+constexpr int kEnc1PagePan       = 1;
 constexpr int kEnc1PageTune      = 2;
 volatile int  enc1_page_         = kEnc1PageVolume;
 
@@ -322,6 +301,11 @@ volatile int  enc1_page_         = kEnc1PageVolume;
 constexpr int kEnc2PageBrightness = 0;
 constexpr int kEnc2PageBeat       = 1;
 volatile int  enc2_page_          = kEnc2PageBrightness;
+
+// Encoder-3 pages: selected-bowl decay -> resonance character.
+constexpr int kEnc3PageDecay     = 0;
+constexpr int kEnc3PageCharacter = 1;
+volatile int  enc3_page_         = kEnc3PageDecay;
 
 // Encoder-4 pages (press cycles): global strike hardness -> global shimmer.
 constexpr int kEnc4PageStrike  = 0;
@@ -419,26 +403,6 @@ float TicksToNorm(int ticks)
 float PanNormTicks(int ticks)
 {
     return static_cast<float>(ticks - 16) / 16.0f; // -1 (left) .. +1 (right)
-}
-
-void ApplyDelayTargets()
-{
-    const int mix_position
-        = params.delay_mix_ticks.load(std::memory_order_relaxed);
-    bbd_delay.SetMix(chompi::delay_parameters::DelayMix(mix_position));
-    bbd_delay.SetFeedback(
-        chompi::delay_parameters::DelayFeedback(mix_position));
-    const int delay_position
-        = params.delay_time_ticks.load(std::memory_order_relaxed);
-    const float delay_ms
-        = midi_clock_active_
-              ? midi_clock_pulse_period_ms_
-                    * static_cast<float>(
-                        chompi::delay_parameters::DelayClockDividerTicks(
-                            delay_position))
-              : static_cast<float>(
-                    chompi::delay_parameters::DelayTimeMs(delay_position));
-    bbd_delay.SetDelayMs(delay_ms);
 }
 
 void BumpTicks(std::atomic<int>& ticks, int inc, Overlay overlay, uint32_t now)
@@ -1579,29 +1543,27 @@ void ApplyControls()
         PresetShiftConfirm();
     prev_shift_held = shift;
 
-    // Volume knob press: page 1 = master, page 2 = delay, page 3 = reverb.
+    // Volume knob press: page 1 = master, page 2 = reverb.
     // The newly active page's bar shows as confirmation.
     if(hw.VolumeClicked())
     {
-        vol_page_ = (vol_page_ + 1) % 3;
+        vol_page_ = (vol_page_ + 1) % 2;
         ShowOverlay(vol_page_ == kVolPageVolume
                         ? Overlay::Volume
-                        : (vol_page_ == kVolPageDelay ? Overlay::DelayMix
-                                                      : Overlay::ReverbMix),
+                        : Overlay::ReverbMix,
                     now);
     }
 
-    // Physical encoder 1 press: cycle page 1 bowl volume -> page 2
-    // resonance character -> page 3 direct-Hz frequency. The newly
-    // active page's bar shows as confirmation.
+    // Physical encoder 1 press: cycle page 1 bowl volume -> page 2 pan
+    // -> page 3 direct-Hz frequency. The newly active page's bar shows
+    // as confirmation.
     if(hw.EncoderClicked(0))
     {
         enc1_page_ = (enc1_page_ + 1) % 3;
         ShowOverlay(enc1_page_ == kEnc1PageVolume
                         ? Overlay::BowlVolume
-                        : (enc1_page_ == kEnc1PageCharacter
-                               ? Overlay::Character
-                               : Overlay::Tune),
+                        : (enc1_page_ == kEnc1PagePan ? Overlay::Pan
+                                                      : Overlay::Tune),
                     now);
     }
 
@@ -1615,30 +1577,24 @@ void ApplyControls()
                     now);
     }
 
-    // Physical encoder 1: three pages editing the selected bowl (the
-    // last played/selected key in the CURRENT mode). Page 1: turn =
-    // per-bowl volume (rides ringing voices live), SHIFT+turn = pan.
-    // Page 2: resonance character (profile 1-5). Page 3: per-bowl
-    // direct-Hz frequency (next strike/selection; SHIFT+turn is 1 Hz).
+    if(hw.EncoderClicked(2))
+    {
+        enc3_page_ = enc3_page_ == kEnc3PageDecay
+                         ? kEnc3PageCharacter
+                         : kEnc3PageDecay;
+        ShowOverlay(enc3_page_ == kEnc3PageDecay ? Overlay::Decay
+                                                  : Overlay::Character,
+                    now);
+    }
+
+    // Physical encoder 1: page 1 edits the selected bowl's volume,
+    // page 2 its pan, and page 3 its direct-Hz frequency.
     const int enc1_inc = hw.EncoderIncrement(0);
     if(enc1_inc != 0)
     {
         const int cur_mode = ModeIdx(play_modes.Mode());
         const int key      = last_key_[cur_mode];
-        if(enc1_page_ == kEnc1PageVolume && shift)
-        {
-            // Pan the selected bowl one tick per detent; a voice holding
-            // that (mode, key) is re-panned live (smoothed inside the
-            // voice) - a same-key voice from ANOTHER mode keeps its own
-            // pan.
-            SetPanTicks(cur_mode, key,
-                        params.pan_ticks[cur_mode][key].load(
-                            std::memory_order_relaxed)
-                            + enc1_inc,
-                        now);
-            ShowOverlay(Overlay::Pan, now); // also shows at the end stops
-        }
-        else if(enc1_page_ == kEnc1PageVolume)
+        if(enc1_page_ == kEnc1PageVolume && !shift)
         {
             // Per-bowl volume: rides the ringing voice live (smoothed
             // inside the voice, like the pan gains).
@@ -1649,19 +1605,16 @@ void ApplyControls()
                             now);
             ShowOverlay(Overlay::BowlVolume, now); // also at the end stops
         }
-        else if(enc1_page_ == kEnc1PageCharacter && !shift)
+        else if(enc1_page_ == kEnc1PagePan)
         {
-            // Resonance character (profile) of the selected bowl: two
-            // detent ticks per step; the bar shows on any turn so the
-            // section is visible while arming. Applies at the next
-            // strike/selection, like tuning.
-            const int step = SectionStep(profile_sel_acc, enc1_inc);
-            SetProfileTicks(cur_mode, key,
-                            params.profile_ticks[cur_mode][key].load(
+            // Pan the selected bowl one tick per detent; matching voices
+            // are re-panned live while other modes keep their own pan.
+            SetPanTicks(cur_mode, key,
+                        params.pan_ticks[cur_mode][key].load(
                                 std::memory_order_relaxed)
-                                + step,
-                            now);
-            ShowOverlay(Overlay::Character, now);
+                                + enc1_inc,
+                        now);
+            ShowOverlay(Overlay::Pan, now); // also shows at the end stops
         }
         else if(enc1_page_ == kEnc1PageTune)
         {
@@ -1714,19 +1667,34 @@ void ApplyControls()
         BumpTicks(params.strike_ticks, enc4_inc, Overlay::Strike, now);
     }
 
-    // Physical encoder 3: decay of the SELECTED bowl (per-(mode,key));
-    // rides the ringing voice holding it live.
-    const int decay_inc = hw.EncoderIncrement(2);
-    if(decay_inc != 0)
+    // Physical encoder 3: page 1 adjusts selected-bowl decay; page 2
+    // selects its resonance character.
+    const int enc3_inc = hw.EncoderIncrement(2);
+    if(enc3_inc != 0)
     {
         const int cur_mode = ModeIdx(play_modes.Mode());
         const int key      = last_key_[cur_mode];
-        SetDecayTicks(cur_mode, key,
-                      params.decay_ticks[cur_mode][key].load(
-                          std::memory_order_relaxed)
-                          + decay_inc,
-                      now);
-        ShowOverlay(Overlay::Decay, now); // also at the end stops
+        if(enc3_page_ == kEnc3PageDecay)
+        {
+            SetDecayTicks(cur_mode, key,
+                          params.decay_ticks[cur_mode][key].load(
+                              std::memory_order_relaxed)
+                              + enc3_inc,
+                          now);
+            ShowOverlay(Overlay::Decay, now); // also at the end stops
+        }
+        else if(!shift)
+        {
+            // Two detent ticks per profile step; applies at the next
+            // strike/selection, like tuning.
+            const int step = SectionStep(profile_sel_acc, enc3_inc);
+            SetProfileTicks(cur_mode, key,
+                            params.profile_ticks[cur_mode][key].load(
+                                std::memory_order_relaxed)
+                                + step,
+                            now);
+            ShowOverlay(Overlay::Character, now);
+        }
     }
 
     if(enc4_page_ == kEnc4PageShimmer && enc4_inc != 0)
@@ -1735,26 +1703,11 @@ void ApplyControls()
         ApplyShimmerToVoices();
     }
 
-    // Volume encoder pages: master; combined delay mix/feedback with
-    // SHIFT+turn for time; then reverb mix.
+    // Volume encoder pages: master, then reverb mix.
     const int volume_inc = hw.EncoderIncrement(5);
     if(volume_inc != 0)
     {
-        if(vol_page_ == kVolPageDelay)
-        {
-            if(shift)
-            {
-                BumpTicks(params.delay_time_ticks, volume_inc,
-                          Overlay::DelayTime, now);
-            }
-            else
-            {
-                BumpTicks(params.delay_mix_ticks, volume_inc,
-                          Overlay::DelayMix, now);
-            }
-            ApplyDelayTargets();
-        }
-        else if(vol_page_ == kVolPageReverb)
+        if(vol_page_ == kVolPageReverb)
         {
             if(!shift)
                 BumpTicks(params.reverb_mix_ticks, volume_inc,
@@ -2030,21 +1983,19 @@ void AudioCallback(AudioHandle::InputBuffer  in,
         // lowpassed dark right after a strike (the mallet contact burst
         // barely excites a real room) and re-opens into the pure ring;
         // the dry path keeps the full spectrum.
-        float delay_l, delay_r;
-        bbd_delay.Process(mix_l[i], mix_r[i], delay_l, delay_r);
         send_dark_ -= kSendDarkRelease * send_dark_;
         const float send_coef
             = kSendLpOpen + (kSendLpDark - kSendLpOpen) * send_dark_;
-        daisysp::fonepole(send_lp_l_, delay_l, send_coef);
-        daisysp::fonepole(send_lp_r_, delay_r, send_coef);
+        daisysp::fonepole(send_lp_l_, mix_l[i], send_coef);
+        daisysp::fonepole(send_lp_r_, mix_r[i], send_coef);
         daisysp::fonepole(send_lp2_l_, send_lp_l_, send_coef);
         daisysp::fonepole(send_lp2_r_, send_lp_r_, send_coef);
         float wet_l = 0.0f, wet_r = 0.0f;
         if(!rev_reset)
             reverb.Process(send_lp2_l_, send_lp2_r_, &wet_l, &wet_r);
         const float dry   = 1.0f - mix_smooth;
-        bus_l[i] = (delay_l * dry + wet_l * mix_smooth) * panic_gain_;
-        bus_r[i] = (delay_r * dry + wet_r * mix_smooth) * panic_gain_;
+        bus_l[i] = (mix_l[i] * dry + wet_l * mix_smooth) * panic_gain_;
+        bus_r[i] = (mix_r[i] * dry + wet_r * mix_smooth) * panic_gain_;
     }
 
     // SD record tap (SdRecorder applies the -6 dB record level):
@@ -2174,8 +2125,8 @@ void DrawOverlayBar(uint32_t now)
         = static_cast<int32_t>(
               params.overlay_until.load(std::memory_order_relaxed) - now)
           > 0;
-    // Encoder-1 overlays edit the current mode's bank for the selected
-    // (last played) key of that mode.
+    // Per-bowl overlays use the current mode's selected (last played)
+    // key.
     const int cur_mode = ModeIdx(play_modes.Mode());
     const int edit_key = last_key_[cur_mode];
     if(overlay_active)
@@ -2231,14 +2182,6 @@ void DrawOverlayBar(uint32_t now)
                 // Pale ice bar for the temple-room reverb mix.
                 DrawBar(params.reverb_mix_ticks.load(std::memory_order_relaxed),
                         24, 32, 48);
-                break;
-                case Overlay::DelayMix:
-                DrawBar(params.delay_mix_ticks.load(std::memory_order_relaxed),
-                    44, 38, 0);
-                break;
-                case Overlay::DelayTime:
-                DrawBar(params.delay_time_ticks.load(std::memory_order_relaxed),
-                    44, 38, 0);
                 break;
             case Overlay::BowlVolume:
                 // Green bar: per-bowl volume of the selected bowl.
@@ -2610,10 +2553,10 @@ void RenderLeds()
                            static_cast<uint8_t>(48.0f * (1.0f - g_cpu_peak)),
                            0);
 #endif
-    // The encoder-1 LED follows the page: green = bowl volume,
-    // orange = resonance character, violet = direct-Hz frequency.
-    if(enc1_page_ == kEnc1PageCharacter)
-        chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 20, 9, 0);
+    // Encoder-1 LED: green = bowl volume, cyan = pan,
+    // violet = direct-Hz frequency.
+    if(enc1_page_ == kEnc1PagePan)
+        chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 0, 20, 20);
     else if(enc1_page_ == kEnc1PageTune)
         chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 14, 0, 20);
     else
@@ -2623,7 +2566,11 @@ void RenderLeds()
         enc2_page_ == kEnc2PageBeat ? 48 : 48,
         enc2_page_ == kEnc2PageBeat ? 0 : 20,
         enc2_page_ == kEnc2PageBeat ? 0 : 36);
-    chompi_leds::SetPthLed(chompi_leds::kPthEncoder3, 0, 8, 20);  // decay
+    // Encoder-3 LED: blue = decay, orange = resonance character.
+    if(enc3_page_ == kEnc3PageCharacter)
+        chompi_leds::SetPthLed(chompi_leds::kPthEncoder3, 20, 9, 0);
+    else
+        chompi_leds::SetPthLed(chompi_leds::kPthEncoder3, 0, 8, 20);
     if(enc4_page_ == kEnc4PageStrike)
         chompi_leds::SetPthLed(chompi_leds::kPthEncoder4, 20, 11, 0); // strike
     else
@@ -2699,11 +2646,8 @@ void RenderLeds()
                                play_modes.LatchEnabled() ? 40 : 0,
                                0);
     }
-    // The volume knob LED follows the page: master gradient, yellow
-    // delay, or pale-ice reverb.
-    if(vol_page_ == kVolPageDelay)
-        chompi_leds::SetPthLed(chompi_leds::kPthVolume, 24, 20, 0);
-    else if(vol_page_ == kVolPageReverb)
+    // The volume knob LED follows the page: master gradient or reverb.
+    if(vol_page_ == kVolPageReverb)
     {
         const float mnorm = TicksToNorm(
             params.reverb_mix_ticks.load(std::memory_order_relaxed));
@@ -2822,10 +2766,6 @@ chompi::BowlsPreset SnapshotParams()
         }
     p.reverb_mix = static_cast<uint8_t>(
         params.reverb_mix_ticks.load(std::memory_order_relaxed));
-    p.delay_mix = static_cast<uint8_t>(
-        params.delay_mix_ticks.load(std::memory_order_relaxed));
-    p.delay_time = static_cast<uint8_t>(
-        params.delay_time_ticks.load(std::memory_order_relaxed));
     return p;
 }
 
@@ -2864,8 +2804,6 @@ void ApplyPreset(const chompi::BowlsPreset& p, bool boot)
                                           std::memory_order_relaxed);
         }
     params.reverb_mix_ticks.store(p.reverb_mix, std::memory_order_relaxed);
-    params.delay_mix_ticks.store(p.delay_mix, std::memory_order_relaxed);
-    params.delay_time_ticks.store(p.delay_time, std::memory_order_relaxed);
     for(int v = 0; v < kVoiceCount; ++v)
     {
         const int key = voices[v].Key();
@@ -2884,7 +2822,6 @@ void ApplyPreset(const chompi::BowlsPreset& p, bool boot)
             params.bowl_vol_ticks[mode][key].load(
                 std::memory_order_relaxed)));
     }
-    ApplyDelayTargets();
     ApplyShimmerToVoices();
     params.overlay_until.store(0, std::memory_order_relaxed);
     SyncPadGates();
@@ -3082,8 +3019,6 @@ int main()
 #elif defined(CPU_METER)
     hw.seed.StartLog(false);
 #endif
-    bbd_delay.Init(kSampleRate, delay_buffer_l, delay_buffer_r);
-    ApplyDelayTargets();
     chompi_leds::Init();
     chompi_leds::ClearAll();
 

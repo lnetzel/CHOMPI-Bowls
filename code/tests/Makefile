@@ -56,7 +56,7 @@ midi-transfer-test: preset_transfer_test.exe
 preset_transfer_test.exe: preset_transfer_test.cpp ../src/PresetTransferProtocol.h
 	$(CXX) $(CXXFLAGS) -o $@ preset_transfer_test.cpp
 
-midi_test.exe: midi_test.cpp ../src/MidiCcMap.h ../src/MidiHandler.h ../src/play_modes.h ../src/bowl_scale.h ../src/control_mappings.h ../src/delay_parameters.h ../src/midi_clock.h
+midi_test.exe: midi_test.cpp ../src/MidiCcMap.h ../src/MidiHandler.h ../src/play_modes.h ../src/bowl_scale.h ../src/control_mappings.h ../src/midi_clock.h
 	$(CXX) $(CXXFLAGS) -o $@ midi_test.cpp
 
 # SD record/playback pure helpers: stereo ring, PCM/WAV format, and take order.
@@ -65,13 +65,6 @@ sd-test: sd_audio_test.exe
 
 sd_audio_test.exe: sd_audio_test.cpp ../src/sd_audio.h
 	$(CXX) $(CXXFLAGS) -o $@ sd_audio_test.cpp
-
-# Stereo BBD delay DSP port: native timing, stereo, bypass, and bounds checks.
-delay-test: stereo_bbd_delay_test.exe
-	./stereo_bbd_delay_test.exe
-
-stereo_bbd_delay_test.exe: stereo_bbd_delay_test.cpp ../src/StereoBbdDelay.h ../src/delay_parameters.h
-	$(CXX) $(CXXFLAGS) -o $@ stereo_bbd_delay_test.cpp
 
 audio_routing_test.exe: audio_routing_test.cpp ../src/audio_routing.h ../src/bowl_scale.h
 	$(CXX) $(CXXFLAGS) -o $@ audio_routing_test.cpp
@@ -97,6 +90,6 @@ baseline_gen.exe: baseline_gen.cpp .baseline/bowl_voice.h .baseline/bowl_profile
 	$(CXX) $(CXXFLAGS) -o $@ baseline_gen.cpp
 
 clean:
-	rm -f render_test.exe baseline_gen.exe strike_analyze.exe strike_test.exe play_modes_test.exe pad_test.exe preset_test.exe audio_routing_test.exe sd_audio_test.exe stereo_bbd_delay_test.exe midi_test.exe preset_transfer_test.exe core_json_host.o
+	rm -f render_test.exe baseline_gen.exe strike_analyze.exe strike_test.exe play_modes_test.exe pad_test.exe preset_test.exe audio_routing_test.exe sd_audio_test.exe midi_test.exe preset_transfer_test.exe core_json_host.o
 
-.PHONY: test cal analyze baseline modes-test strike-test routing-test sd-test delay-test midi-test midi-transfer-test clean
+.PHONY: test cal analyze baseline modes-test strike-test routing-test sd-test midi-test midi-transfer-test clean

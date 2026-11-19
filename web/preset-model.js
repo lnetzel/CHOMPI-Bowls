@@ -12,8 +12,6 @@ const GLOBAL_RANGES = {
   strike: [0, 32],
   shimmer: [0, 32],
   reverb_mix: [0, 32],
-  delay_mix: [0, 32],
-  delay_time: [0, 32],
 };
 
 const BANK_RANGES = {
@@ -51,8 +49,6 @@ export function createFactoryPreset() {
     strike: 32,
     shimmer: 0,
     reverb_mix: 0,
-    delay_mix: 0,
-    delay_time: 15,
     ...banks,
     pitch_hz: Object.fromEntries(MODES.map((mode) => [mode, [...FACTORY_PITCHES]])),
   };

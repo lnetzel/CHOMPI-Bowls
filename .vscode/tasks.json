@@ -32,7 +32,7 @@
 		{
 			"label": "MIDI OUT host regression suite",
 			"type": "shell",
-			"command": "C:/msys64/usr/bin/bash.exe -lc 'export PATH=\"/c/msys64/ucrt64/bin:$PATH\"; cd /c/Dev/CHOMPI-BOWLS/code/tests && make midi-test modes-test strike-test routing-test sd-test delay-test test'",
+			"command": "C:/msys64/usr/bin/bash.exe -lc 'export PATH=\"/c/msys64/ucrt64/bin:$PATH\"; cd /c/Dev/CHOMPI-BOWLS/code/tests && make midi-test modes-test strike-test routing-test sd-test test'",
 			"isBackground": false,
 			"problemMatcher": [
 				"$gcc"

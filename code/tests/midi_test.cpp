@@ -20,7 +20,6 @@
 #include "MidiCcMap.h"
 #include "MidiHandler.h"
 #include "control_mappings.h"
-#include "delay_parameters.h"
 #include "midi_clock.h"
 #include "play_modes.h"
 
@@ -60,10 +59,6 @@ void TestMidiClock()
     tracker.Update(50, 48 * 21 + bowls::kMidiClockTimeoutMs + 23);
     ok = ok && tracker.HasTempo(48 * 21 + bowls::kMidiClockTimeoutMs + 23);
 
-    using chompi::delay_parameters::DelayClockDividerTicks;
-    ok = ok && DelayClockDividerTicks(0) == 2
-         && DelayClockDividerTicks(15) == 24
-         && DelayClockDividerTicks(32) == 48;
     const int divider = bowls::StrikeArpeggioClockDividerTicks(30);
     ok = ok && divider == 16
          && bowls::AdjustStrikeArpeggioClockDivider(divider, 1) == 15

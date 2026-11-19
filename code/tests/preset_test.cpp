@@ -36,8 +36,6 @@ chompi::BowlsPreset PatternPreset(int mode)
     p.strike = 31;
     p.shimmer = 29;
     p.reverb_mix = 21;
-    p.delay_mix = 27;
-    p.delay_time = 5;
     std::strcpy(p.name, "Preset \"One\" \\ copy");
     std::strcpy(p.comment, "line one\nline two \xc3\xa9 \xf0\x9f\x8e\xb5");
     for(int i = 0; i < chompi::BowlsPreset::kBankSlots; ++i)
@@ -63,7 +61,6 @@ bool SameTicks(const chompi::BowlsPreset& a, const chompi::BowlsPreset& b)
 {
     return a.mode == b.mode && a.volume == b.volume && a.strike == b.strike
            && a.shimmer == b.shimmer && a.reverb_mix == b.reverb_mix
-           && a.delay_mix == b.delay_mix && a.delay_time == b.delay_time
            && std::strcmp(a.name, b.name) == 0
            && std::strcmp(a.comment, b.comment) == 0
            && std::memcmp(a.pan, b.pan, sizeof(a.pan)) == 0
@@ -250,7 +247,6 @@ int main()
         bool ok = parsed;
         if(!parsed
            || preset.mode != chompi::BowlsPreset::kModeSplit
-           || preset.delay_time != chompi::BowlsPreset::kDefaultDelayTime
            || preset.pitch_hz.strikes[0] != 99.0f
            || preset.pitch_hz.rimming[0] != 99.0f
            || preset.pitch_hz.split[0] != 99.0f
@@ -486,7 +482,6 @@ int main()
         for(int i = 0; i < bowls::kKeyCount; ++i)
             p.pitch_hz.split[i] = 10000.0f;
         p.volume = p.strike = p.shimmer = p.reverb_mix = 255;
-        p.delay_mix = p.delay_time = 255;
         const size_t len = chompi::Serialize(p, buf, sizeof(buf));
         char small[512];
         Check(len > 512 && len + 1 <= kStorageJsonSize,
@@ -713,9 +708,9 @@ int main()
         p.SetDefaults();
         const size_t len = chompi::Serialize(p, buf, sizeof(buf));
         Check(p.mode == chompi::BowlsPreset::kModeSplit
-                  && p.delay_mix == 0
-                  && p.delay_time == chompi::BowlsPreset::kDefaultDelayTime
                   && len > 0 && std::strstr(buf, "\"pitch_hz\"") != nullptr
+                  && std::strstr(buf, "\"delay_mix\"") == nullptr
+                  && std::strstr(buf, "\"delay_time\"") == nullptr
                   && std::strstr(buf, "latch") == nullptr,
               "factory defaults include pitches without runtime state", "");
     }

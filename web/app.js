@@ -598,6 +598,10 @@ async function importPreset(file) {
   try {
     if (state.dirty && !window.confirm("Replace your unsaved draft with this file?")) return;
     const parsed = JSON.parse(await file.text());
+    if (parsed && typeof parsed === "object") {
+      delete parsed.delay_mix;
+      delete parsed.delay_time;
+    }
     state.preset = validatePreset(parsed);
     state.mode = ["strikes", "rimming", "split"][state.preset.mode];
     state.key = 0;
