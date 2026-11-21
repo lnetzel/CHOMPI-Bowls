@@ -400,10 +400,51 @@ void TestStrikeArpeggioModes()
               && IntArrayEq(order, count, middle_expected, 9),
           "M9n middle pair repeats with ascending third notes", "");
 
+    const int up_expected[] = {2, 5, 9, 14, 20};
+    sm.CycleStrikeArpeggioMode();
+    count = sm.GetStrikeArpeggioOrder(order);
+    Check(sm.GetStrikeArpeggioMode() == bowls::StrikeArpeggioMode::kUp
+              && IntArrayEq(order, count, up_expected, 5),
+          "M9o up arpeggio ascends", "");
+
+    const int down_expected[] = {20, 14, 9, 5, 2};
+    sm.CycleStrikeArpeggioMode();
+    count = sm.GetStrikeArpeggioOrder(order);
+    Check(sm.GetStrikeArpeggioMode() == bowls::StrikeArpeggioMode::kDown
+              && IntArrayEq(order, count, down_expected, 5),
+          "M9p down arpeggio descends", "");
+
+    const int up_down_expected[] = {2, 5, 9, 14, 20, 14, 9, 5};
+    sm.CycleStrikeArpeggioMode();
+    count = sm.GetStrikeArpeggioOrder(order);
+    Check(sm.GetStrikeArpeggioMode() == bowls::StrikeArpeggioMode::kUpDown
+              && IntArrayEq(order, count, up_down_expected, 8),
+          "M9q up/down arpeggio reverses without repeating endpoints", "");
+
+    sm.CycleStrikeArpeggioMode();
+    count = sm.GetStrikeArpeggioOrder(order);
+    bool random_valid = sm.GetStrikeArpeggioMode()
+                            == bowls::StrikeArpeggioMode::kRandom
+                        && IntArrayEq(order, count, latched, 5);
+    bool random_varies = false;
+    int first_random = -1;
+    for(int i = 0; i < 50; ++i)
+    {
+        const int key = sm.NextRandomStrikeArpeggioKey();
+        if(key < 0 || !sm.StrikeLatched(key))
+            random_valid = false;
+        if(first_random < 0)
+            first_random = key;
+        else if(key != first_random)
+            random_varies = true;
+    }
+    Check(random_valid && random_varies,
+          "M9r random arpeggio chooses latched keys", "");
+
     sm.CycleStrikeArpeggioMode();
     Check(sm.GetStrikeArpeggioMode()
                   == bowls::StrikeArpeggioMode::kDurationLoop,
-          "M9o Strike arpeggio modes cycle back to duration loop", "");
+          "M9s all Strike arpeggio modes cycle back to duration loop", "");
 
     PlayModes four;
     four.Init(PlayMode::kStrikes);
@@ -418,13 +459,13 @@ void TestStrikeArpeggioModes()
     const int four_middle_expected[] = {1, 2, 0, 1, 2, 3};
     count = four.GetStrikeArpeggioOrder(order);
     Check(IntArrayEq(order, count, four_middle_expected, 6),
-          "M9p four-note middle pattern matches example", "");
+          "M9t four-note middle pattern matches example", "");
 
     sm.SetMode(PlayMode::kRimming);
     sm.CycleStrikeArpeggioMode();
     Check(sm.GetStrikeArpeggioMode()
                   == bowls::StrikeArpeggioMode::kDurationLoop,
-          "M9q SHIFT+PLAY mode cycle is inert outside Strikes", "");
+          "M9u SHIFT+PLAY mode cycle is inert outside Strikes", "");
 }
 
 void TestIndependentLatches()

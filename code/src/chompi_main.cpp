@@ -812,7 +812,15 @@ void RetriggerLatchedStrikes()
         if(static_cast<int32_t>(now - next_strike_at) < 0)
             return;
 
-        const int key = keys[sequence_position];
+        const int key
+            = arpeggio_mode == bowls::StrikeArpeggioMode::kRandom
+                  ? play_modes.NextRandomStrikeArpeggioKey()
+                  : keys[sequence_position];
+        if(key < 0)
+        {
+            arpeggio_active = false;
+            return;
+        }
         const int velocity = play_modes.StrikeLatchVelocity(key);
         StrikeKey(PlayMode::kStrikes, key, velocity > 0 ? velocity : 127,
                   false, play_modes.StrikeLatchUsesMidiVelocity(key));
@@ -2730,6 +2738,21 @@ void RenderLeds()
             case bowls::StrikeArpeggioMode::kMiddlePair:
                 red = static_cast<uint8_t>(level / 2);
                 blue = level;
+                break;
+            case bowls::StrikeArpeggioMode::kUp:
+                green = level;
+                blue = level;
+                break;
+            case bowls::StrikeArpeggioMode::kDown:
+                red = level;
+                green = level;
+                break;
+            case bowls::StrikeArpeggioMode::kUpDown:
+                red = level;
+                blue = level;
+                break;
+            case bowls::StrikeArpeggioMode::kRandom:
+                red = green = blue = level;
                 break;
         }
         chompi_leds::SetPthLed(chompi_leds::kPthPlay, red, green, blue);

@@ -18,7 +18,13 @@ enum class StrikeArpeggioMode : uint8_t
     kBottomPair,
     kTopPair,
     kMiddlePair,
+    kUp,
+    kDown,
+    kUpDown,
+    kRandom,
 };
+constexpr int kStrikeArpeggioModeCount
+    = static_cast<int>(StrikeArpeggioMode::kRandom) + 1;
 constexpr int kStrikeArpeggioMaxSequenceLength = kKeyCount * 3;
 
 /** What the firmware must do in response to one input event. Pad
@@ -66,6 +72,7 @@ class PlayModes
         latch_enabled_        = false;
         strike_latch_enabled_ = false;
         strike_arpeggio_mode_ = StrikeArpeggioMode::kDurationLoop;
+        strike_arpeggio_random_state_ = 0xA341316Cu;
         rim_held_[0]   = -1;
         rim_held_[1]   = -1;
         rim_held_n_    = 0;
@@ -344,7 +351,8 @@ class PlayModes
             return;
         strike_arpeggio_mode_
             = static_cast<StrikeArpeggioMode>(
-                (static_cast<int>(strike_arpeggio_mode_) + 1) % 4);
+                (static_cast<int>(strike_arpeggio_mode_) + 1)
+                % kStrikeArpeggioModeCount);
     }
 
     StrikeArpeggioMode GetStrikeArpeggioMode() const
@@ -352,8 +360,8 @@ class PlayModes
         return strike_arpeggio_mode_;
     }
 
-    /** Build repeated three-note groups from the latched keys. Each
-     *  group plays the selected pair followed by one remaining note. */
+    /** Build a sequence from latched keys. Random mode returns its
+     *  candidates here; NextRandomStrikeArpeggioKey picks each note. */
     int GetStrikeArpeggioOrder(int* order) const
     {
         int keys[kKeyCount];
@@ -363,11 +371,28 @@ class PlayModes
                 keys[count++] = key;
         if(count == 0)
             return 0;
-        if(strike_arpeggio_mode_ == StrikeArpeggioMode::kDurationLoop)
+        if(strike_arpeggio_mode_ == StrikeArpeggioMode::kDurationLoop
+           || strike_arpeggio_mode_ == StrikeArpeggioMode::kUp
+           || strike_arpeggio_mode_ == StrikeArpeggioMode::kRandom)
         {
             for(int i = 0; i < count; ++i)
                 order[i] = keys[i];
             return count;
+        }
+        if(strike_arpeggio_mode_ == StrikeArpeggioMode::kDown)
+        {
+            for(int i = 0; i < count; ++i)
+                order[i] = keys[count - 1 - i];
+            return count;
+        }
+        if(strike_arpeggio_mode_ == StrikeArpeggioMode::kUpDown)
+        {
+            int written = 0;
+            for(int i = 0; i < count; ++i)
+                order[written++] = keys[i];
+            for(int i = count - 2; i > 0; --i)
+                order[written++] = keys[i];
+            return written;
         }
 
         int first = 0;
@@ -393,6 +418,10 @@ class PlayModes
                 second = count > 1 ? first + 1 : -1;
                 break;
             case StrikeArpeggioMode::kDurationLoop:
+            case StrikeArpeggioMode::kUp:
+            case StrikeArpeggioMode::kDown:
+            case StrikeArpeggioMode::kUpDown:
+            case StrikeArpeggioMode::kRandom:
                 break;
         }
 
@@ -427,6 +456,27 @@ class PlayModes
                 order[written++] = remaining[i];
             }
         return written;
+    }
+
+    int NextRandomStrikeArpeggioKey()
+    {
+        if(mode_ != PlayMode::kStrikes
+           || strike_arpeggio_mode_ != StrikeArpeggioMode::kRandom)
+            return -1;
+        int keys[kKeyCount];
+        int count = 0;
+        for(int key = 0; key < kKeyCount; ++key)
+            if(StrikeLatched(key))
+                keys[count++] = key;
+        if(count == 0)
+            return -1;
+
+        uint32_t random = strike_arpeggio_random_state_;
+        random ^= random << 13;
+        random ^= random >> 17;
+        random ^= random << 5;
+        strike_arpeggio_random_state_ = random;
+        return keys[random % static_cast<uint32_t>(count)];
     }
 
     // -- MIDI events (no shortcut/routing consumption, never SHIFT) -----
@@ -911,6 +961,7 @@ class PlayModes
     bool    strike_latch_enabled_ = false;
     StrikeArpeggioMode strike_arpeggio_mode_
         = StrikeArpeggioMode::kDurationLoop;
+    uint32_t strike_arpeggio_random_state_ = 0xA341316Cu;
     bool    pad_on_[kKeyCount];
     bool    stolen_pad_[kKeyCount]; // steal suppresses the gate
     bool    stolen_strike_[kKeyCount];

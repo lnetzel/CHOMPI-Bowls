@@ -32,7 +32,8 @@ selecting presets.
 ## Play modes
 
 - **Strikes:** Every key strikes a different bowl. PLAY latches notes;
-  SHIFT+PLAY selects the latch's retrigger pattern.
+  SHIFT+PLAY cycles the latch's retrigger pattern: Duration Loop,
+  Bottom Pair, Top Pair, Middle Pair, Up, Down, Up & Down, and Random.
 - **Rimming:** Every key opens a sustained pad. The wheel adds
   direction-dependent rimming. LOOP latches notes.
 - **Split:** C3-B3 select 12 bowls for wheel rimming; C4-B4 strike those
