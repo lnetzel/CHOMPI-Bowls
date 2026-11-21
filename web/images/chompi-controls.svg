@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 510" fill="none" stroke="#000" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
+  <title>CHOMPI input controls overview</title>
+
+  <!-- Device body -->
+  <rect id="body" x="40" y="160" width="920" height="300" rx="24"/>
+
+  <!-- Handle -->
+  <path id="handle-outer" d="M 335 160 V 105 Q 335 55 385 55 H 650 Q 700 55 700 105 V 160"/>
+  <path id="handle-inner" d="M 390 160 V 125 Q 390 85 430 85 H 600 Q 640 85 640 125 V 160"/>
+
+  <!-- UP/DOWN switch + SHIFT key -->
+  <rect id="updown-switch" x="72" y="223" width="22" height="60" rx="11"/>
+  <rect id="shift-key" x="112" y="234" width="38" height="38" rx="6"/>
+
+  <!-- Encoders -->
+  <circle id="encoder-1" cx="245" cy="253" r="28"/>
+  <circle id="encoder-2" cx="340" cy="253" r="28"/>
+  <circle id="encoder-3" cx="435" cy="253" r="28"/>
+  <circle id="encoder-4" cx="530" cy="253" r="28"/>
+
+  <!-- Transport wheel -->
+  <circle id="transport-wheel" cx="642" cy="253" r="55"/>
+
+  <!-- PLAY/PAUSE + LOOP buttons -->
+  <rect id="play-pause" x="707" y="231" width="44" height="44" rx="8"/>
+  <rect id="loop" x="761" y="231" width="44" height="44" rx="8"/>
+
+  <!-- Volume encoder -->
+  <circle id="volume" cx="900" cy="253" r="28"/>
+
+  <!-- Upper key row (2-3-2-3) -->
+  <g id="keys-upper">
+    <rect x="105.3" y="312" width="44" height="44" rx="8"/>
+    <rect x="162.0" y="312" width="44" height="44" rx="8"/>
+    <rect x="275.3" y="312" width="44" height="44" rx="8"/>
+    <rect x="332.0" y="312" width="44" height="44" rx="8"/>
+    <rect x="388.7" y="312" width="44" height="44" rx="8"/>
+    <rect x="502.0" y="312" width="44" height="44" rx="8"/>
+    <rect x="558.7" y="312" width="44" height="44" rx="8"/>
+    <rect x="672.0" y="312" width="44" height="44" rx="8"/>
+    <rect x="728.7" y="312" width="44" height="44" rx="8"/>
+    <rect x="785.3" y="312" width="44" height="44" rx="8"/>
+  </g>
+
+  <!-- Lower key row (15 keys) -->
+  <g id="keys-lower">
+    <rect x="75.0" y="378" width="48" height="50" rx="8"/>
+    <rect x="131.7" y="378" width="48" height="50" rx="8"/>
+    <rect x="188.3" y="378" width="48" height="50" rx="8"/>
+    <rect x="245.0" y="378" width="48" height="50" rx="8"/>
+    <rect x="301.7" y="378" width="48" height="50" rx="8"/>
+    <rect x="358.3" y="378" width="48" height="50" rx="8"/>
+    <rect x="415.0" y="378" width="48" height="50" rx="8"/>
+    <rect x="471.7" y="378" width="48" height="50" rx="8"/>
+    <rect x="528.3" y="378" width="48" height="50" rx="8"/>
+    <rect x="585.0" y="378" width="48" height="50" rx="8"/>
+    <rect x="641.7" y="378" width="48" height="50" rx="8"/>
+    <rect x="698.3" y="378" width="48" height="50" rx="8"/>
+    <rect x="755.0" y="378" width="48" height="50" rx="8"/>
+    <rect x="811.7" y="378" width="48" height="50" rx="8"/>
+    <rect x="868.3" y="378" width="48" height="50" rx="8"/>
+  </g>
+</svg>
