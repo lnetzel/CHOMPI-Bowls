@@ -1,0 +1,159 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="30 -895 1250 1615" fill="none" stroke="#000" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
+  <title>CHOMPI-BOWLS controls overview</title>
+
+  <!-- ===== Device ===== -->
+  <rect id="body" x="40" y="160" width="920" height="300" rx="24"/>
+  <path id="handle-outer" d="M 335 160 V 105 Q 335 55 385 55 H 650 Q 700 55 700 105 V 160"/>
+  <path id="handle-inner" d="M 390 160 V 125 Q 390 85 430 85 H 600 Q 640 85 640 125 V 160"/>
+  <rect id="updown-switch" x="72" y="223" width="22" height="60" rx="11"/>
+  <rect id="shift-key" x="112" y="234" width="38" height="38" rx="6"/>
+  <circle id="encoder-1" cx="245" cy="253" r="28"/>
+  <circle id="encoder-2" cx="340" cy="253" r="28"/>
+  <circle id="encoder-3" cx="435" cy="253" r="28"/>
+  <circle id="encoder-4" cx="530" cy="253" r="28"/>
+  <circle id="transport-wheel" cx="642" cy="253" r="55"/>
+  <rect id="play-pause" x="707" y="231" width="44" height="44" rx="8"/>
+  <rect id="loop" x="761" y="231" width="44" height="44" rx="8"/>
+  <circle id="volume" cx="900" cy="253" r="28"/>
+  <g id="keys-upper">
+    <rect x="105.3" y="312" width="44" height="44" rx="8"/>
+    <rect x="162.0" y="312" width="44" height="44" rx="8"/>
+    <rect x="275.3" y="312" width="44" height="44" rx="8"/>
+    <rect x="332.0" y="312" width="44" height="44" rx="8"/>
+    <rect x="388.7" y="312" width="44" height="44" rx="8"/>
+    <rect x="502.0" y="312" width="44" height="44" rx="8"/>
+    <rect x="558.7" y="312" width="44" height="44" rx="8"/>
+    <rect x="672.0" y="312" width="44" height="44" rx="8"/>
+    <rect x="728.7" y="312" width="44" height="44" rx="8"/>
+    <rect x="785.3" y="312" width="44" height="44" rx="8"/>
+  </g>
+  <g id="keys-lower">
+    <rect x="75.0" y="378" width="48" height="50" rx="8"/>
+    <rect x="131.7" y="378" width="48" height="50" rx="8"/>
+    <rect x="188.3" y="378" width="48" height="50" rx="8"/>
+    <rect x="245.0" y="378" width="48" height="50" rx="8"/>
+    <rect x="301.7" y="378" width="48" height="50" rx="8"/>
+    <rect x="358.3" y="378" width="48" height="50" rx="8"/>
+    <rect x="415.0" y="378" width="48" height="50" rx="8"/>
+    <rect x="471.7" y="378" width="48" height="50" rx="8"/>
+    <rect x="528.3" y="378" width="48" height="50" rx="8"/>
+    <rect x="585.0" y="378" width="48" height="50" rx="8"/>
+    <rect x="641.7" y="378" width="48" height="50" rx="8"/>
+    <rect x="698.3" y="378" width="48" height="50" rx="8"/>
+    <rect x="755.0" y="378" width="48" height="50" rx="8"/>
+    <rect x="811.7" y="378" width="48" height="50" rx="8"/>
+    <rect x="868.3" y="378" width="48" height="50" rx="8"/>
+  </g>
+
+  <!-- ===== Leader lines ===== -->
+  <g stroke-width="1.75">
+    <line x1="83"  y1="221" x2="83"  y2="-818"/>
+    <line x1="131" y1="232" x2="131" y2="-756"/>
+    <line x1="245" y1="225" x2="245" y2="-646"/>
+    <line x1="340" y1="225" x2="340" y2="-560"/>
+    <line x1="435" y1="225" x2="435" y2="-474"/>
+    <line x1="530" y1="225" x2="530" y2="-388"/>
+    <line x1="642" y1="198" x2="642" y2="-302"/>
+    <line x1="729" y1="229" x2="729" y2="-192"/>
+    <line x1="783" y1="229" x2="783" y2="-106"/>
+    <line x1="900" y1="225" x2="900" y2="-20"/>
+    <line x1="127" y1="356" x2="127" y2="505"/>
+    <line x1="99"  y1="428" x2="99"  y2="615"/>
+  </g>
+  <g fill="#000" stroke="none">
+    <circle cx="83"  cy="221" r="4.5"/>
+    <circle cx="131" cy="232" r="4.5"/>
+    <circle cx="245" cy="225" r="4.5"/>
+    <circle cx="340" cy="225" r="4.5"/>
+    <circle cx="435" cy="225" r="4.5"/>
+    <circle cx="530" cy="225" r="4.5"/>
+    <circle cx="642" cy="198" r="4.5"/>
+    <circle cx="729" cy="229" r="4.5"/>
+    <circle cx="783" cy="229" r="4.5"/>
+    <circle cx="900" cy="225" r="4.5"/>
+    <circle cx="127" cy="356" r="4.5"/>
+    <circle cx="99"  cy="428" r="4.5"/>
+  </g>
+
+  <!-- ===== Callout text ===== -->
+  <g fill="#000" stroke="none" font-family="Arial, Helvetica, sans-serif" font-size="17">
+
+    <g id="heading">
+      <text x="1240" y="-830" text-anchor="end" font-size="40" font-weight="bold">CHOMPI-BOWLS</text>
+      <text x="1240" y="-796" text-anchor="end" font-size="22">Controls overview</text>
+    </g>
+
+    <g id="callout-updown">
+      <text x="95" y="-850" font-size="20" font-weight="bold">UP/DOWN SWITCH</text>
+      <text x="95" y="-826">Reserved (no function in BOWLS)</text>
+    </g>
+
+    <g id="callout-shift">
+      <text x="143" y="-788" font-size="20" font-weight="bold">SHIFT</text>
+      <text x="143" y="-764">Hold for key combos (see keyboard below), fine tuning, and reverb decay</text>
+    </g>
+
+    <g id="callout-encoder-1">
+      <text x="257" y="-726" font-size="20" font-weight="bold">ENCODER 1 <tspan font-weight="normal" font-style="italic" font-size="16">— press: next page</tspan></text>
+      <text x="257" y="-702">Page 1 — Selected bowl volume</text>
+      <text x="257" y="-678">Page 2 — Pan</text>
+      <text x="257" y="-654">Page 3 — Fundamental frequency (SHIFT: fine tune)</text>
+    </g>
+
+    <g id="callout-encoder-2">
+      <text x="352" y="-616" font-size="20" font-weight="bold">ENCODER 2 <tspan font-weight="normal" font-style="italic" font-size="16">— press: next page</tspan></text>
+      <text x="352" y="-592">Page 1 — Brightness</text>
+      <text x="352" y="-568">Page 2 — Rhythmic beating (red LED)</text>
+    </g>
+
+    <g id="callout-encoder-3">
+      <text x="447" y="-530" font-size="20" font-weight="bold">ENCODER 3 <tspan font-weight="normal" font-style="italic" font-size="16">— press: next page</tspan></text>
+      <text x="447" y="-506">Page 1 — Decay</text>
+      <text x="447" y="-482">Page 2 — Resonance profile</text>
+    </g>
+
+    <g id="callout-encoder-4">
+      <text x="542" y="-444" font-size="20" font-weight="bold">ENCODER 4 <tspan font-weight="normal" font-style="italic" font-size="16">— press: next page</tspan></text>
+      <text x="542" y="-420">Page 1 — Strike hardness</text>
+      <text x="542" y="-396">Page 2 — Shimmer (paired mode)</text>
+    </g>
+
+    <g id="callout-wheel">
+      <text x="654" y="-358" font-size="20" font-weight="bold">TRANSPORT WHEEL</text>
+      <text x="654" y="-334">Rims the active wheel set</text>
+      <text x="654" y="-310">CW: friction texture &#183; CCW: clean sustained tone</text>
+    </g>
+
+    <g id="callout-play">
+      <text x="741" y="-272" font-size="20" font-weight="bold">PLAY</text>
+      <text x="741" y="-248">Strikes: toggle strike latch</text>
+      <text x="741" y="-224">SHIFT+PLAY: cycle latch pattern</text>
+      <text x="741" y="-200">Hold 2 s: enter/exit SD playback</text>
+    </g>
+
+    <g id="callout-loop">
+      <text x="795" y="-162" font-size="20" font-weight="bold">LOOP</text>
+      <text x="795" y="-138">Toggles the Rimming note latch</text>
+      <text x="795" y="-114">Hold with PLAY: arm/stop recording</text>
+    </g>
+
+    <g id="callout-volume">
+      <text x="912" y="-76" font-size="20" font-weight="bold">VOLUME</text>
+      <text x="912" y="-52">Press: master volume / reverb mix</text>
+      <text x="912" y="-28">Reverb page, SHIFT+turn: decay 1&#8211;20 s</text>
+    </g>
+
+    <g id="callout-black-keys">
+      <text x="139" y="523" font-size="20" font-weight="bold">BLACK KEYS (10) <tspan font-weight="normal" font-style="italic" font-size="16">— playable in all modes</tspan></text>
+      <text x="139" y="547">SHIFT + F#3 / G#3 / A#3: play mode — Split / Strikes / Rimming</text>
+      <text x="139" y="571">SHIFT + C#4 / D#4: routing — Normal / Send FX</text>
+      <text x="139" y="595">SHIFT + F#4 / G#4 / A#4: erase / copy / save preset</text>
+    </g>
+
+    <g id="callout-white-keys">
+      <text x="111" y="633" font-size="20" font-weight="bold">WHITE KEYS (15) <tspan font-weight="normal" font-style="italic" font-size="16">— C3 to C5</tspan></text>
+      <text x="111" y="657">SHIFT + white key: load preset P01&#8211;P15</text>
+      <text x="111" y="681">While fine tuning, SHIFT + white key plays notes instead</text>
+    </g>
+  </g>
+</svg>
