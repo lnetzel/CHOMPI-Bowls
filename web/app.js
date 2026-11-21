@@ -18,6 +18,7 @@ const elements = {
   slotButtons: byId("slot-buttons"),
   slotStatus: byId("slot-status"),
   saveSlot: byId("save-slot"),
+  saveSlotBottom: byId("save-slot-bottom"),
   progress: byId("transfer-progress"),
   newPreset: byId("new-preset"),
   importPreset: byId("import-preset"),
@@ -155,8 +156,13 @@ function updateEditorAvailability() {
   for (const button of elements.slotButtons.querySelectorAll("[data-slot]")) {
     button.disabled = slotsUnavailable;
   }
-  elements.saveSlot.disabled = !state.connected || !state.slotsLoaded
+  const saveDisabled = !state.connected || !state.slotsLoaded
     || !state.preset || state.slots.busy || state.refreshingSlots || state.transferBusy;
+  const saveLabel = `Save to slot ${state.selectedSlot + 1}`;
+  for (const button of [elements.saveSlot, elements.saveSlotBottom]) {
+    button.disabled = saveDisabled;
+    button.textContent = saveLabel;
+  }
   elements.exportPreset.disabled = !state.preset;
 }
 
@@ -495,7 +501,8 @@ function renderKeybed() {
     const label = pitch === null ? "—" : pitch.toFixed(1);
     const accessibleLabel = pitch === null
       ? `${getKeyLabel(key)} · No preset loaded`
-      : `${getKeyLabel(key)} · ${label} Hz`;
+      : `${getKeyLabel(key)} · ${label} Hz${pitch === 0 ? " · unplayable" : ""}`;
+    button.classList.toggle("piano-key-unplayable", pitch === 0);
     button.querySelector(".piano-key-label").textContent = label;
     button.title = accessibleLabel;
     button.setAttribute("aria-label", accessibleLabel);
@@ -683,6 +690,7 @@ function applySelectedTuning() {
 elements.connectMidi.addEventListener("click", connectToMidi);
 elements.disconnectMidi.addEventListener("click", disconnectFromMidi);
 elements.saveSlot.addEventListener("click", saveToSelectedSlot);
+elements.saveSlotBottom.addEventListener("click", saveToSelectedSlot);
 elements.newPreset.addEventListener("click", createDraft);
 elements.exportPreset.addEventListener("click", exportPreset);
 elements.importPreset.addEventListener("change", (event) => {
