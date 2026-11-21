@@ -26,7 +26,9 @@ instrument's Volume encoder.
 Schema v1 includes a per-key beating value alongside brightness and
 decay; older schema versions are not supported.
 The name and comment fields are saved with the other preset values; names
-are limited to 48 UTF-8 bytes and comments to 128 UTF-8 bytes. The editor
+are limited to 48 UTF-8 bytes (up to 48 basic characters) and comments to
+128 UTF-8 bytes (up to 128 basic characters). Some Unicode characters use
+more space, so fewer may fit. The editor
 tries to connect automatically and requests MIDI/SysEx permission when
 needed. If the browser requires a user gesture, select
 **Connect** to grant permission. Use **Disconnect** to stop device

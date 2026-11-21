@@ -72,12 +72,12 @@ const BOWL_PROFILES = [
 ];
 
 const FIELD_CONFIG = [
-  { field: "bvol", label: "Bowl volume", encoder: 1, page: 1, kind: "range", min: 0, max: 32, step: 1 },
-  { field: "pan", label: "Pan", encoder: 1, page: 2, kind: "range", min: 0, max: 32, step: 1 },
+  { field: "bvol", label: "Bowl volume", encoder: 1, page: 1, kind: "range", min: 0, max: 32, step: 1, ledColor: "green" },
+  { field: "pan", label: "Pan", encoder: 1, page: 2, kind: "range", min: 0, max: 32, step: 1, ledColor: "cyan" },
   { field: "pitch_hz", label: "Pitch (Hz)", encoder: 1, page: 3, kind: "number", min: 0, max: 10000, step: 0.001 },
-  { field: "bright", label: "Brightness", encoder: 2, page: 1, kind: "range", min: 0, max: 32, step: 1 },
-  { field: "beat", label: "Beating", encoder: 2, page: 2, kind: "range", min: 0, max: 32, step: 1 },
-  { field: "decay", label: "Decay", encoder: 3, page: 1, kind: "range", min: 0, max: 32, step: 1 },
+  { field: "bright", label: "Brightness", encoder: 2, page: 1, kind: "range", min: 0, max: 32, step: 1, ledColor: "pink" },
+  { field: "beat", label: "Beating", encoder: 2, page: 2, kind: "range", min: 0, max: 32, step: 1, ledColor: "red" },
+  { field: "decay", label: "Decay", encoder: 3, page: 1, kind: "range", min: 0, max: 32, step: 1, ledColor: "blue" },
   { field: "profile", label: "Bowl profile", encoder: 3, page: 2, kind: "select", options: BOWL_PROFILES },
 ];
 
@@ -101,9 +101,12 @@ function getProfileDescription(value) {
 function renderFieldControl(config, dataAttribute, idPrefix, includeMixedOption) {
   const label = `Page ${config.page}: ${config.label}`;
   const descriptionId = `${idPrefix}-profile-description`;
+  const ledColorAttribute = config.ledColor
+    ? ` data-led-color="${config.ledColor}"`
+    : "";
   const control = config.kind === "select"
     ? `<select ${dataAttribute}="${config.field}" aria-label="${label}" aria-describedby="${descriptionId}">${config.options.map((option) => `<option value="${option.value}">${option.name}</option>`).join("")}${includeMixedOption ? '<option value="" disabled>Mixed values</option>' : ""}</select>`
-    : `<input ${dataAttribute}="${config.field}" type="${config.kind}" min="${config.min}" max="${config.max}" step="${config.step}">`;
+    : `<input ${dataAttribute}="${config.field}" type="${config.kind}" min="${config.min}" max="${config.max}" step="${config.step}"${ledColorAttribute}>`;
   const description = config.field === "profile"
     ? `<span id="${descriptionId}" class="profile-description" data-profile-description>${BOWL_PROFILES[0].description}</span>`
     : "";

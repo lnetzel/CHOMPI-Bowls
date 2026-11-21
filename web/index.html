@@ -62,7 +62,7 @@
               <textarea id="preset-comment" data-metadata="comment" rows="3" maxlength="128"></textarea>
             </label>
           </div>
-          <p class="muted">Name: up to 48 UTF-8 bytes. Comment: up to 128 UTF-8 bytes.</p>
+          <p class="muted">Name: 48 bytes max (up to 48 basic characters). Comment: 128 bytes max (up to 128 basic characters). Some Unicode characters use more space, so fewer may fit.</p>
         </fieldset>
         <progress id="transfer-progress" max="1" value="0" hidden></progress>
       </section>
@@ -99,15 +99,15 @@
                 <section class="encoder-control-row" aria-labelledby="volume-encoder-heading">
                   <h4 id="volume-encoder-heading">Volume encoder</h4>
                   <div class="encoder-control-fields" data-columns="2">
-                    <label>Page 2: Reverb mix <input data-global="reverb_mix" type="range" min="0" max="32" step="1"><output></output></label>
-                    <label>SHIFT + turn: Reverb decay (1–20 s) <input data-global="reverb_decay" type="range" min="0" max="32" step="1"><output></output></label>
+                    <label>Page 2: Reverb mix <input data-global="reverb_mix" type="range" min="0" max="32" step="1" data-led-color="reverb"><output></output></label>
+                    <label>Page 2: Reverb decay (shift)<input data-global="reverb_decay" type="range" min="0" max="32" step="1" data-led-color="reverb"><output></output></label>
                   </div>
                 </section>
                 <section class="encoder-control-row" aria-labelledby="encoder-4-heading">
                   <h4 id="encoder-4-heading">Encoder 4</h4>
                   <div class="encoder-control-fields" data-columns="2">
-                    <label>Page 1: Strike <input data-global="strike" type="range" min="0" max="32" step="1"><output></output></label>
-                    <label>Page 2: Shimmer <input data-global="shimmer" type="range" min="0" max="32" step="1"><output></output></label>
+                    <label>Page 1: Strike <input data-global="strike" type="range" min="0" max="32" step="1" data-led-color="amber"><output></output></label>
+                    <label>Page 2: Shimmer <input data-global="shimmer" type="range" min="0" max="32" step="1" data-led-color="violet"><output></output></label>
                   </div>
                 </section>
               </div>

@@ -11,6 +11,14 @@
   --accent: #e4ad68;
   --accent-dark: #4a2d16;
   --danger: #f0a08c;
+  --led-green: #00ff00;
+  --led-cyan: #00ffff;
+  --led-pink: #ff6bbf;
+  --led-red: #ff0000;
+  --led-blue: #0066ff;
+  --led-reverb: #aaccff;
+  --led-amber: #ff8c00;
+  --led-violet: #b500ff;
 }
 
 * { box-sizing: border-box; }
@@ -22,7 +30,7 @@ body {
   background-image:
     radial-gradient(ellipse at 85% 0%, #382a1e 0, transparent 38rem),
     linear-gradient(rgba(23, 19, 16, 0.91), rgba(23, 19, 16, 0.91)),
-    url("./images/Tibet%20_%20Original.jpg");
+    url("./images/lotus-mandala.png");
   background-position: center top, center, center top;
   background-size: auto, auto, 840px auto;
   background-repeat: no-repeat, no-repeat, repeat;
@@ -63,6 +71,14 @@ select, input[type="number"], input[type="text"], textarea {
 textarea { width: 100%; resize: vertical; }
 
 input[type="range"] { accent-color: var(--accent); }
+input[type="range"][data-led-color="green"] { accent-color: var(--led-green); }
+input[type="range"][data-led-color="cyan"] { accent-color: var(--led-cyan); }
+input[type="range"][data-led-color="pink"] { accent-color: var(--led-pink); }
+input[type="range"][data-led-color="red"] { accent-color: var(--led-red); }
+input[type="range"][data-led-color="blue"] { accent-color: var(--led-blue); }
+input[type="range"][data-led-color="reverb"] { accent-color: var(--led-reverb); }
+input[type="range"][data-led-color="amber"] { accent-color: var(--led-amber); }
+input[type="range"][data-led-color="violet"] { accent-color: var(--led-violet); }
 input[type="file"] { display: none; }
 
 .page-shell { width: min(1120px, calc(100% - 2rem)); margin: 0 auto; padding: 2rem 0 3rem; }
@@ -208,8 +224,8 @@ label { display: grid; gap: 0.4rem; color: #e4d8cb; font-size: 0.9rem; }
 }
 .metadata-fields {
   display: grid;
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
-  gap: 0.8rem 1rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.8rem;
 }
 .metadata-fields input, .metadata-fields textarea { width: 100%; }
 .slot-metadata p { margin: 0.65rem 0 0; }
@@ -312,7 +328,6 @@ footer a { color: var(--accent); }
   .port-grid, .editor-grid { grid-template-columns: 1fr; }
   .piano-key-label { writing-mode: vertical-rl; }
   .piano-black-key { font-size: 0.55rem; }
-  .metadata-fields { grid-template-columns: 1fr; }
   .key-navigation { justify-content: flex-start; }
   .slot-buttons { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.55rem; }
   footer { flex-direction: column; }
