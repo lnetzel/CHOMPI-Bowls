@@ -7,6 +7,7 @@
 #include "bowl_scale.h"
 #include "play_modes.h"
 #include "audio_routing.h"
+#include "encoder_pages.h"
 #include "bowl_voice.h"
 #include "control_mappings.h"
 #include "voice_allocator.h"
@@ -182,7 +183,7 @@ struct Params
     std::atomic<int>      decay_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
     std::atomic<int>      beat_ticks[bowls::kPlayModeCount][bowls::kKeyCount];
 
-    // Volume knob page 2: room reverb mix and SHIFT-decay.
+    // Master volume and room reverb controls.
     std::atomic<int>      reverb_mix_ticks{
         chompi::BowlsPreset::kDefaultReverbMix};
     std::atomic<int>      reverb_decay_ticks{
@@ -199,10 +200,9 @@ struct Params
 
 Params params;
 
-// Volume-knob pages (press cycles): master volume -> reverb.
-constexpr int kVolPageVolume = 0;
-constexpr int kVolPageReverb = 1;
-volatile int  vol_page_      = kVolPageVolume;
+// Volume-knob pages (press cycles): master volume -> reverb mix -> decay.
+volatile bowls::VolumeControlPage vol_page_
+    = bowls::VolumeControlPage::kMasterVolume;
 
 // Audio routing selection (audio_routing.h): Normal (boot default) or
 // the external send-FX loop. Session-only - never saved to the SD
@@ -281,11 +281,8 @@ bowls::Source MidiSrcFromTransport(int src)
                               : bowls::Source::kMidiUsb;
 }
 
-// Encoder-1 pages (press cycles): bowl volume -> pan -> tuning.
-constexpr int kEnc1PageVolume    = 0;
-constexpr int kEnc1PagePan       = 1;
-constexpr int kEnc1PageTune      = 2;
-volatile int  enc1_page_         = kEnc1PageVolume;
+// Encoder-1 pages (press cycles): bowl volume -> pan -> coarse/fine tuning.
+volatile bowls::Encoder1Page enc1_page_ = bowls::Encoder1Page::kBowlVolume;
 uint32_t      fine_tune_key_play_until_ = 0;
 
 // Encoder-2 pages: selected-bowl brightness -> selected-bowl beating.
@@ -421,7 +418,7 @@ void ShowOverlay(Overlay overlay, uint32_t now)
 void ShowTuneOverlay(bool fine, uint32_t now)
 {
     params.tune_fine.store(fine, std::memory_order_relaxed);
-    fine_tune_key_play_until_ = fine ? now + kOverlayMs : now;
+    fine_tune_key_play_until_ = now;
     if(!fine)
     {
         params.tune_fine_reference_mode.store(-1, std::memory_order_relaxed);
@@ -666,7 +663,7 @@ bool IsProtectedStrikeVoice(int voice)
 {
     const int key = voices[voice].Key();
     return voices[voice].VoiceMode() == ModeIdx(PlayMode::kStrikes)
-           && key >= 0 && play_modes.StrikeLatched(key);
+           && key >= 0 && play_modes.StrikeVoiceProtected(key);
 }
 
 int AllocVoice(PlayMode mode, int key)
@@ -1563,27 +1560,38 @@ void ApplyControls()
     // Keep the master-volume knob available while the transport owns the UI.
     if(hw.VolumeClicked())
     {
-        vol_page_ = (vol_page_ + 1) % 2;
-        ShowOverlay(vol_page_ == kVolPageVolume
-                        ? Overlay::Volume
-                        : Overlay::ReverbMix,
-                    now);
+        vol_page_ = bowls::NextVolumeControlPage(vol_page_);
+        switch(vol_page_)
+        {
+            case bowls::VolumeControlPage::kMasterVolume:
+                ShowOverlay(Overlay::Volume, now);
+                break;
+            case bowls::VolumeControlPage::kReverbMix:
+                ShowOverlay(Overlay::ReverbMix, now);
+                break;
+            case bowls::VolumeControlPage::kReverbDecay:
+                ShowOverlay(Overlay::ReverbDecay, now);
+                break;
+        }
     }
 
     const int volume_inc = hw.EncoderIncrement(5);
     if(volume_inc != 0)
     {
-        if(vol_page_ == kVolPageReverb)
+        switch(vol_page_)
         {
-            if(shift)
-                BumpTicks(params.reverb_decay_ticks, volume_inc,
-                          Overlay::ReverbDecay, now);
-            else
+            case bowls::VolumeControlPage::kMasterVolume:
+                BumpTicks(params.volume_ticks, volume_inc, Overlay::Volume, now);
+                break;
+            case bowls::VolumeControlPage::kReverbMix:
                 BumpTicks(params.reverb_mix_ticks, volume_inc,
                           Overlay::ReverbMix, now);
+                break;
+            case bowls::VolumeControlPage::kReverbDecay:
+                BumpTicks(params.reverb_decay_ticks, volume_inc,
+                          Overlay::ReverbDecay, now);
+                break;
         }
-        else if(!shift)
-            BumpTicks(params.volume_ticks, volume_inc, Overlay::Volume, now);
     }
 
     if(HandleTransport())
@@ -1594,18 +1602,28 @@ void ApplyControls()
         PresetShiftConfirm();
     prev_shift_held = shift;
 
-    // Physical encoder 1 press: cycle page 1 bowl volume -> page 2 pan
-    // -> page 3 direct-Hz frequency. The newly active page's bar shows
-    // as confirmation.
+    // Physical encoder 1 press cycles through bowl volume, pan, coarse
+    // tuning, and fine tuning. The new page's bar confirms the selection.
     if(hw.EncoderClicked(0))
     {
-        enc1_page_ = (enc1_page_ + 1) % 3;
-        if(enc1_page_ == kEnc1PageTune)
-            ShowTuneOverlay(false, now);
-        else
-            ShowOverlay(enc1_page_ == kEnc1PageVolume ? Overlay::BowlVolume
-                                                      : Overlay::Pan,
-                        now);
+        enc1_page_ = bowls::NextEncoder1Page(enc1_page_);
+        switch(enc1_page_)
+        {
+            case bowls::Encoder1Page::kBowlVolume:
+                fine_tune_key_play_until_ = now;
+                ShowOverlay(Overlay::BowlVolume, now);
+                break;
+            case bowls::Encoder1Page::kPan:
+                fine_tune_key_play_until_ = now;
+                ShowOverlay(Overlay::Pan, now);
+                break;
+            case bowls::Encoder1Page::kCoarseTune:
+                ShowTuneOverlay(false, now);
+                break;
+            case bowls::Encoder1Page::kFineTune:
+                ShowTuneOverlay(true, now);
+                break;
+        }
     }
 
     if(hw.EncoderClicked(1))
@@ -1628,14 +1646,13 @@ void ApplyControls()
                     now);
     }
 
-    // Physical encoder 1: page 1 edits the selected bowl's volume,
-    // page 2 its pan, and page 3 its direct-Hz frequency.
+    // Physical encoder 1: each page edits its own selected-bowl parameter.
     const int enc1_inc = hw.EncoderIncrement(0);
     if(enc1_inc != 0)
     {
         const int cur_mode = ModeIdx(play_modes.Mode());
         const int key      = last_key_[cur_mode];
-        if(enc1_page_ == kEnc1PageVolume && !shift)
+        if(enc1_page_ == bowls::Encoder1Page::kBowlVolume)
         {
             // Per-bowl volume: rides the ringing voice live (smoothed
             // inside the voice, like the pan gains).
@@ -1646,7 +1663,7 @@ void ApplyControls()
                             now);
             ShowOverlay(Overlay::BowlVolume, now); // also at the end stops
         }
-        else if(enc1_page_ == kEnc1PagePan)
+        else if(enc1_page_ == bowls::Encoder1Page::kPan)
         {
             // Pan the selected bowl one tick per detent; matching voices
             // are re-panned live while other modes keep their own pan.
@@ -1657,13 +1674,18 @@ void ApplyControls()
                         now);
             ShowOverlay(Overlay::Pan, now); // also shows at the end stops
         }
-        else if(enc1_page_ == kEnc1PageTune)
+        else if(enc1_page_ == bowls::Encoder1Page::kCoarseTune
+                || enc1_page_ == bowls::Encoder1Page::kFineTune)
         {
             // Direct fundamental pitch applies at the next excitation.
-            if(shift)
+            const bool fine
+                = bowls::Encoder1UsesFinePitchStep(enc1_page_);
+            if(fine)
                 BeginFineTune(cur_mode, key);
-            SetPitchHz(cur_mode, key, enc1_inc, shift);
-            ShowTuneOverlay(shift, now);
+            SetPitchHz(cur_mode, key, enc1_inc, fine);
+            ShowTuneOverlay(fine, now);
+            if(fine)
+                fine_tune_key_play_until_ = now + kOverlayMs;
         }
     }
 
@@ -1726,7 +1748,7 @@ void ApplyControls()
                           now);
             ShowOverlay(Overlay::Decay, now); // also at the end stops
         }
-        else if(!shift)
+        else
         {
             // Two detent ticks per profile step; applies at the next
             // strike/selection, like tuning.
@@ -1887,7 +1909,7 @@ void ApplyControls()
     // in the mode it started in (so a key-up after a mode switch
     // still releases the right note).
     const bool fine_tune_key_play
-        = shift && enc1_page_ == kEnc1PageTune
+        = shift && enc1_page_ == bowls::Encoder1Page::kFineTune
           && static_cast<int32_t>(fine_tune_key_play_until_ - now) > 0;
     for(int key = 0; key < bowls::kKeyCount; ++key)
     {
@@ -2645,8 +2667,8 @@ void RenderLeds()
                            0);
 #endif
     // Encoder-1 LED: green = bowl volume, cyan = pan,
-    // violet = direct-Hz frequency.
-    if(enc1_page_ == kEnc1PagePan)
+    // violet = coarse tuning, magenta = fine tuning.
+    if(enc1_page_ == bowls::Encoder1Page::kPan)
     {
         const int cur_mode = ModeIdx(play_modes.Mode());
         const int edit_key = last_key_[cur_mode];
@@ -2657,8 +2679,10 @@ void RenderLeds()
         chompi_leds::SetPthLed(chompi_leds::kPthEncoder1,
                                0, 20, centered ? 0 : 20);
     }
-    else if(enc1_page_ == kEnc1PageTune)
+    else if(enc1_page_ == bowls::Encoder1Page::kCoarseTune)
         chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 14, 0, 20);
+    else if(enc1_page_ == bowls::Encoder1Page::kFineTune)
+        chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 32, 0, 40);
     else
         chompi_leds::SetPthLed(chompi_leds::kPthEncoder1, 0, 20, 0);
     chompi_leds::SetPthLed(
@@ -2761,14 +2785,22 @@ void RenderLeds()
                                play_modes.LatchEnabled() ? 40 : 0,
                                0);
     }
-    // The volume knob LED follows the page: master gradient or reverb.
-    if(vol_page_ == kVolPageReverb)
+    // The volume knob LED follows the active master/reverb page.
+    if(vol_page_ == bowls::VolumeControlPage::kReverbMix)
     {
         const float mnorm = TicksToNorm(
             params.reverb_mix_ticks.load(std::memory_order_relaxed));
         const auto mlevel = static_cast<uint8_t>(8 + mnorm * 40.0f);
         chompi_leds::SetPthLed(chompi_leds::kPthVolume,
                                mlevel * 2 / 3, mlevel * 4 / 5, mlevel);
+    }
+    else if(vol_page_ == bowls::VolumeControlPage::kReverbDecay)
+    {
+        const float dnorm = TicksToNorm(
+            params.reverb_decay_ticks.load(std::memory_order_relaxed));
+        const auto dlevel = static_cast<uint8_t>(8 + dnorm * 40.0f);
+        chompi_leds::SetPthLed(chompi_leds::kPthVolume,
+                               dlevel * 4 / 5, 0, dlevel);
     }
     else
     {

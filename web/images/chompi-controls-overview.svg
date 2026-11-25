@@ -90,14 +90,15 @@
 
     <g id="callout-shift">
       <text x="143" y="-788" font-size="20" font-weight="bold">SHIFT</text>
-      <text x="143" y="-764">Hold for key combos (see keyboard below), fine tuning, and reverb decay</text>
+      <text x="143" y="-764">Hold for keyboard combos (see below); encoder turns use their selected page</text>
     </g>
 
     <g id="callout-encoder-1">
       <text x="257" y="-726" font-size="20" font-weight="bold">ENCODER 1 <tspan font-weight="normal" font-style="italic" font-size="16">— press: next page</tspan></text>
       <text x="257" y="-702">Page 1 — Selected bowl volume</text>
       <text x="257" y="-678">Page 2 — Pan</text>
-      <text x="257" y="-654">Page 3 — Fundamental frequency (SHIFT: fine tune)</text>
+      <text x="257" y="-654">Page 3 — Fundamental frequency (coarse; violet)</text>
+      <text x="257" y="-630">Page 4 — Fine tuning (1 Hz per detent; magenta)</text>
     </g>
 
     <g id="callout-encoder-2">
@@ -139,8 +140,10 @@
 
     <g id="callout-volume">
       <text x="912" y="-76" font-size="20" font-weight="bold">VOLUME</text>
-      <text x="912" y="-52">Press: master volume / reverb mix</text>
-      <text x="912" y="-28">Reverb page, SHIFT+turn: decay 1&#8211;20 s</text>
+      <text x="912" y="-52">Press: cycle pages</text>
+      <text x="912" y="-28">Page 1 — Master volume</text>
+      <text x="912" y="-4">Page 2 — Reverb mix</text>
+      <text x="912" y="20">Page 3 — Reverb decay (1&#8211;20 s)</text>
     </g>
 
     <g id="callout-black-keys">
@@ -153,7 +156,7 @@
     <g id="callout-white-keys">
       <text x="111" y="633" font-size="20" font-weight="bold">WHITE KEYS (15) <tspan font-weight="normal" font-style="italic" font-size="16">— C3 to C5</tspan></text>
       <text x="111" y="657">SHIFT + white key: load preset P01&#8211;P15</text>
-      <text x="111" y="681">While fine tuning, SHIFT + white key plays notes instead</text>
+      <text x="111" y="681">After a fine-tune turn, SHIFT + white key briefly plays notes instead</text>
     </g>
   </g>
 </svg>

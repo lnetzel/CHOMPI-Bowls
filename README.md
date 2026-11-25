@@ -34,12 +34,14 @@ selecting presets.
 - **Strikes:** Every key strikes a different bowl. PLAY latches notes;
   SHIFT+PLAY cycles the latch's retrigger pattern: Duration Loop,
   Bottom Pair, Top Pair, Middle Pair, Up, Down, Up & Down, and Random.
+  Arpeggio patterns include every latched key, even beyond the voice
+  pool; voices are reused as needed.
 - **Rimming:** Every key opens a sustained pad. The wheel adds
   direction-dependent rimming. LOOP latches notes.
 - **Split:** C3-B3 select 12 bowls for wheel rimming; C4-B4 strike those
   bowls, and C5 strikes the highest bowl.
 
-Five voices are shared across modes. Mode changes do not stop ringing
+Six voices are shared across modes. Mode changes do not stop ringing
 voices. Black keys are playable in all modes.
 
 ## Presets and tuning

@@ -161,6 +161,16 @@ class PlayModes
         return StrikeLatchSource(key) > 0;
     }
 
+    /** In arpeggio modes, latched keys outnumbering the voice pool must
+     *  remain eligible for retrigger after their voice is stolen. */
+    bool StrikeVoiceProtected(int key) const
+    {
+        return StrikeLatched(key)
+               && (!strike_latch_enabled_
+                   || strike_arpeggio_mode_
+                          == StrikeArpeggioMode::kDurationLoop);
+    }
+
     /** Desired pad gate for a Rimming key; chompi_main reconciles the
      *  voice gates against this after every event, so latch-off, mode
      *  exit and voice steals all close gates reliably. */
@@ -677,10 +687,9 @@ class PlayModes
 
     /** The voice holding (mode, key) was stolen by a newer note: clear
      *  that note's latch/sustain claims (all sources) and its gate.
-     *  LOOP itself stays enabled; the held state is remembered (the
-     *  claim markers stay), but a stolen note is never restarted by
-     *  itself - it must be released and played again. Split rim voices
-     *  are not affected here (chompi_main silently reacquires them). */
+     *  Strike latches survive steals in arpeggio modes so they remain in
+     *  the sequence; elsewhere, a stolen note must be played again.
+     *  Split rim voices are not affected here. */
     void OnVoiceStolen(PlayMode mode, int key)
     {
         if(mode == PlayMode::kRimming && key >= 0 && key < kKeyCount)
@@ -695,8 +704,11 @@ class PlayModes
         }
         else if(mode == PlayMode::kStrikes && key >= 0 && key < kKeyCount)
         {
-            for(int s = 0; s < kSourceCount; ++s)
-                strike_latched_[s][key] = false;
+            if(!strike_latch_enabled_
+               || strike_arpeggio_mode_
+                      == StrikeArpeggioMode::kDurationLoop)
+                for(int s = 0; s < kSourceCount; ++s)
+                    strike_latched_[s][key] = false;
             stolen_strike_[key] = true;
         }
     }

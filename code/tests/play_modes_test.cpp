@@ -626,6 +626,31 @@ void TestLatchedVoiceProtection()
               [&](int i) { return envelope[i]; })
               == -1,
           "M7h six Strike latches are protected from stealing", "");
+
+    for(int i = 0; i < 4; ++i)
+        sm.CycleStrikeArpeggioMode();
+    for(int key = 6; key < bowls::kKeyCount; ++key)
+    {
+        sm.KeyDown(key, false);
+        sm.KeyUp(key);
+    }
+    for(int voice = 0; voice < 6; ++voice)
+        protected_voice[voice] = sm.StrikeVoiceProtected(voice);
+    int order[bowls::kStrikeArpeggioMaxSequenceLength];
+    const int arpeggio_order_count
+        = sm.GetStrikeArpeggioOrder(order);
+    Check(sm.GetStrikeArpeggioMode() == bowls::StrikeArpeggioMode::kUp
+              && arpeggio_order_count == bowls::kKeyCount
+              && order[0] == 0 && order[bowls::kKeyCount - 1] == 24
+              && bowls::QuietestUnprotectedVoice(
+                     6, [&](int i) { return active[i]; },
+                     [&](int i) { return protected_voice[i]; },
+                     [&](int i) { return envelope[i]; })
+                     == 0,
+          "M7i all latched Strike keys follow arp beyond voice count", "");
+    sm.OnVoiceStolen(PlayMode::kStrikes, 0);
+    Check(sm.StrikeLatched(0),
+          "M7j an arpeggio latch survives its voice being stolen", "");
 }
 
 // -- M8: wheel sets ------------------------------------------------------------

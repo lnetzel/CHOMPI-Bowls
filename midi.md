@@ -1,6 +1,6 @@
 # CHOMPI-BOWLS - MIDI Implementation
 
-All messages use a fixed MIDI channel: **1**.
+Channel voice messages use a fixed MIDI channel: **1**.
 Transports: the hardware MIDI input (5-pin DIN, UART) and the USB MIDI
 device port (the panel USB-C), simultaneously. A USB keyboard cannot be
 plugged into CHOMPI directly - USB requires a host (a computer, or a USB
@@ -11,9 +11,10 @@ USB MIDI is unavailable in CPU_METER diagnostic builds.
 MIDI IN receives notes, supported CCs and MIDI Timing Clock. When clock
 pulses arrive, the latched Strike arpeggio follows that tempo; without
 clock it retains its normal free-running rate. MIDI OUT sends local keyboard
-notes on both enabled transports; incoming messages are never echoed or
-soft-thru'd, and no CCs are transmitted.
-Other channels and unsupported MIDI messages are ignored.
+notes on both enabled transports and USB SysEx replies for preset transfers;
+incoming messages are never echoed or soft-thru'd, and no CCs are transmitted.
+Channel voice messages on other channels and unsupported MIDI messages are
+ignored. USB SysEx is reserved for preset transfers.
 
 ## Web preset editor
 
@@ -66,10 +67,11 @@ The active play mode decides what a note does; in Split it also decides
 the bowl frequency. Note names assume C4 = MIDI 60 (some DAWs label
 octaves differently). Frequencies below are the factory untuned
 fundamentals; v11 `pitch_hz` values store each mode/key's final frequency
-without changing its MIDI note. Encoder 1 Page 3 changes that frequency
-directly; MIDI has no tuning CC. Resonance character (CC 70) changes the
-modal structure. See the pitch-editing procedure and complete key/index
-mapping in [README.md](README.md#direct-hz-tuning-and-preset-editing).
+without changing its MIDI note. Encoder 1 Page 3 adjusts that frequency
+coarsely and Page 4 adjusts it in 1 Hz steps; MIDI has no tuning CC.
+Resonance character (CC 70) changes the modal structure. See the
+pitch-editing procedure and complete key/index mapping in
+[README.md](README.md#direct-hz-tuning-and-preset-editing).
 
 | MIDI note | Name | Key | Factory Strikes / Rimming Hz | Split action | Factory Split Hz |
 |---|---|---|---|---|---|
@@ -112,13 +114,14 @@ Notes:
   saved bowl volume. **Split** = notes 48-59 silently select a rim bowl
   (never strike - sound starts via CC 1 or the physical wheel), notes
   60-72 strike.
-- Every saved sound parameter except direct-Hz pitch has a CC: the five
-  per-bowl parameters (pan 10, character 70, brightness 74, decay 75,
-  bowl volume 77) edit the CC 81/82-selected bank/key, and the global
-  controls are CC 7/78/79/91 plus the mode on CC 80. Saved values
-  autosave to BOWLS/state.json after a 1 s quiet period, exactly as
-  local edits. Never saved: velocity, CC 1/84 rubbing, sustain, the
-  LOOP latch state, selectors, routing, and all cleanup messages.
+-   Every saved sound parameter except direct-Hz pitch and room reverb decay
+  has a CC: the five per-bowl parameters (pan 10, character 70, brightness
+  74, decay 75, bowl volume 77) edit the CC 81/82-selected bank/key, and
+  the global controls are CC 7/78/79/91 plus the mode on CC 80. Room
+  reverb decay currently has no MIDI CC. Saved values autosave to
+  BOWLS/state.json after a 1 s quiet period, exactly as local edits. Never
+  saved: velocity, CC 1/84 rubbing, sustain, the LOOP latch state,
+  selectors, routing, and all cleanup messages.
 - Editing a bowl without playing it: send CC 81 (bank), CC 82 (key),
   then the parameter CCs, in that order. A valid Note On also selects
   that key for the sending transport's subsequent per-bowl CCs (even
@@ -127,12 +130,14 @@ Notes:
   sounding; CC 81 = 127 restores follow-mode. DIN and USB keep
   independent edit contexts; there is no cross-transport ordering
   guarantee and no echo acknowledging a selector.
-- The instrument has five shared voices across local, DIN and USB
-  playing; a sixth distinct note steals the quietest eligible voice.
-  Latched Rimming voices are protected while Strikes is active, and a
-  strike is dropped if all five voices are protected. Other stolen pads
-  or strikes never restart by themselves; Split rim bowls reacquire
-  silently, as with local play.
+- The instrument has six shared voices across local, DIN and USB
+  playing; a seventh distinct note may steal the quietest unprotected
+  voice. Latched Rimming voices are protected while Strikes is active,
+  and a new strike is dropped if all six voices are protected.
+  In Strike arpeggio modes, every latched key remains in the sequence,
+  even beyond six voices; voices are reused as needed. Other stolen
+  pads or non-arpeggiated strikes never restart by themselves; Split
+  rim bowls reacquire silently, as with local play.
 - CC 1 is a held absolute level per transport (initially 0), not a
   simulated wheel detent: it drives that sender's eligible notes in the
   current mode - its held Strikes notes, its held/sustained/latched
@@ -170,10 +175,11 @@ physical key release sends Note Off, including when the BOWLS Rimming
 LOOP latch keeps its internal pad sounding. SHIFT mode and routing
 shortcuts are not sent as notes.
 
-Only local physical key gestures are transmitted. MIDI received on DIN
-or USB is not forwarded, and panel parameter changes, CCs, mode changes,
-clock, and program changes are not transmitted. Firmware uses UART1 TX
-on D14 for DIN output.
+Output consists of local physical key gestures and USB SysEx replies for
+the preset-transfer protocol above. MIDI received on DIN or USB is not
+forwarded or echoed; panel parameter changes, CCs, mode changes, clock,
+and program changes are not transmitted. Firmware uses UART1 TX on D14
+for DIN output.
 
 ## Examples (all channel 1)
 
@@ -182,7 +188,8 @@ on D14 for DIN output.
   ringing.
 - **Edit that bowl without striking it:** CC 81 = 0, CC 82 = 48,
   CC 10 = 64 (pan centre), CC 77 = 64 (unity volume), CC 74 = 127
-  (brightest). Set its frequency with Encoder 1 Page 3.
+  (brightest). Set its frequency with Encoder 1 Page 3 (coarse) or
+  Page 4 (1 Hz fine).
 - **Change another bowl's character:** CC 81 = 0, CC 82 = 60,
   CC 70 = 26 selects Deep for Strikes key 12 (465 Hz) - not Split's
   99 Hz strike slot.
